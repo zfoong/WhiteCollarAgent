@@ -26,6 +26,10 @@ Users can:
 - 🧩 **Subclass the base agent** to build their own specialized agent behaviors or workflows
 - 💻 Interact with the agent with a **TUI interface**.
 
+<div align="center">
+    <img src="assets/white_collar_agent_demo.png" alt="Demo" width="500"/>
+</div>
+
 This makes it an ideal tool for organisations, researchers, and developers exploring **System-based agentic AI**, **runtime code generation**, and **autonomous execution** to automate their workflows and achieve results.
 This is an open-source project and is still in development, so we welcome any suggestions, contributions, and feedback! You are free to use, host, and monetize this project (with credit given in case of distribution and monetization).
 
@@ -42,10 +46,10 @@ This is an open-source project and is still in development, so we welcome any su
 
 ## 🔜 Roadmap
 
-- [ ] **Memory Module**
-- [ ] **External Tool integration**
-- [ ] **MCP Layer**
-- [ ] **Proactive Behaviour**
+- [ ] **Memory Module** — Coming next!
+- [ ] **External Tool integration** — Pending
+- [ ] **MCP Layer** — Pending
+- [ ] **Proactive Behaviour** — Pending
 
 ---
 
