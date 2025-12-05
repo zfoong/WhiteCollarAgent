@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from asyncio import Queue, QueueEmpty
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Tuple
@@ -15,7 +16,7 @@ from inspect import signature
 from rich.console import RenderableType
 from rich.table import Table
 from rich.text import Text
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Select, Static
 from textual.widgets import RichLog as _BaseLog
 
 from core.logger import logger
@@ -65,11 +66,12 @@ class _CraftApp(App):
 
     CSS = """
     Screen {
-        layout: vertical;
+        layout: stack;
         background: #111111;
         color: #f5f5f5;
     }
 
+    /* Shared chrome */
     #top-region {
         height: 1fr;
     }
@@ -80,11 +82,11 @@ class _CraftApp(App):
         border-title-align: left;
         margin: 0 1;
     }
-    
+
     #chat-log, #action-log {
-        text-wrap: wrap;        /* word wrap (default, but make it explicit) */
-        text-overflow: fold;    /* fold long unbreakable tokens onto next line */
-        overflow-x: hidden;     /* no horizontal scrollbar */
+        text-wrap: wrap;
+        text-overflow: fold;
+        overflow-x: hidden;
     }
 
     #chat-panel {
@@ -95,17 +97,10 @@ class _CraftApp(App):
         width: 1fr;
     }
 
-    /* Ensure logs size to the container without horizontal overflow */
     TextLog {
         height: 1fr;
         padding: 0 1;
-        overflow-x: hidden;   /* hide horizontal scrollbar if any */
-    }
-
-    /* Explicitly enable wrapping inside both logs */
-    #chat-log, #action-log {
-        text-wrap: wrap;      /* force wrapping at widget width */
-        overflow-x: hidden;   /* no horizontal scrolling */
+        overflow-x: hidden;
     }
 
     #bottom-region {
@@ -127,6 +122,58 @@ class _CraftApp(App):
         border: solid #444444;
         background: #1a1a1a;
     }
+
+    /* Menu layer */
+    #menu-layer {
+        align: center middle;
+        content-align: center middle;
+    }
+
+    #menu-panel {
+        width: 90;
+        max-width: 100%;
+        border: solid #444444;
+        background: #0f0f0f;
+        padding: 3 5;
+        content-align: center middle;
+        row-gap: 2;
+    }
+
+    #menu-logo {
+        text-style: bold;
+        margin-bottom: 1;
+        content-align: center middle;
+    }
+
+    #menu-buttons {
+        content-align: center middle;
+        row-gap: 1;
+    }
+
+    #settings-card {
+        width: 70;
+        max-width: 100%;
+        border: solid #444444;
+        background: #101010;
+        padding: 2 3;
+        content-align: center top;
+        row-gap: 1;
+    }
+
+    #settings-card Input {
+        width: 100%;
+    }
+
+    #settings-actions {
+        content-align: center middle;
+        column-gap: 2;
+        height: auto;
+    }
+
+    #chat-layer.-hidden,
+    #menu-layer.-hidden {
+        display: none;
+    }
     """
 
     BINDINGS = [
@@ -134,21 +181,46 @@ class _CraftApp(App):
     ]
 
     status_text = var("Status: Idle")
+    show_menu = var(True)
 
     _STATUS_PREFIX = "Status: "
     _STATUS_GAP = 4
     _STATUS_INITIAL_PAUSE = 6
 
-    def __init__(self, interface: "TUIInterface") -> None:
+    def __init__(self, interface: "TUIInterface", provider: str, api_key: str) -> None:
         super().__init__()
         self._interface = interface
         self._status_message: str = "Idle"
         self._status_offset: int = 0
         self._status_pause: int = self._STATUS_INITIAL_PAUSE
         self._last_rendered_status: str = ""
+        self._provider = provider
+        self._api_key = api_key
 
 
     def compose(self) -> ComposeResult:  # pragma: no cover - declarative layout
+        yield Container(
+            Container(
+                Static(self._logo_text(), id="menu-logo"),
+                Vertical(
+                    Static(f"Model Provider: {self._provider}", id="provider-hint"),
+                    Static(
+                        "Configure provider & key under Settings before starting.",
+                        id="menu-hint",
+                    ),
+                    id="menu-copy",
+                ),
+                Vertical(
+                    Button("Start", id="start"),
+                    Button("Setting", id="settings"),
+                    Button("Exit", id="exit"),
+                    id="menu-buttons",
+                ),
+                id="menu-panel",
+            ),
+            id="menu-layer",
+        )
+
         yield Container(
             Horizontal(
                 Container(
@@ -169,15 +241,81 @@ class _CraftApp(App):
                 Input(placeholder="Type a message and press Enter…", id="chat-input"),
                 id="bottom-region",
             ),
+            id="chat-layer",
         )
 
+    # ────────────────────────────── menu helpers ─────────────────────────────
+
+    def _logo_text(self) -> Text:
+        return Text(
+            """
+ __        __    _     _         ____      _ _                _
+ \ \      / / __(_) __| | ___   / ___|___ | | | ___ _ __   __| | ___  _ __
+  \ \ /\ / / '_ \ |/ _` |/ _ \ | |   / _ \| | |/ _ \ '_ \ / _` |/ _ \| '_ \
+   \ V  V /| | | | | (_| |  __/ | |__| (_) | | |  __/ | | | (_| | (_) | | | |
+    \_/\_/ |_| |_|_|\__,_|\___|  \____\___/|_|_|\___|_| |_|\__,_|\___/|_| |_|
+            """.rstrip("\n"),
+            justify="center",
+        )
+
+    def _open_settings(self) -> None:
+        if self.query("#settings-card"):
+            return
+
+        settings = Container(
+            Static("Settings", id="settings-title"),
+            Static("LLM Provider"),
+            Select(
+                (
+                    ("OpenAI", "openai"),
+                    ("Google Gemini", "gemini"),
+                    ("BytePlus", "byteplus"),
+                    ("Ollama (remote)", "remote"),
+                ),
+                id="provider-select",
+                value=self._provider,
+            ),
+            Static("API Key"),
+            Input(
+                placeholder="Enter API key",
+                password=True,
+                id="api-key-input",
+                value=self._api_key,
+            ),
+            Container(
+                Button("Save", id="save-settings"),
+                Button("Cancel", id="cancel-settings"),
+                id="settings-actions",
+            ),
+            id="settings-card",
+        )
+
+        self.query_one("#menu-layer").mount(settings)
+
+    def _close_settings(self) -> None:
+        for card in self.query("#settings-card"):
+            card.remove()
+
+    def _save_settings(self) -> None:
+        select = self.query_one("#provider-select", Select[str])
+        api_key_input = self.query_one("#api-key-input", Input)
+        self._provider = select.value or self._provider
+        self._api_key = api_key_input.value
+        self.query_one("#provider-hint", Static).update(
+            f"Model Provider: {self._provider}"
+        )
+        self._close_settings()
+
+    def _start_chat(self) -> None:
+        self._interface.configure_provider(self._provider, self._api_key)
+        self._close_settings()
+        self.show_menu = False
+        self._interface.notify_provider(self._provider)
+
     async def on_mount(self) -> None:  # pragma: no cover - UI lifecycle
-        chat_input = self.query_one("#chat-input", Input)
-        chat_input.focus()
-        
         self.query_one("#chat-panel").border_title = "Chat"
         self.query_one("#action-panel").border_title = "Action"
-        
+
         # Runtime safeguard: enforce wrapping on the logs even if CSS/props vary by version
         chat_log = self.query_one("#chat-log", _ConversationLog)
         action_log = self.query_one("#action-log", _ConversationLog)
@@ -189,6 +327,7 @@ class _CraftApp(App):
 
         self.set_interval(0.1, self._flush_pending_updates)
         self.set_interval(0.2, self._tick_status_marquee)
+        self._sync_layers()
 
     def clear_logs(self) -> None:
         """Clear chat and action logs from the display."""
@@ -198,10 +337,35 @@ class _CraftApp(App):
         chat_log.clear()
         action_log.clear()
 
+    def watch_show_menu(self, show: bool) -> None:
+        self._sync_layers()
+
+    def _sync_layers(self) -> None:
+        menu_layer = self.query_one("#menu-layer")
+        chat_layer = self.query_one("#chat-layer")
+        menu_layer.set_class(self.show_menu is False, "-hidden")
+        chat_layer.set_class(self.show_menu is True, "-hidden")
+        if not self.show_menu:
+            chat_input = self.query_one("#chat-input", Input)
+            chat_input.focus()
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         message = event.value.strip()
         event.input.value = ""
         await self._interface.submit_user_message(message)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "start":
+            self._start_chat()
+        elif button_id == "settings":
+            self._open_settings()
+        elif button_id == "exit":
+            self.exit()
+        elif button_id == "save-settings":
+            self._save_settings()
+        elif button_id == "cancel-settings":
+            self._close_settings()
 
     async def action_quit(self) -> None:  # pragma: no cover - user-triggered
         await self._interface.request_shutdown()
@@ -312,7 +476,7 @@ class TUIInterface:
     _CHAT_LABEL_WIDTH = 7
     _ACTION_LABEL_WIDTH = 7
 
-    def __init__(self, agent: "AgentBase") -> None:
+    def __init__(self, agent: "AgentBase", *, default_provider: str, default_api_key: str) -> None:
         self._agent = agent
         self._running: bool = False
         self._tracked_sessions: set[str] = set()
@@ -326,6 +490,9 @@ class TUIInterface:
         self.chat_updates: Queue[TimelineEntry] = Queue()
         self.action_updates: Queue[_ActionEntry] = Queue()
         self.status_updates: Queue[str] = Queue()
+
+        self._default_provider = default_provider
+        self._default_api_key = default_api_key
 
         self._register_commands()
 
@@ -378,7 +545,7 @@ class TUIInterface:
         trigger_consumer = asyncio.create_task(self._consume_triggers())
         self._event_task = asyncio.create_task(self._watch_events())
 
-        self._app = _CraftApp(self)
+        self._app = _CraftApp(self, self._default_provider, self._default_api_key)
 
         try:
             await self._app.run_async()
@@ -416,6 +583,27 @@ class TUIInterface:
             "gui_mode": False,
         }
         await self._agent._handle_chat_message(payload)
+
+    def configure_provider(self, provider: str, api_key: str) -> None:
+        key_lookup = {
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GOOGLE_API_KEY",
+            "byteplus": "BYTEPLUS_API_KEY",
+        }
+        key_name = key_lookup.get(provider)
+        if key_name and api_key:
+            os.environ[key_name] = api_key
+        os.environ["LLM_PROVIDER"] = provider
+        self._agent.llm.provider = provider
+
+    def notify_provider(self, provider: str) -> None:
+        self.chat_updates.put_nowait(
+            (
+                "System",
+                f"Launching chat with provider: {provider}",
+                "system",
+            )
+        )
 
     async def request_shutdown(self) -> None:
         """Stop the interface and close the Textual application."""

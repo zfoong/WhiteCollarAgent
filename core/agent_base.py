@@ -73,6 +73,7 @@ class AgentBase:
         *,
         data_dir: str = "core/data",
         chroma_path: str = "./chroma_db",
+        llm_provider: str = "byteplus",
     ) -> None:
         # persistence & memory
         self.db_interface = self._build_db_interface(
@@ -80,7 +81,7 @@ class AgentBase:
         )
 
         # LLM + prompt plumbing
-        self.llm = LLMInterface(provider='byteplus', db_interface=self.db_interface)
+        self.llm = LLMInterface(provider=llm_provider, db_interface=self.db_interface)
         self.vlm = VLMInterface()
         self.context_engine = ContextEngine()
         self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
@@ -442,7 +443,13 @@ class AgentBase:
         return "Agent state reset. Starting fresh." 
 
     # ─────────────────────────── lifecycle ──────────────────────────────
-    async def run(self) -> None:
+    async def run(self, *, provider: str | None = None, api_key: str = "") -> None:
         """Launch the interactive CLI loop."""
-        cli = TUIInterface(self)
+
+        # Allow the TUI to present provider/api-key configuration before chat starts.
+        cli = TUIInterface(
+            self,
+            default_provider=provider or self.llm.provider,
+            default_api_key=api_key,
+        )
         await cli.start()
