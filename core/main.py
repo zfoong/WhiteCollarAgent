@@ -46,19 +46,14 @@ def _apply_api_key(provider: str, api_key: str) -> None:
 
 async def main_async() -> None:
     provider, api_key = _initial_settings()
-    selection = await launch_menu(provider, api_key)
-
-    if not selection or selection.action == "exit":
-        return
-
-    _apply_api_key(selection.provider, selection.api_key)
+    _apply_api_key(provider, api_key)
 
     agent = AgentBase(
         data_dir=os.getenv("DATA_DIR", "core/data"),
         chroma_path=os.getenv("CHROMA_PATH", "./chroma_db"),
-        llm_provider=selection.provider,
+        llm_provider=provider,
     )
-    await agent.run()
+    await agent.run(provider=provider, api_key=api_key)
 
 
 def main() -> None:

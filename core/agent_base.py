@@ -443,7 +443,13 @@ class AgentBase:
         return "Agent state reset. Starting fresh." 
 
     # ─────────────────────────── lifecycle ──────────────────────────────
-    async def run(self) -> None:
+    async def run(self, *, provider: str | None = None, api_key: str = "") -> None:
         """Launch the interactive CLI loop."""
-        cli = TUIInterface(self)
+
+        # Allow the TUI to present provider/api-key configuration before chat starts.
+        cli = TUIInterface(
+            self,
+            default_provider=provider or self.llm.provider,
+            default_api_key=api_key,
+        )
         await cli.start()
