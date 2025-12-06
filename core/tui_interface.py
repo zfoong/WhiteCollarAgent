@@ -36,6 +36,9 @@ class _ConversationLog(_BaseLog):
         kwargs.setdefault("min_width", 1)  # let width track the pane size
         super().__init__(*args, **kwargs)
 
+        # Keep a copy of everything written so it can be reflowed on resize
+        self._history: list[RenderableType] = []
+
     def append_text(self, content) -> None:
         # Normalize to Rich Text, enable folding of long tokens
         text: Text = content if isinstance(content, Text) else Text(str(content))
@@ -48,7 +51,25 @@ class _ConversationLog(_BaseLog):
 
     def append_renderable(self, renderable: RenderableType) -> None:
         # Write using expand/shrink so width follows the widget on resize
+        self._history.append(renderable)
         self.write(renderable, expand=True, shrink=True)
+
+    def clear(self) -> None:
+        """Clear the log and the preserved history."""
+
+        self._history.clear()
+        super().clear()
+
+    def _reflow_history(self) -> None:
+        """Re-render stored entries so Rich recalculates wrapping."""
+
+        if not self._history:
+            return
+
+        history = list(self._history)
+        super().clear()
+        for renderable in history:
+            self.write(renderable, expand=True, shrink=True)
 
     def on_resize(self, event: events.Resize) -> None:  # pragma: no cover - UI layout
         """Force a reflow when the widget width changes.
@@ -58,6 +79,7 @@ class _ConversationLog(_BaseLog):
         """
 
         super().on_resize(event)
+        self._reflow_history()
         self.refresh(layout=True, repaint=True)
 
 
