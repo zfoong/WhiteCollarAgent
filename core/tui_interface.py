@@ -11,17 +11,19 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import var
-from inspect import signature
 
 from rich.console import RenderableType
 from rich.table import Table
 from rich.text import Text
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Input, Static
 from textual.widgets import RichLog as _BaseLog
+from textual.widgets import ListView, ListItem, Label
 
 from core.logger import logger
+
 if False:  # pragma: no cover
     from core.agent_base import AgentBase  # type: ignore
+
 
 class _ConversationLog(_BaseLog):
     """RichLog wrapper with robust wrapping + reflow on resize."""
@@ -30,15 +32,15 @@ class _ConversationLog(_BaseLog):
         # RichLog params: wrap off by default, min_width=78; override both
         kwargs.setdefault("markup", True)
         kwargs.setdefault("highlight", False)
-        kwargs.setdefault("wrap", True)        # enable word-wrapping (RichLog)
-        kwargs.setdefault("min_width", 1)      # let width track the pane size
+        kwargs.setdefault("wrap", True)  # enable word-wrapping (RichLog)
+        kwargs.setdefault("min_width", 1)  # let width track the pane size
         super().__init__(*args, **kwargs)
 
     def append_text(self, content) -> None:
         # Normalize to Rich Text, enable folding of long tokens
         text: Text = content if isinstance(content, Text) else Text(str(content))
         text.no_wrap = False
-        text.overflow = "fold"                 # split unbreakable runs (URLs / IDs)
+        text.overflow = "fold"  # split unbreakable runs (URLs / IDs)
         self.append_renderable(text)
 
     def append_markup(self, markup: str) -> None:
@@ -66,7 +68,7 @@ class _CraftApp(App):
 
     CSS = """
     Screen {
-        layout: stack;
+        layout: vertical;
         background: #111111;
         color: #f5f5f5;
     }
@@ -132,11 +134,16 @@ class _CraftApp(App):
     #menu-panel {
         width: 90;
         max-width: 100%;
+        max-height: 95%;
         border: solid #444444;
         background: #0f0f0f;
         padding: 3 5;
         content-align: center middle;
-        row-gap: 2;
+        overflow: auto;
+    }
+
+    #menu-panel.-hidden {
+        display: none;
     }
 
     #menu-logo {
@@ -145,29 +152,75 @@ class _CraftApp(App):
         content-align: center middle;
     }
 
-    #menu-buttons {
+    /* Command-prompt style options */
+    #menu-options {
+        width: 24;
+        height: auto;
+        margin-top: 1;
         content-align: center middle;
-        row-gap: 1;
+        background: transparent;
+        border: none;
     }
 
+    #menu-options > ListItem {
+        padding: 0 0;
+    }
+
+    /* Default item text */
+    .menu-item {
+        color: #cfcfcf;
+    }
+
+    /* Highlight for list selections */
+    #menu-options > ListItem.--highlight .menu-item,
+    #provider-options > ListItem.--highlight .menu-item,
+    #settings-actions-list > ListItem.--highlight .menu-item {
+        background: #222222;
+        color: #ffffff;
+        text-style: bold;
+    }
+
+    /* Provider options list in settings */
+    #provider-options {
+        width: 28;
+        height: auto;
+        margin: 1 0;
+        background: transparent;
+        border: none;
+    }
+
+    #provider-options > ListItem {
+        padding: 0 0;
+    }
+
+    /* Settings card */
     #settings-card {
         width: 70;
         max-width: 100%;
+        max-height: 90%;
         border: solid #444444;
         background: #101010;
-        padding: 2 3;
+        padding: 2 3 3 3;
         content-align: center top;
-        row-gap: 1;
+        overflow: auto;
     }
 
     #settings-card Input {
         width: 100%;
     }
 
-    #settings-actions {
-        content-align: center middle;
-        column-gap: 2;
+    /* Settings actions styled like a prompt list */
+    #settings-actions-list {
+        width: 24;
         height: auto;
+        margin-top: 1;
+        content-align: center middle;
+        background: transparent;
+        border: none;
+    }
+
+    #settings-actions-list > ListItem {
+        padding: 0 0;
     }
 
     #chat-layer.-hidden,
@@ -182,10 +235,36 @@ class _CraftApp(App):
 
     status_text = var("Status: Idle")
     show_menu = var(True)
+    show_settings = var(False)
 
     _STATUS_PREFIX = "Status: "
     _STATUS_GAP = 4
     _STATUS_INITIAL_PAUSE = 6
+
+    _MENU_ITEMS = [
+        ("menu-start", "start"),
+        ("menu-settings", "setting"),
+        ("menu-exit", "exit"),
+    ]
+
+    _SETTINGS_PROVIDER_TEXTS = [
+        "OpenAI",
+        "Google Gemini",
+        "BytePlus",
+        "Ollama (remote)",
+    ]
+
+    _SETTINGS_PROVIDER_VALUES = [
+        "openai",
+        "gemini",
+        "byteplus",
+        "remote",
+    ]
+
+    _SETTINGS_ACTION_TEXTS = [
+        "save",
+        "cancel",
+    ]
 
     def __init__(self, interface: "TUIInterface", provider: str, api_key: str) -> None:
         super().__init__()
@@ -196,7 +275,6 @@ class _CraftApp(App):
         self._last_rendered_status: str = ""
         self._provider = provider
         self._api_key = api_key
-
 
     def compose(self) -> ComposeResult:  # pragma: no cover - declarative layout
         yield Container(
@@ -210,11 +288,11 @@ class _CraftApp(App):
                     ),
                     id="menu-copy",
                 ),
-                Vertical(
-                    Button("Start", id="start"),
-                    Button("Setting", id="settings"),
-                    Button("Exit", id="exit"),
-                    id="menu-buttons",
+                ListView(
+                    ListItem(Label("start", classes="menu-item"), id="menu-start"),
+                    ListItem(Label("setting", classes="menu-item"), id="menu-settings"),
+                    ListItem(Label("exit", classes="menu-item"), id="menu-exit"),
+                    id="menu-options",
                 ),
                 id="menu-panel",
             ),
@@ -249,11 +327,9 @@ class _CraftApp(App):
     def _logo_text(self) -> Text:
         return Text(
             """
- __        __    _     _         ____      _ _                _
- \ \      / / __(_) __| | ___   / ___|___ | | | ___ _ __   __| | ___  _ __
-  \ \ /\ / / '_ \ |/ _` |/ _ \ | |   / _ \| | |/ _ \ '_ \ / _` |/ _ \| '_ \
-   \ V  V /| | | | | (_| |  __/ | |__| (_) | | |  __/ | | | (_| | (_) | | | |
-    \_/\_/ |_| |_|_|\__,_|\___|  \____\___/|_|_|\___|_| |_|\__,_|\___/|_| |_|
+░█░█░█░█░▀█▀░▀█▀░█▀▀░░░█▀▀░█▀█░█░░░█░░░█▀█░█▀▄░░░█▀█░█▀▀░█▀▀░█▀█░▀█▀
+░█▄█░█▀█░░█░░░█░░█▀▀░░░█░░░█░█░█░░░█░░░█▀█░█▀▄░░░█▀█░█░█░█▀▀░█░█░░█░
+░▀░▀░▀░▀░▀▀▀░░▀░░▀▀▀░░░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀░▀░░▀░
             """.rstrip("\n"),
             justify="center",
         )
@@ -262,18 +338,18 @@ class _CraftApp(App):
         if self.query("#settings-card"):
             return
 
+        # Hide the main menu panel while settings are open
+        self.show_settings = True
+
         settings = Container(
             Static("Settings", id="settings-title"),
             Static("LLM Provider"),
-            Select(
-                (
-                    ("OpenAI", "openai"),
-                    ("Google Gemini", "gemini"),
-                    ("BytePlus", "byteplus"),
-                    ("Ollama (remote)", "remote"),
-                ),
-                id="provider-select",
-                value=self._provider,
+            ListView(
+                ListItem(Label("OpenAI", classes="menu-item")),
+                ListItem(Label("Google Gemini", classes="menu-item")),
+                ListItem(Label("BytePlus", classes="menu-item")),
+                ListItem(Label("Ollama (remote)", classes="menu-item")),
+                id="provider-options",
             ),
             Static("API Key"),
             Input(
@@ -282,25 +358,44 @@ class _CraftApp(App):
                 id="api-key-input",
                 value=self._api_key,
             ),
-            Container(
-                Button("Save", id="save-settings"),
-                Button("Cancel", id="cancel-settings"),
-                id="settings-actions",
+            ListView(
+                ListItem(Label("save", classes="menu-item"), id="settings-save"),
+                ListItem(Label("cancel", classes="menu-item"), id="settings-cancel"),
+                id="settings-actions-list",
             ),
             id="settings-card",
         )
 
         self.query_one("#menu-layer").mount(settings)
+        self.call_after_refresh(self._init_settings_provider_selection)
 
     def _close_settings(self) -> None:
         for card in self.query("#settings-card"):
             card.remove()
 
+        self.show_settings = False
+
+        # Return focus to the main menu list
+        if self.show_menu and self.query("#menu-options"):
+            menu = self.query_one("#menu-options", ListView)
+            if menu.index is None:
+                menu.index = 0
+            menu.focus()
+            self._refresh_menu_prefixes()
+
     def _save_settings(self) -> None:
-        select = self.query_one("#provider-select", Select[str])
         api_key_input = self.query_one("#api-key-input", Input)
-        self._provider = select.value or self._provider
+
+        provider_value = self._provider
+        if self.query("#provider-options"):
+            providers = self.query_one("#provider-options", ListView)
+            idx = providers.index if providers.index is not None else 0
+            if 0 <= idx < len(self._SETTINGS_PROVIDER_VALUES):
+                provider_value = self._SETTINGS_PROVIDER_VALUES[idx]
+
+        self._provider = provider_value
         self._api_key = api_key_input.value
+
         self.query_one("#provider-hint", Static).update(
             f"Model Provider: {self._provider}"
         )
@@ -329,6 +424,13 @@ class _CraftApp(App):
         self.set_interval(0.2, self._tick_status_marquee)
         self._sync_layers()
 
+        # Initialize menu selection visuals
+        if self.show_menu:
+            menu = self.query_one("#menu-options", ListView)
+            menu.index = 0
+            menu.focus()
+            self._refresh_menu_prefixes()
+
     def clear_logs(self) -> None:
         """Clear chat and action logs from the display."""
 
@@ -340,32 +442,45 @@ class _CraftApp(App):
     def watch_show_menu(self, show: bool) -> None:
         self._sync_layers()
 
+    def watch_show_settings(self, show: bool) -> None:
+        # Hide / show the main menu panel when settings are toggled
+        if self.query("#menu-panel"):
+            menu_panel = self.query_one("#menu-panel")
+            menu_panel.set_class(show, "-hidden")
+
     def _sync_layers(self) -> None:
         menu_layer = self.query_one("#menu-layer")
         chat_layer = self.query_one("#chat-layer")
         menu_layer.set_class(self.show_menu is False, "-hidden")
         chat_layer.set_class(self.show_menu is True, "-hidden")
+
         if not self.show_menu:
             chat_input = self.query_one("#chat-input", Input)
             chat_input.focus()
+            return
+
+        # If settings are open, focus provider list first
+        if self.show_settings and self.query("#provider-options"):
+            providers = self.query_one("#provider-options", ListView)
+            if providers.index is None:
+                providers.index = 0
+            providers.focus()
+            self._refresh_provider_prefixes()
+            self._refresh_settings_actions_prefixes()
+            return
+
+        # Menu visible: focus the list and refresh prefixes
+        if self.query("#menu-options"):
+            menu = self.query_one("#menu-options", ListView)
+            if menu.index is None:
+                menu.index = 0
+            menu.focus()
+            self._refresh_menu_prefixes()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         message = event.value.strip()
         event.input.value = ""
         await self._interface.submit_user_message(message)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
-        if button_id == "start":
-            self._start_chat()
-        elif button_id == "settings":
-            self._open_settings()
-        elif button_id == "exit":
-            self.exit()
-        elif button_id == "save-settings":
-            self._save_settings()
-        elif button_id == "cancel-settings":
-            self._close_settings()
 
     async def action_quit(self) -> None:  # pragma: no cover - user-triggered
         await self._interface.request_shutdown()
@@ -459,6 +574,133 @@ class _CraftApp(App):
             segment_chars.append(extended[(start + idx) % scroll_span])
         return "".join(segment_chars)
 
+    # ────────────────────────────── prompt-style prefix helpers ─────────────────────────────
+
+    def _refresh_menu_prefixes(self) -> None:
+        if not self.query("#menu-options"):
+            return
+
+        menu = self.query_one("#menu-options", ListView)
+        if menu.index is None:
+            menu.index = 0
+
+        for idx, (item_id, text) in enumerate(self._MENU_ITEMS):
+            item = self.query_one(f"#{item_id}", ListItem)
+            label = item.query_one(Label)
+            prefix = "> " if idx == menu.index else "  "
+            label.update(f"{prefix}{text}")
+
+    def _refresh_provider_prefixes(self) -> None:
+        if not self.query("#provider-options"):
+            return
+
+        providers = self.query_one("#provider-options", ListView)
+        items = list(providers.children)
+        if not items:
+            return
+
+        if providers.index is None:
+            providers.index = 0
+        providers.index = max(0, min(providers.index, len(items) - 1))
+
+        for idx, item in enumerate(items):
+            label = item.query_one(Label) if item.query(Label) else None
+            if label is None:
+                continue
+            text = (
+                self._SETTINGS_PROVIDER_TEXTS[idx]
+                if idx < len(self._SETTINGS_PROVIDER_TEXTS)
+                else "provider"
+            )
+            prefix = "> " if idx == providers.index else "  "
+            label.update(f"{prefix}{text}")
+
+    def _refresh_settings_actions_prefixes(self) -> None:
+        if not self.query("#settings-actions-list"):
+            return
+
+        actions = self.query_one("#settings-actions-list", ListView)
+        items = list(actions.children)
+        if not items:
+            return
+
+        if actions.index is None:
+            actions.index = 0
+        actions.index = max(0, min(actions.index, len(items) - 1))
+
+        for idx, item in enumerate(items):
+            label = item.query_one(Label) if item.query(Label) else None
+            if label is None:
+                continue
+            text = self._SETTINGS_ACTION_TEXTS[idx] if idx < len(self._SETTINGS_ACTION_TEXTS) else "action"
+            prefix = "> " if idx == actions.index else "  "
+            label.update(f"{prefix}{text}")
+
+    def _init_settings_provider_selection(self) -> None:
+        if not self.query("#provider-options"):
+            return
+
+        providers = self.query_one("#provider-options", ListView)
+        items = list(providers.children)
+        if not items:
+            return
+
+        initial_index = 0
+        for i, value in enumerate(self._SETTINGS_PROVIDER_VALUES):
+            if value == self._provider:
+                initial_index = i
+                break
+
+        initial_index = min(initial_index, len(items) - 1)
+        providers.index = initial_index
+
+        # Initialize action list selection
+        if self.query("#settings-actions-list"):
+            actions = self.query_one("#settings-actions-list", ListView)
+            if actions.index is None:
+                actions.index = 0
+
+        # Apply prefixes after refresh
+        self._refresh_provider_prefixes()
+        self._refresh_settings_actions_prefixes()
+
+        # Focus provider list by default
+        providers.focus()
+
+    # ────────────────────────────── list events ─────────────────────────────
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id == "menu-options":
+            self._refresh_menu_prefixes()
+        elif event.list_view.id == "provider-options":
+            self._refresh_provider_prefixes()
+        elif event.list_view.id == "settings-actions-list":
+            self._refresh_settings_actions_prefixes()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        list_id = event.list_view.id
+
+        if list_id == "menu-options":
+            item_id = event.item.id
+            if item_id == "menu-start":
+                self._start_chat()
+            elif item_id == "menu-settings":
+                self._open_settings()
+            elif item_id == "menu-exit":
+                self.exit()
+            return
+
+        if list_id == "settings-actions-list":
+            # In settings, treat this list like buttons.
+            # Index 0 = save, 1 = cancel
+            actions = event.list_view
+            idx = actions.index if actions.index is not None else 0
+            if idx == 0:
+                self._save_settings()
+            else:
+                self._close_settings()
+            return
+
 
 class TUIInterface:
     """Asynchronous Textual TUI driver that feeds user prompts to the agent."""
@@ -476,7 +718,9 @@ class TUIInterface:
     _CHAT_LABEL_WIDTH = 7
     _ACTION_LABEL_WIDTH = 7
 
-    def __init__(self, agent: "AgentBase", *, default_provider: str, default_api_key: str) -> None:
+    def __init__(
+        self, agent: "AgentBase", *, default_provider: str, default_api_key: str
+    ) -> None:
         self._agent = agent
         self._running: bool = False
         self._tracked_sessions: set[str] = set()
@@ -501,6 +745,8 @@ class TUIInterface:
             "/exit": self._handle_exit_command,
             "/clear": self._handle_clear_command,
             "/reset": self._handle_reset_command,
+            "/menu": self._handle_menu_command,
+            "/help": self._handle_help_command,
         }
 
     async def _maybe_handle_command(self, message: str) -> bool:
@@ -536,7 +782,7 @@ class TUIInterface:
         await self.chat_updates.put(
             (
                 "System",
-                "White Collar Agent TUI ready. Commands: /exit, /reset, /clear.",
+                "White Collar Agent TUI ready. Type /help for more info and /exit to quit.",
                 "system",
             )
         )
@@ -600,7 +846,7 @@ class TUIInterface:
         self.chat_updates.put_nowait(
             (
                 "System",
-                f"Launching chat with provider: {provider}",
+                f"Launching agent with provider: {provider}",
                 "system",
             )
         )
@@ -620,6 +866,61 @@ class TUIInterface:
         await self.chat_updates.put(("System", "Session terminated by user.", "system"))
         await self.status_updates.put("Idle")
         await self.request_shutdown()
+        
+    async def _handle_menu_command(self) -> None:
+        # Switch UI back to menu layer if the app is running
+        if self._app:
+            self._app.show_settings = False
+            self._app.show_menu = True
+
+        await self.chat_updates.put(("System", "Returned to menu.", "system"))
+        await self.status_updates.put("Idle")
+        
+    async def _handle_help_command(self) -> None:
+        help_text = self._build_help_text()
+        await self.chat_updates.put(("System", help_text, "system"))
+
+    def _build_help_text(self) -> str:
+        intro = (
+            "I am a computer-use AI agent., I can perform computer-based task autonomously "
+            "for you with simple instruction."
+        )
+
+        builtin = {
+            "/help": "Show this help message.",
+            "/menu": "Return to the main menu.",
+            "/clear": "Clear chat and action timelines from the display.",
+            "/reset": "Reset the agent and clear interface state.",
+            "/exit": "Exit the session.",
+        }
+
+        lines: list[str] = [intro, "", "Available commands:"]
+
+        # Built-in commands first
+        for cmd in sorted(builtin.keys()):
+            lines.append(f"  {cmd}  - {builtin[cmd]}")
+
+        # Agent-provided commands (if any)
+        agent_cmds = self._agent.get_commands() if self._agent else {}
+        extra = [c for c in agent_cmds.keys() if c not in builtin]
+
+        if extra:
+            lines.append("")
+            lines.append("Agent commands:")
+            for cmd in sorted(extra):
+                obj = agent_cmds[cmd]
+                desc = (
+                    getattr(obj, "description", None)
+                    or getattr(obj, "help", None)
+                    or getattr(obj, "doc", None)
+                )
+                if not desc and getattr(obj, "handler", None):
+                    desc = getattr(obj.handler, "__doc__", None)
+
+                desc = (desc or "Agent command.").strip()
+                lines.append(f"  {cmd}  - {desc}")
+
+        return "\n".join(lines)
 
     def _clear_display_logs(self) -> None:
         if self._app:
@@ -629,9 +930,7 @@ class TUIInterface:
         self._clear_display_logs()
         self.chat_updates = Queue()
         self.action_updates = Queue()
-        await self.chat_updates.put(
-            ("System", "Cleared chat and action timelines.", "system")
-        )
+        await self.chat_updates.put(("System", "Cleared chat and action timelines.", "system"))
 
     async def _handle_reset_command(self) -> None:
         response: str | None = None
@@ -640,13 +939,7 @@ class TUIInterface:
             response = await reset_command.handler()
 
         await self._reset_interface_state()
-        await self.chat_updates.put(
-            (
-                "System",
-                response or "Agent reset. Starting fresh.",
-                "system",
-            )
-        )
+        await self.chat_updates.put(("System", response or "Agent reset. Starting fresh.", "system"))
 
     async def _reset_interface_state(self) -> None:
         self._tracked_sessions.clear()
@@ -666,7 +959,7 @@ class TUIInterface:
                 if trigger.session_id:
                     self._tracked_sessions.add(trigger.session_id)
                 await self._agent.react(trigger)
-        except asyncio.CancelledError:  # pragma: no cover - event loop teardown
+        except asyncio.CancelledError:  # pragma: no cover
             raise
 
     async def _watch_events(self) -> None:
@@ -683,10 +976,6 @@ class TUIInterface:
                             continue
                         self._seen_events.add(key)
 
-                        # Screen events are consumed by GUI clients; skip showing
-                        # them in the TUI to avoid the "Screen summary updated"
-                        # marker while still keeping the markdown in the event
-                        # stream for other consumers.
                         if event.kind == "screen":
                             continue
 
@@ -695,28 +984,22 @@ class TUIInterface:
                         display_text = event.display_text()
 
                         if style in {"action", "task"}:
-                            await self._handle_action_event(
-                                event.kind, display_text, style=style
-                            )
+                            await self._handle_action_event(event.kind, display_text, style=style)
                             continue
 
-                        if style not in {"agent", "system", "user", "error", "info"}: 
+                        if style not in {"agent", "system", "user", "error", "info"}:
                             continue
 
                         if display_text is not None:
                             await self.chat_updates.put((label, display_text, style))
 
                 await asyncio.sleep(0.05)
-        except asyncio.CancelledError:  # pragma: no cover - event loop teardown
+        except asyncio.CancelledError:  # pragma: no cover
             raise
 
-    async def _handle_action_event(
-        self, kind: str, message: str, *, style: str = "action"
-    ) -> None:
+    async def _handle_action_event(self, kind: str, message: str, *, style: str = "action") -> None:
         """Record an action update and refresh the status bar."""
-        await self.action_updates.put(
-            _ActionEntry(kind=kind, message=message, style=style)
-        )
+        await self.action_updates.put(_ActionEntry(kind=kind, message=message, style=style))
         if style == "action":
             status = self._derive_status(kind, message)
             if status != self._status_message:
@@ -760,7 +1043,6 @@ class TUIInterface:
         message_text.overflow = "fold"
 
         table.add_row(label_cell, message_text)
-
         return table
 
     def format_chat_entry(self, label: str, message: str, style: str) -> RenderableType:

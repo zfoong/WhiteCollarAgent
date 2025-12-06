@@ -15,7 +15,6 @@ import os
 from dotenv import load_dotenv
 
 from core.agent_base import AgentBase
-from core.menu import launch_menu
 
 load_dotenv()
 
