@@ -265,11 +265,13 @@ class _CraftApp(App):
     }
     """
 
+    capture_mouse = False
+
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
-        ("ctrl+shift+c", "copy_chat", "Copy chat"),
+        ("ctrl+q", "quit", "Quit"),
+        ("ctrl+c", "copy_chat", "Copy chat"),
         ("ctrl+shift+i", "copy_input", "Copy input"),
-        ("ctrl+shift+v", "paste_input", "Paste"),
+        ("ctrl+v", "paste_input", "Paste"),
     ]
 
     status_text = var("Status: Idle")
