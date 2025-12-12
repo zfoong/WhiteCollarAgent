@@ -281,15 +281,18 @@ class EventStream:
         if rec.event.kind != "action" or not action_name:
             return
 
-        repeated_count = 0
+        consecutive_actions = 0
         for prev in reversed(self.tail_events):
             if prev.event.kind != "action":
                 break
             if prev.event.message != rec.event.message:
                 break
-            repeated_count += prev.repeat_count
 
-        if repeated_count >= 3:
+            consecutive_actions += prev.repeat_count
+            if consecutive_actions >= 3:
+                break
+
+        if consecutive_actions == 3:
             warning_message = (
                 "You have repeated the same action with the same parameters 3 times. "
                 "This is a warning to remind you that you might be stuck in the same action loop due to errors. "
