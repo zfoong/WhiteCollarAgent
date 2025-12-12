@@ -74,6 +74,7 @@ class EventStream:
         rec = EventRecord(event=ev)
 
         self.tail_events.append(rec)
+        self._check_repeated_actions(rec, action_name=action_name)
         self.summarize_if_needed()
         return len(self.tail_events) - 1
 
@@ -266,3 +267,42 @@ class EventStream:
     def clear(self) -> None:
         self.head_summary = None
         self.tail_events.clear()
+
+    # ──────────────────────────── warnings ─────────────────────────────
+
+    def _check_repeated_actions(self, rec: EventRecord, *, action_name: str | None) -> None:
+        """Detect repeated action attempts with identical parameters.
+
+        If the same action with the same parameters is logged three times
+        consecutively, emit a warning event to alert that the agent may be
+        stuck in a loop.
+        """
+
+        if rec.event.kind != "action" or not action_name:
+            return
+
+        repeated_count = 0
+        for prev in reversed(self.tail_events):
+            if prev.event.kind != "action":
+                break
+            if prev.event.message != rec.event.message:
+                break
+            repeated_count += prev.repeat_count
+
+        if repeated_count >= 3:
+            warning_message = (
+                "You have repeated the same action with the same parameters 3 times. "
+                "This is a warning to remind you that you might be stuck in the same action loop due to errors. "
+                "You should perform other actions to complete the task or abort the task. "
+                "However, if this is intended, please proceed as usual."
+            )
+
+            # Avoid duplicate warnings back-to-back.
+            last_event = self.tail_events[-1] if self.tail_events else None
+            if not last_event or last_event.event.message != warning_message:
+                self.log(
+                    "warning",
+                    warning_message,
+                    severity="WARN",
+                    display_message=None,
+                )
