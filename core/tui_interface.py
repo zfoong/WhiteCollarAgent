@@ -28,10 +28,12 @@ if False:  # pragma: no cover
 class _ConversationLog(_BaseLog):
     """RichLog wrapper with robust wrapping + reflow on resize."""
 
+    can_focus = True
+
     def __init__(self, *args, **kwargs) -> None:
         # RichLog params: wrap off by default, min_width=78; override both
         kwargs.setdefault("markup", True)
-        kwargs.setdefault("highlight", False)
+        kwargs.setdefault("highlight", True)
         kwargs.setdefault("wrap", True)  # enable word-wrapping (RichLog)
         kwargs.setdefault("min_width", 1)  # let width track the pane size
         super().__init__(*args, **kwargs)
@@ -265,7 +267,9 @@ class _CraftApp(App):
     """
 
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
+        ("ctrl+c", "copy_focus", "Copy"),
+        ("ctrl+v", "paste_into_input", "Paste"),
     ]
 
     status_text = var("Status: Idle")
@@ -516,6 +520,85 @@ class _CraftApp(App):
         message = event.value.strip()
         event.input.value = ""
         await self._interface.submit_user_message(message)
+
+    async def action_copy_focus(self) -> None:  # pragma: no cover - user-triggered
+        """Copy text from the focused widget to the clipboard."""
+
+        target = self.focused
+
+        if isinstance(target, Input):
+            await self._copy_input(target)
+            return
+
+        if isinstance(target, _ConversationLog):
+            await self._copy_log(target)
+
+    async def action_paste_into_input(self) -> None:  # pragma: no cover - user-triggered
+        """Paste clipboard content into the chat input."""
+
+        chat_input = self.query_one("#chat-input", Input)
+        try:
+            clipboard_text = await self.get_clipboard()
+        except Exception:  # pragma: no cover - clipboard availability varies
+            logger.exception("Failed to read from clipboard")
+            return
+
+        if clipboard_text is None:
+            return
+
+        chat_input.focus()
+
+        cursor = getattr(chat_input, "cursor_position", len(chat_input.value))
+        selection_start = getattr(chat_input, "selection_start", None)
+        selection_end = getattr(chat_input, "selection_end", None)
+
+        if selection_start is None or selection_end is None:
+            start = end = cursor
+        else:
+            start, end = sorted((selection_start, selection_end))
+
+        new_value = chat_input.value[:start] + clipboard_text + chat_input.value[end:]
+        chat_input.value = new_value
+
+        new_cursor = start + len(clipboard_text)
+        if hasattr(chat_input, "cursor_position"):
+            chat_input.cursor_position = new_cursor
+
+    async def _copy_input(self, input_widget: Input) -> None:
+        """Copy selected text (or entire value) from an Input widget."""
+
+        selection_start = getattr(input_widget, "selection_start", None)
+        selection_end = getattr(input_widget, "selection_end", None)
+        value = input_widget.value
+
+        if selection_start is not None and selection_end is not None:
+            start, end = sorted((selection_start, selection_end))
+            selection = value[start:end]
+        else:
+            selection = value
+
+        await self._copy_to_clipboard(selection)
+
+    async def _copy_log(self, log_widget: _ConversationLog) -> None:
+        """Copy the entire contents of a conversation log."""
+
+        parts: list[str] = []
+        for entry in log_widget._history:
+            if isinstance(entry, Text):
+                parts.append(entry.plain)
+            else:
+                parts.append(str(entry))
+
+        await self._copy_to_clipboard("\n".join(parts).strip())
+
+    async def _copy_to_clipboard(self, text: str) -> None:
+        if not text:
+            return
+
+        try:
+            await self.set_clipboard(text)
+        except Exception:  # pragma: no cover - clipboard availability varies
+            logger.exception("Failed to copy to clipboard")
 
     async def action_quit(self) -> None:  # pragma: no cover - user-triggered
         await self._interface.request_shutdown()
