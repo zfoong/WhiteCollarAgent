@@ -1,4 +1,4 @@
-name: craft-agent-lite
+name: white-collar-agent
 channels:
   - conda-forge
   - defaults
