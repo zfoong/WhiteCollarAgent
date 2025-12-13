@@ -82,7 +82,7 @@ class AgentBase:
 
         # LLM + prompt plumbing
         self.llm = LLMInterface(provider=llm_provider, db_interface=self.db_interface)
-        self.vlm = VLMInterface()
+        self.vlm = VLMInterface(provider=llm_provider)
         self.context_engine = ContextEngine()
         self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 

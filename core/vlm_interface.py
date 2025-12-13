@@ -34,9 +34,10 @@ class VLMInterface:
         self.temperature  = temperature
         self.ollama_url   = ollama_url.rstrip("/") + "/api/generate" if "/api/" not in ollama_url else ollama_url
         self.model        = model or (
-            "gpt-4o-2024-08-06"      if provider == "openai" else
-            "gemini-2.5-pro"      if provider == "gemini" else
-            "llava-v1.6"             # remote default
+            "gpt-4o-2024-08-06"              if provider == "openai" else
+            os.getenv("BYTEPLUS_VLM_MODEL", "kimi-k2-vision") if provider == "byteplus" else
+            "gemini-2.5-pro"                if provider == "gemini" else
+            "llava-v1.6"                     # remote default
         )
 
         self._gemini_client: GeminiClient | None = None
@@ -51,8 +52,16 @@ class VLMInterface:
             if not self.api_key:
                 raise EnvironmentError("GOOGLE_API_KEY not set")
             self._gemini_client = GeminiClient(self.api_key)
+        elif provider == "byteplus":
+            self.api_key = os.getenv("BYTEPLUS_API_KEY")
+            if not self.api_key or not self.api_key.strip():
+                raise EnvironmentError("BYTEPLUS_API_KEY is not set")
+            self.byteplus_base_url = os.getenv(
+                "BYTEPLUS_BASE_URL",
+                "https://ark.ap-southeast.bytepluses.com/api/v3",
+            )
 
-    # ───────────────────────── Public ─────────────────────────        
+    # ───────────────────────── Public ─────────────────────────
     # Should only be used when looking for specific attributes/items in
     # the image/screen. For example, the prompt should be "Is the google
     # chrome opened?". A generic prompt will only produce a generic observation
@@ -69,6 +78,8 @@ class VLMInterface:
             return self._ollama_describe_bytes(image_bytes, system_prompt, user_prompt)
         if self.provider == "gemini":
             return self._gemini_describe_bytes(image_bytes, system_prompt, user_prompt)
+        if self.provider == "byteplus":
+            return self._byteplus_describe_bytes(image_bytes, system_prompt, user_prompt)
         raise RuntimeError(f"Unsupported provider {self.provider!r}")
 
     # ───────────────────── Provider helpers ─────────────────────    
@@ -119,6 +130,49 @@ class VLMInterface:
             system_prompt=sys,
             temperature=self.temperature,
         )
+
+    def _byteplus_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
+        img_b64 = base64.b64encode(image_bytes).decode()
+        messages: list[Dict[str, Any]] = []
+        if sys:
+            messages.append({"role": "system", "content": sys})
+
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": usr},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                ],
+            }
+        )
+
+        url = f"{self.byteplus_base_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": 2048,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        response = requests.post(url, json=payload, headers=headers, timeout=120)
+        response.raise_for_status()
+        result = response.json()
+
+        choices = result.get("choices", [])
+        if choices:
+            content = (
+                choices[0].get("message", {}).get("content")
+                or choices[0].get("delta", {}).get("content", "")
+                or ""
+            ).strip()
+            return content
+
+        return ""
 
     def _safe_json(self, text: str) -> Dict[str, Any]:
         """Extract and parse the first JSON object from the model response."""
