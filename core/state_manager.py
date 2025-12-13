@@ -284,7 +284,7 @@ class StateManager:
         except Exception as e:
             # Log for debugging
             print(f"[ScreenState ERROR] {e}")
-            return None
+            return f"[ScreenState ERROR] {e}"
 
     def bump_task_state(self, session_id: str) -> None:
         sess = StateSession.get_or_none()

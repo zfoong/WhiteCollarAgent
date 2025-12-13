@@ -35,8 +35,8 @@ class VLMInterface:
         self.ollama_url   = ollama_url.rstrip("/") + "/api/generate" if "/api/" not in ollama_url else ollama_url
         self.model        = model or (
             "gpt-4o-2024-08-06"              if provider == "openai" else
-            os.getenv("BYTEPLUS_VLM_MODEL", "kimi-k2-vision") if provider == "byteplus" else
-            "gemini-2.5-pro"                if provider == "gemini" else
+            "skylark-vision-250515"          if provider == "byteplus" else
+            "gemini-2.5-pro"                 if provider == "gemini" else
             "llava-v1.6"                     # remote default
         )
 
