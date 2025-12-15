@@ -59,16 +59,3 @@ class ActionLibrary:
     def delete_action(self, action_name: str):
         """Deletes an action from both MongoDB and ChromaDB."""
         self.db_interface.delete_action(action_name)
-    
-# ------------------------------
-# Driver code
-# ------------------------------
-if __name__ == "__main__":
-    from core.database_interface import DatabaseInterface
-    logger.debug("Initializing action library...")
-
-    db_interface = DatabaseInterface()
-    action_library = ActionLibrary(llm_interface=None, db_interface=db_interface)
-
-    logger.debug("Syncing databases...")
-    action_library.sync_databases()

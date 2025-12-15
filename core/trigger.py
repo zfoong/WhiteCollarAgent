@@ -113,6 +113,13 @@ class TriggerQueue:
         ]
 
         return "\n\n".join([section for section in sections if section])
+
+    async def clear(self) -> None:
+        """Remove all pending triggers from the queue."""
+
+        async with self._cv:
+            self._heap.clear()
+            self._cv.notify_all()
         
     # =================================================================
     # PUT

@@ -62,10 +62,11 @@ class PersonalAssistantAgent(AgentBase):
             if hasattr(mod, "register"):
                 mod.register(self.action_library)
 
-if __name__ == "__main__":                     # python -m agents.personal_assistant.agent
+
+if __name__ == "__main__":  # python -m agents.personal_assistant.agent
     import asyncio
     import pathlib
 
-    bundle_dir = pathlib.Path(__file__).parent     # .../agents/personal_assistant
+    bundle_dir = pathlib.Path(__file__).parent  # .../agents/personal_assistant
     agent = PersonalAssistantAgent.from_bundle(bundle_dir)
     asyncio.run(agent.run())

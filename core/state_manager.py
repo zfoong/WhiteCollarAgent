@@ -151,6 +151,20 @@ class StateManager:
         End the session, clearing session context so the next user input starts fresh.
         """
         StateSession.end()
+
+    def clear_conversation_history(self) -> None:
+        """Drop all stored conversation messages for the active user."""
+        self._conversation.clear()
+        self._update_session_conversation_state()
+
+    def reset(self) -> None:
+        """Fully reset runtime state, including tasks and session context."""
+        self.tasks.clear()
+        self.agent_properties = {}
+        self.clear_conversation_history()
+        if self.event_stream_manager:
+            self.event_stream_manager.clear_all()
+        self.end_session()
         
     def _format_conversation_state(self) -> str:
         if not self._conversation:
@@ -270,7 +284,7 @@ class StateManager:
         except Exception as e:
             # Log for debugging
             print(f"[ScreenState ERROR] {e}")
-            return None
+            return f"[ScreenState ERROR] {e}"
 
     def bump_task_state(self, session_id: str) -> None:
         sess = StateSession.get_or_none()

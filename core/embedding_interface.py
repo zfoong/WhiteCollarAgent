@@ -143,25 +143,3 @@ class EmbeddingInterface:
         """
         model_name = model_name.strip()
         return model_name if model_name.startswith("models/") else f"models/{model_name}"
-
-
-if __name__ == "__main__":
-    provider_choice = input("Use 'openai', 'gemini', or 'remote'? ").strip().lower()
-    # Reasonable defaults per provider
-    default_model = {
-        "openai": "text-embedding-3-small",
-        "gemini": "text-embedding-004",
-        "remote": "nomic-embed-text",
-    }.get(provider_choice, "nomic-embed-text")
-
-    model_choice = input(f"Model (leave blank for default '{default_model}'): ").strip() or default_model
-    embedder = EmbeddingInterface(provider=provider_choice, model=model_choice)
-
-    text_input = input("Enter text to embed: ")
-    embedding = embedder.get_embedding(text_input)
-
-    if embedding:
-        logger.debug(f"Embedding vector (first 10 values): {embedding[:10]}")
-        logger.debug(f"Embedding length: {len(embedding)}")
-    else:
-        logger.warning("No embedding was generated.")

@@ -231,19 +231,3 @@ class ContextEngine:
         user_message_content = "\n\n".join(user_content_list).strip()
 
         return system_message_content, user_message_content
-
-
-if __name__ == "__main__":
-    # Example usage:
-
-    context_engine = ContextEngine()
-
-    # Create a prompt
-    final_prompt = context_engine.make_prompt(
-        query="Could you prepare a summary of the latest budget spreadsheet?",
-        expected_format="JSON with keys: 'summary', 'recommendations'"
-    )
-
-    # Print out the structured messages
-    for msg in final_prompt:
-        logger.debug(f"[{msg['role'].upper()}]\n{msg['content']}\n---")

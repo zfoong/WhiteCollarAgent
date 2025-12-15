@@ -30,7 +30,8 @@ from __future__ import annotations
 import traceback
 import time
 import uuid
-from typing import Dict
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Dict
 
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
@@ -50,6 +51,13 @@ from core.task.task_planner import TaskPlanner
 from core.event_stream.event_stream_manager import EventStreamManager
 
 
+@dataclass
+class AgentCommand:
+    name: str
+    description: str
+    handler: Callable[[], Awaitable[str | None]]
+
+
 class AgentBase:
     """
     Foundation class for all agents.
@@ -65,6 +73,7 @@ class AgentBase:
         *,
         data_dir: str = "core/data",
         chroma_path: str = "./chroma_db",
+        llm_provider: str = "byteplus",
     ) -> None:
         # persistence & memory
         self.db_interface = self._build_db_interface(
@@ -72,8 +81,8 @@ class AgentBase:
         )
 
         # LLM + prompt plumbing
-        self.llm = LLMInterface(provider='byteplus', db_interface=self.db_interface)
-        self.vlm = VLMInterface()
+        self.llm = LLMInterface(provider=llm_provider, db_interface=self.db_interface)
+        self.vlm = VLMInterface(provider=llm_provider)
         self.context_engine = ContextEngine()
         self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 
@@ -111,9 +120,9 @@ class AgentBase:
             self.triggers,
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
+            state_manager=self.state_manager,
         )
 
-        self.task_manager.attach_state_manager(self.state_manager)
         InternalActionInterface.initialize(
             self.llm,
             self.task_manager,
@@ -124,6 +133,35 @@ class AgentBase:
         # ── misc ──
         self.is_running: bool = True
         self._extra_system_prompt: str = self._load_extra_system_prompt()
+
+        self._command_registry: Dict[str, AgentCommand] = {}
+        self._register_builtin_commands()
+
+    # ─────────────────────────── commands ──────────────────────────────
+
+    def _register_builtin_commands(self) -> None:
+        self.register_command(
+            "/reset",
+            "Reset the agent state, clearing tasks, triggers, and session data.",
+            self.reset_agent_state,
+        )
+
+    def register_command(
+        self,
+        name: str,
+        description: str,
+        handler: Callable[[], Awaitable[str | None]],
+    ) -> None:
+        """Register a command that can be triggered by user input."""
+
+        self._command_registry[name.lower()] = AgentCommand(
+            name=name.lower(), description=description, handler=handler
+        )
+
+    def get_commands(self) -> Dict[str, AgentCommand]:
+        """Return all registered commands."""
+
+        return self._command_registry
 
     # ─────────────────────────── agent “turn” ────────────────────────────
     async def react(self, trigger: Trigger) -> None:
@@ -394,8 +432,24 @@ class AgentBase:
             sys_msg = f"{self._extra_system_prompt.strip()}\n\n{sys_msg}"
         return sys_msg, usr_msg
 
+    async def reset_agent_state(self) -> str:
+        """Reset runtime state so the agent behaves like a fresh instance."""
+
+        await self.triggers.clear()
+        self.task_manager.reset()
+        self.state_manager.reset()
+        self.event_stream_manager.clear_all()
+
+        return "Agent state reset. Starting fresh." 
+
     # ─────────────────────────── lifecycle ──────────────────────────────
-    async def run(self) -> None:
+    async def run(self, *, provider: str | None = None, api_key: str = "") -> None:
         """Launch the interactive CLI loop."""
-        cli = TUIInterface(self)
+
+        # Allow the TUI to present provider/api-key configuration before chat starts.
+        cli = TUIInterface(
+            self,
+            default_provider=provider or self.llm.provider,
+            default_api_key=api_key,
+        )
         await cli.start()

@@ -405,9 +405,3 @@ class LLMInterface:
                 break
             response = self.generate_response(user_prompt=user_prompt)
             logger.debug(f"AI Response:\n{response}\n")
-
-
-if __name__ == "__main__":  # pragma: no cover
-    provider_choice = input("Use 'openai', 'gemini', 'byteplus', or 'remote'? ").strip().lower()
-    llm = LLMInterface(provider=provider_choice)
-    llm._cli()
