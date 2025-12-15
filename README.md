@@ -44,6 +44,9 @@ This is an open-source project and is still in development, so we welcome any su
 - 🧰 **Actions Library** — Reusable tools (web search, code execution, I/O, etc.).  
 - 🪶 **Lightweight & Cross-Platform** — Works seamlessly across Linux and Windows.
 
+> [!IMPORTANT]
+> **Note for GUI mode:** The GUI mode is still in experimental phase. This means you will encounter a lot of issues when the agent decides to switch to GUI mode. We are still working on it.
+
 ## 🔜 Roadmap
 
 - [ ] **Memory Module** — Coming next!
