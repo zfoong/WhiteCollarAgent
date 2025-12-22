@@ -37,7 +37,7 @@ class ModelFactory:
                 "model": model,
                 "client": OpenAI(api_key=api_key),
                 "gemini_client": None,
-                "ollama_url": None,
+                "remote_url": None,
                 "byteplus": None,
             }
 
@@ -51,7 +51,7 @@ class ModelFactory:
                 "model": model,
                 "client": None,
                 "gemini_client": GeminiClient(api_key),
-                "ollama_url": None,
+                "remote_url": None,
                 "byteplus": None,
             }
 
@@ -65,7 +65,7 @@ class ModelFactory:
                 "model": model,
                 "client": None,
                 "gemini_client": None,
-                "ollama_url": None,
+                "remote_url": None,
                 "byteplus": {
                     "api_key": api_key,
                     "base_url": base_url,
@@ -78,7 +78,7 @@ class ModelFactory:
                 "model": model,
                 "client": None,
                 "gemini_client": None,
-                "ollama_url": base_url,
+                "remote_url": base_url,
                 "byteplus": None,
             }
 

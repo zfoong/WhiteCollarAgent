@@ -16,7 +16,7 @@ MODEL_REGISTRY = {
         InterfaceType.VLM: "seed-1-6-flash-250715",
         InterfaceType.EMBEDDING: "seed-1-6-embedding",
     },
-    "ollama": {
+    "remote": {
         InterfaceType.LLM: "llama3",
         InterfaceType.VLM: "llava-v1.6",
         InterfaceType.EMBEDDING: "nomic-embed-text",

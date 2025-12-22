@@ -18,7 +18,7 @@ PROVIDER_CONFIG = {
         default_base_url="https://ark.ap-southeast.bytepluses.com/api/v3",
     ),
     "remote": ProviderConfig(
-        base_url_env="OLLAMA_BASE_URL",
+        base_url_env="REMOTE_MODEL_URL",
         default_base_url="http://localhost:11434",
     ),
 }

@@ -53,7 +53,7 @@ class EmbeddingInterface:
         self.model = ctx["model"]
         self.client = ctx["client"]
         self._gemini_client = ctx["gemini_client"]
-        self.ollama_url = ctx["ollama_url"]
+        self.ollama_url = ctx["remote_url"]
 
         if ctx["byteplus"]:
             self.api_key = ctx["byteplus"]["api_key"]
