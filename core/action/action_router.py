@@ -53,8 +53,6 @@ class ActionRouter:
         self,
         query: str,
         action_type: Optional[str] = None,
-        *,
-        context: str = "",
     ) -> Dict[str, Any]:
         """
         default action selection function when not in a task
@@ -84,7 +82,6 @@ class ActionRouter:
         prompt = SELECT_ACTION_PROMPT.format(
             query=query,
             action_candidates=self._format_candidates(action_candidates),
-            context=self._format_context(context),
         )
 
         decision = await self._prompt_for_decision(prompt)
@@ -101,8 +98,7 @@ class ActionRouter:
         query: str,
         action_type: Optional[str] = None,
         GUI_mode=False,
-        *,
-        context: str = "",
+        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
         When a task is running, this action selection will be used.
@@ -137,7 +133,8 @@ class ActionRouter:
             })
     
         # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=100)
+        candidate_names = self.action_library.search_action(query, top_k=5)
+        logger.info(f"ActionRouter found candidate actions: {candidate_names}")
         for name in candidate_names:
             act = self.action_library.retrieve_action(name)
             if not act:
@@ -160,7 +157,7 @@ class ActionRouter:
         # Build the instruction prompt for the LLM
         prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             query=query,
-            context=self._format_context(context),
+            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
             action_name_candidates=self._format_action_names(action_name_candidates),
         )
@@ -196,6 +193,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
+                system_flags={"agent_info": False, "role_info": False, "conversation_history": False, "event_stream": False, "task_state": False, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             decision, parse_error = self._parse_action_decision(raw_response)
@@ -257,13 +255,13 @@ class ActionRouter:
 
         simplified: List[Dict[str, Any]] = []
         for candidate in candidates:
-            input_schema = candidate.get("input_schema") or {}
-            if isinstance(input_schema, dict):
-                input_fields = list(input_schema.keys())
-            elif isinstance(input_schema, list):
-                input_fields = list(input_schema)
-            else:
-                input_fields = []
+            # input_schema = candidate.get("input_schema") or {}
+            # if isinstance(input_schema, dict):
+            #     input_fields = list(input_schema.keys())
+            # elif isinstance(input_schema, list):
+            #     input_fields = list(input_schema)
+            # else:
+            #     input_fields = []
 
             output_schema = candidate.get("output_schema") or {}
             if isinstance(output_schema, dict):
@@ -275,10 +273,10 @@ class ActionRouter:
 
             simplified.append(
                 {
-                    "name": candidate.get("name", ""),
-                    "description": candidate.get("description", ""),
-                    "input_schema": input_fields,
-                    "output_schema": output_fields,
+                    "name": candidate.get("name"),
+                    "description": candidate.get("description"),
+                    "input_schema": candidate.get("input_schema"),
+                    "output_schema": output_fields
                 }
             )
 
@@ -289,7 +287,7 @@ class ActionRouter:
             return "[]"
         return json.dumps(names, indent=2, ensure_ascii=False)
 
-    def _format_context(self, context: str | list | dict | None) -> str:
+    def _format_reasoning(self, context: str | list | dict | None) -> str:
         if context is None:
             return ""
         if isinstance(context, (list, dict)):

@@ -30,8 +30,9 @@ from __future__ import annotations
 import traceback
 import time
 import uuid
+import json
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Dict
+from typing import Awaitable, Callable, Dict, NamedTuple
 
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
@@ -45,6 +46,7 @@ from core.logger import logger
 from core.context_engine import ContextEngine
 from core.state_manager import StateManager, StateSession
 from core.trigger import Trigger, TriggerQueue
+from core.prompt import STEP_REASONING_PROMPT
 
 from core.task.task_manager import TaskManager
 from core.task.task_planner import TaskPlanner
@@ -57,6 +59,9 @@ class AgentCommand:
     description: str
     handler: Callable[[], Awaitable[str | None]]
 
+class ReasoningResult(NamedTuple):
+    reasoning: str
+    action_query: str
 
 class AgentBase:
     """
@@ -173,14 +178,20 @@ class AgentBase:
         try:
             logger.debug("[REACT] starting...")
 
-            query = trigger.next_action_description
+            query: str = trigger.next_action_description
+            reasoning: str = ""
             gui_mode = trigger.payload.get("gui_mode")
             parent_id = trigger.payload.get("parent_action_id")
 
+            # ===================================
+            # 1. Start Session
+            # ===================================
             await self.state_manager.start_session(session_id, gui_mode)
-
-            # Retrieve state session
             state_session = StateSession.get()
+
+            # ===================================
+            # 2. Handle GUI mode
+            # ===================================
             logger.debug(f"[GUI MODE FLAG] {gui_mode}")
             logger.debug(f"[GUI MODE FLAG - state] {state_session.gui_mode}")
 
@@ -199,24 +210,34 @@ class AgentBase:
 
                 self.state_manager.bump_event_stream(session_id)
 
-            logger.debug(f"[AGENT QUERY] {query}")
+            # ===================================
+            # 3. Select Action
+            # ===================================
             logger.debug("[REACT] selecting action")
-
-            # Decide whether we are in task mode
-            is_running_task = self.state_manager.is_running_task()
+            is_running_task: bool = self.state_manager.is_running_task()
 
             if is_running_task:
+                # Perform reasoning to guide action selection within the task
+                reasoning_result: ReasoningResult = await self.perform_reasoning(query=query)
+                reasoning: str = reasoning_result.reasoning
+                action_query: str = reasoning_result.action_query
+
+                logger.debug(f"[AGENT QUERY] {action_query}")
                 action_decision = await self.action_router.select_action_in_task(
-                    query, context=query
+                    query=action_query, reasoning=reasoning
                 )
             else:
+                logger.debug(f"[AGENT QUERY] {query}")
                 action_decision = await self.action_router.select_action(
-                    query, context=query
+                    query=query
                 )
 
             if not action_decision:
                 raise ValueError("Action router returned no decision.")
 
+            # ===================================
+            # 4. Get Action
+            # ===================================
             action_name = action_decision.get("action_name")
             action_params = action_decision.get("parameters", {})
 
@@ -241,12 +262,14 @@ class AgentBase:
 
             logger.debug(f"[PARENT ACTION ID] {parent_id}")
 
-            # Execute action
+            # ===================================
+            # 5. Execute Action
+            # ===================================
             try:
                 action_output = await self.action_manager.execute_action(
-                    action,
-                    query,
-                    state_session.event_stream,
+                    action=action,
+                    context=reasoning if reasoning else query,
+                    event_stream=state_session.event_stream,
                     parent_id=parent_id,
                     session_id=session_id,
                     is_running_task=is_running_task,
@@ -256,7 +279,9 @@ class AgentBase:
                 logger.error(f"[REACT ERROR] executing action '{action_name}': {e}", exc_info=True)
                 raise
 
-            # Follow-up handling
+            # ===================================
+            # 6. Post-Action Handling
+            # ===================================
             new_session_id = action_output.get("task_id") or session_id
 
             self.state_manager.bump_event_stream(new_session_id)
@@ -304,6 +329,57 @@ class AgentBase:
 
 
     # ───────────────────── helpers used by handlers/commands ──────────────
+
+    async def perform_reasoning(self, query: str, retries: int = 2) -> ReasoningResult:
+        """
+        Perform LLM-based reasoning on a user query to guide action selection.
+
+        This function calls an asynchronous LLM API, validates its structured JSON
+        response, and retries if the output is malformed.
+
+        Args:
+            query (str): The raw user query from the user.
+            retries (int): Number of retry attempts if the LLM returns invalid JSON.
+
+        Returns:
+            ReasoningResult: A validated reasoning result containing:
+                - reasoning: The model's reasoning output
+                - action_query: A refined query used for action selection
+        """
+
+        # Build the system prompt using the current context configuration
+        system_prompt, _ = self.context_engine.make_prompt(
+            user_flags={"query": False, "expected_output": False},
+            system_flags={"policy": False},
+        )
+
+        # Format the user prompt with the incoming query
+        prompt = STEP_REASONING_PROMPT.format(user_query=query)
+
+        # Track the last parsing/validation error for meaningful failure reporting
+        last_error: Exception | None = None
+
+        # Attempt the LLM call and parsing up to (retries + 1) times
+        for attempt in range(retries + 1):
+            # Await the asynchronous LLM call (non-blocking)
+            response = await self.llm.generate_response_async(
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+            )
+
+            # Log raw LLM output for debugging and observability
+            print(f"[REASONING attempt={attempt}] {response}")
+
+            try:
+                # Parse and validate the structured JSON response
+                return self._parse_reasoning_response(response)
+
+            except ValueError as e:
+                # Capture the error and retry if attempts remain
+                last_error = e
+
+        # All retries exhausted — fail fast with a clear error
+        raise RuntimeError("Failed to obtain valid reasoning from LLM") from last_error
 
     async def create_new_trigger(self, new_session_id, action_output, state_session):
         """
@@ -428,6 +504,29 @@ class AgentBase:
         self.event_stream_manager.clear_all()
 
         return "Agent state reset. Starting fresh." 
+
+    def _parse_reasoning_response(self, response: str) -> ReasoningResult:
+        """
+        Parse and validate the structured JSON response from the reasoning LLM call.
+        """
+        try:
+            parsed = json.loads(response)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"LLM returned invalid JSON: {response}") from e
+
+        if not isinstance(parsed, dict):
+            raise ValueError(f"LLM response is not a JSON object: {parsed}")
+
+        reasoning = parsed.get("reasoning")
+        action_query = parsed.get("action_query")
+
+        if not isinstance(reasoning, str) or not isinstance(action_query, str):
+            raise ValueError(f"Invalid reasoning schema: {parsed}")
+
+        return ReasoningResult(
+            reasoning=reasoning,
+            action_query=action_query,
+        )
 
     # ─────────────────────────── lifecycle ──────────────────────────────
     async def run(self, *, provider: str | None = None, api_key: str = "") -> None:
