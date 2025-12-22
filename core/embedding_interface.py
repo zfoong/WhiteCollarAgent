@@ -39,43 +39,28 @@ class EmbeddingInterface:
     def __init__(
         self,
         provider: str = "gemini",
-        model: str = "text-embedding-004",
-        ollama_url: str = "http://localhost:11434/api/embeddings",
+        model: str | None = None,
     ):
-        """
-        :param provider: "openai", "gemini", or "remote"
-        :param model: Embedding model name for the chosen provider.
-                      - OpenAI: e.g. "text-embedding-3-small" / "text-embedding-3-large"
-                      - Gemini: e.g. "text-embedding-004" (or "models/text-embedding-004")
-                      - Remote: e.g. "nomic-embed-text" in Ollama
-        :param ollama_url: Base URL for Ollama embeddings endpoint.
-        """
         self.provider = provider.lower()
-        self.model = model
-        self.ollama_url = ollama_url
         self._gemini_client: GeminiClient | None = None
 
-        if self.provider == "openai":
-            if OpenAI is None:
-                raise ImportError("openai package not installed. Run `pip install openai`.")
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise EnvironmentError("OPENAI_API_KEY is not set.")
-            self.client = OpenAI(api_key=api_key)
+        ctx = ModelFactory.create(
+            provider=self.provider,
+            interface=InterfaceType.EMBEDDING,
+            model_override=model,
+        )
 
-        elif self.provider == "gemini":
-            api_key = os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise EnvironmentError("GOOGLE_API_KEY is not set.")
-            self._gemini_client = GeminiClient(api_key)
-            # Normalize model name to include 'models/' prefix if omitted
-            self.model = self._normalize_gemini_model(self.model or "text-embedding-004")
+        self.model = ctx["model"]
+        self.client = ctx["client"]
+        self._gemini_client = ctx["gemini_client"]
+        self.ollama_url = ctx["ollama_url"]
 
-        elif self.provider == "remote":
-            # Nothing else to set up.
-            pass
-        else:
-            raise ValueError("Unsupported provider. Use 'openai', 'gemini', or 'remote'.")
+        if ctx["byteplus"]:
+            self.api_key = ctx["byteplus"]["api_key"]
+            self.byteplus_base_url = ctx["byteplus"]["base_url"]
+
+        if self.provider == "gemini":
+            self.model = self._normalize_gemini_model(self.model)
 
     # ─────────────────────────── Public API ───────────────────────────
     def get_embedding(self, text: str) -> Optional[List[float]]:
