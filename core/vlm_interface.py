@@ -27,12 +27,13 @@ class VLMInterface:
     def __init__(
         self,
         *,
-        provider: str = "gemini",
-        model: str | None = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
         temperature: float = 0.0,
     ) -> None:
         self.provider = provider
         self.temperature = temperature
+        self._gemini_client: GeminiClient | None = None
 
         ctx = ModelFactory.create(
             provider=provider,

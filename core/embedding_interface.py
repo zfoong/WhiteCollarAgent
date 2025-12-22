@@ -17,6 +17,8 @@ from typing import List, Optional
 
 import requests
 
+from core.models.factory import ModelFactory
+from core.models.types import InterfaceType
 from core.logger import logger
 
 # Optional imports so the module works even if some SDKs aren't installed
@@ -38,10 +40,10 @@ class EmbeddingInterface:
 
     def __init__(
         self,
-        provider: str = "gemini",
-        model: str | None = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
     ):
-        self.provider = provider.lower()
+        self.provider = provider
         self._gemini_client: GeminiClient | None = None
 
         ctx = ModelFactory.create(
@@ -58,9 +60,6 @@ class EmbeddingInterface:
         if ctx["byteplus"]:
             self.api_key = ctx["byteplus"]["api_key"]
             self.byteplus_base_url = ctx["byteplus"]["base_url"]
-
-        if self.provider == "gemini":
-            self.model = self._normalize_gemini_model(self.model)
 
     # ─────────────────────────── Public API ───────────────────────────
     def get_embedding(self, text: str) -> Optional[List[float]]:
@@ -79,6 +78,8 @@ class EmbeddingInterface:
             return self._get_gemini_embedding(text)
         elif self.provider == "remote":
             return self._get_ollama_embedding(text)
+        elif self.provider == "byteplus":
+            return self._get_byteplus_embedding(text)
         else:  # pragma: no cover
             raise RuntimeError(f"Unknown provider {self.provider!r}")
 
@@ -105,6 +106,33 @@ class EmbeddingInterface:
             logger.exception(f"Error calling Gemini Embedding API: {e}")
             return None
 
+    def _get_byteplus_embedding(self, text: str) -> Optional[List[float]]:
+        try:
+            url = f"{self.byteplus_base_url.rstrip('/')}/embeddings/multimodal"
+            payload = {
+                "model": self.model,
+                "input": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    }
+                ],
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            }
+            response = requests.post(url, json=payload, headers=headers, timeout=120)
+            response.raise_for_status()
+            result = response.json()
+            data = result.get("data")
+            if not data:
+                return None
+            return data.get("embedding")
+        except Exception as e:
+            logger.exception(f"Error calling Ollama Embedding API: {e}")
+            return None
+
     def _get_ollama_embedding(self, text: str) -> Optional[List[float]]:
         try:
             payload = {
@@ -119,12 +147,3 @@ class EmbeddingInterface:
         except Exception as e:
             logger.exception(f"Error calling Ollama Embedding API: {e}")
             return None
-
-    # ─────────────────────────── Utilities ───────────────────────────
-    @staticmethod
-    def _normalize_gemini_model(model_name: str) -> str:
-        """
-        Ensure Gemini embedding model names have the 'models/' prefix that the SDK expects.
-        """
-        model_name = model_name.strip()
-        return model_name if model_name.startswith("models/") else f"models/{model_name}"

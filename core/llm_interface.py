@@ -56,6 +56,7 @@ class LLMInterface:
         self.db_interface = db_interface
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self._gemini_client: GeminiClient | None = None
 
         INFO_KEY = "singleton"
         info = (db_interface.get_agent_info(INFO_KEY) if db_interface else {}) or {}
