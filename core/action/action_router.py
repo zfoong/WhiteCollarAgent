@@ -133,7 +133,7 @@ class ActionRouter:
             })
     
         # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=7)
+        candidate_names = self.action_library.search_action(query, top_k=5)
         logger.info(f"ActionRouter found candidate actions: {candidate_names}")
         for name in candidate_names:
             act = self.action_library.retrieve_action(name)
@@ -255,13 +255,13 @@ class ActionRouter:
 
         simplified: List[Dict[str, Any]] = []
         for candidate in candidates:
-            input_schema = candidate.get("input_schema") or {}
-            if isinstance(input_schema, dict):
-                input_fields = list(input_schema.keys())
-            elif isinstance(input_schema, list):
-                input_fields = list(input_schema)
-            else:
-                input_fields = []
+            # input_schema = candidate.get("input_schema") or {}
+            # if isinstance(input_schema, dict):
+            #     input_fields = list(input_schema.keys())
+            # elif isinstance(input_schema, list):
+            #     input_fields = list(input_schema)
+            # else:
+            #     input_fields = []
 
             output_schema = candidate.get("output_schema") or {}
             if isinstance(output_schema, dict):
@@ -273,10 +273,10 @@ class ActionRouter:
 
             simplified.append(
                 {
-                    "name": candidate.get("name", ""),
-                    "description": candidate.get("description", ""),
-                    "input_schema": input_fields,
-                    "output_schema": output_fields,
+                    "name": candidate.get("name"),
+                    "description": candidate.get("description"),
+                    "input_schema": candidate.get("input_schema"),
+                    "output_schema": output_fields
                 }
             )
 
