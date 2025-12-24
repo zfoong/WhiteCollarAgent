@@ -53,6 +53,12 @@ class ActionLibrary:
         docs = self.db_interface.list_actions(default=True)
         return [Action.from_dict(doc) for doc in docs]
 
+    def get_default_action_names(self) -> set[str]:
+        return {
+            action.name
+            for action in self.retrieve_default_action()
+        }
+
     def search_action(self, query: str, top_k=50) -> List[str]:
         return self.db_interface.search_actions(query, top_k)
 

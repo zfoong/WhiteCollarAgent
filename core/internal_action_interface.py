@@ -9,7 +9,8 @@ from typing import Dict, Any, Optional
 from core.llm_interface import LLMInterface
 from core.vlm_interface import VLMInterface
 from core.task.task_manager import TaskManager
-from core.state_manager import StateManager, StateSession
+from core.state.state_manager import StateManager
+from core.state.state_session import StateSession
 from datetime import datetime
 from core.logger import logger
 from pathlib import Path

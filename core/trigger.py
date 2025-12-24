@@ -14,7 +14,7 @@ from collections import defaultdict, OrderedDict
 from typing import Dict, List, Optional, Any
 from core.logger import logger
 from core.llm_interface import LLMInterface
-from core.state_manager import StateSession
+from core.state.state_session import StateSession
 
 from core.prompt import CHECK_TRIGGERS_STATE_PROMPT
 

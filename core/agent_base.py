@@ -32,7 +32,7 @@ import time
 import uuid
 import json
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Dict, NamedTuple
+from typing import Awaitable, Callable, Dict, NamedTuple, Optional
 
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
@@ -44,9 +44,11 @@ from core.vlm_interface import VLMInterface
 from core.database_interface import DatabaseInterface
 from core.logger import logger
 from core.context_engine import ContextEngine
-from core.state_manager import StateManager, StateSession
+from core.state.state_manager import StateManager
+from core.state.state_session import StateSession
 from core.trigger import Trigger, TriggerQueue
 from core.prompt import STEP_REASONING_PROMPT
+from core.config import MAX_ACTIONS_PER_TASK
 
 from core.task.task_manager import TaskManager
 from core.task.task_planner import TaskPlanner
@@ -73,6 +75,18 @@ class AgentBase:
     * `_register_extra_actions`       → register additional tools
     * `_build_db_interface`           → point to another Mongo/Chroma DB
     """
+
+    state_manager: Optional[StateManager] = None
+
+    @classmethod
+    def get_state_manager(cls) -> StateManager:
+        if cls.state_manager is None:
+            raise RuntimeError(
+                "StateManager not initialized. "
+                "Create an AgentBase instance first."
+            )
+        return cls.state_manager
+
     def __init__(
         self,
         *,
@@ -88,8 +102,6 @@ class AgentBase:
         # LLM + prompt plumbing
         self.llm = LLMInterface(provider=llm_provider, db_interface=self.db_interface)
         self.vlm = VLMInterface(provider=llm_provider)
-        self.context_engine = ContextEngine()
-        self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 
         self.event_stream_manager = EventStreamManager(self.llm)
         
@@ -109,13 +121,15 @@ class AgentBase:
         self.triggers = TriggerQueue(llm=self.llm)
 
         # global state
-        self.state_manager = StateManager(
+        AgentBase.state_manager = StateManager(
             self.event_stream_manager,
             vlm_interface=self.vlm,
         )
+        self.context_engine = ContextEngine(state_manager=AgentBase.get_state_manager())
+        self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 
         self.action_manager = ActionManager(
-            self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, self.state_manager
+            self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, AgentBase.get_state_manager()
         )
         self.action_router = ActionRouter(self.action_library, self.llm, self.context_engine)
 
@@ -125,13 +139,13 @@ class AgentBase:
             self.triggers,
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
-            state_manager=self.state_manager,
+            state_manager=AgentBase.get_state_manager(),
         )
 
         InternalActionInterface.initialize(
             self.llm,
             self.task_manager,
-            self.state_manager,
+            AgentBase.get_state_manager(),
             vlm_interface=self.vlm,
         )
 
@@ -178,15 +192,20 @@ class AgentBase:
         try:
             logger.debug("[REACT] starting...")
 
+            AgentBase.get_state_manager().set_agent_property(
+                "current_task_id", session_id
+            )
+
             query: str = trigger.next_action_description
             reasoning: str = ""
+            current_step_index: int | None = None
             gui_mode = trigger.payload.get("gui_mode")
             parent_id = trigger.payload.get("parent_action_id")
 
             # ===================================
             # 1. Start Session
             # ===================================
-            await self.state_manager.start_session(session_id, gui_mode)
+            await AgentBase.get_state_manager().start_session(session_id, gui_mode)
             state_session = StateSession.get()
 
             # ===================================
@@ -198,7 +217,7 @@ class AgentBase:
             # GUI-mode handling
             if state_session.gui_mode:
                 logger.debug("[GUI MODE] Entered GUI mode.")
-                screen_md = self.state_manager.get_screen_state()
+                screen_md = AgentBase.get_state_manager().get_screen_state()
 
                 if self.event_stream_manager:
                     self.event_stream_manager.log(
@@ -208,13 +227,32 @@ class AgentBase:
                         display_message="Screen summary updated",
                     )
 
-                self.state_manager.bump_event_stream(session_id)
+                AgentBase.get_state_manager().bump_event_stream(session_id)
 
             # ===================================
-            # 3. Select Action
+            # 3. Check current step index against MAX_ACTIONS_PER_TASK
+            # ===================================
+            current_step = AgentBase.get_state_manager().get_current_step(session_id)
+            # if current_step and "step_index" in current_step:
+            #     current_step_index = current_step["step_index"]
+            #     current_index_ratio = (current_step_index + 1) / MAX_ACTIONS_PER_TASK
+            #     logger.debug(f"[REACT] Current step index: {current_step_index}, Ratio: {current_index_ratio:.2f}")
+            #     if current_step_index is not None and current_index_ratio >= 0.8:
+            #         logger.debug(f"[REACT WARNING] Current step index {current_step_index} is over 80% of MAX_ACTIONS_PER_TASK {MAX_ACTIONS_PER_TASK}")
+            #         if self.event_stream_manager:
+            #             self.event_stream_manager.log(
+            #                 session_id,
+            #                 "warning",
+            #                 f"[WARNING] Current step index {current_step_index} is over 80% of MAX_ACTIONS_PER_TASK {MAX_ACTIONS_PER_TASK}. Time to wrap up the task soon by adjusting but do not force and cancel steps.",
+            #                 display_message=None,
+            #             )
+            #             AgentBase.get_state_manager().bump_event_stream(session_id)
+
+            # ===================================
+            # 4. Select Action
             # ===================================
             logger.debug("[REACT] selecting action")
-            is_running_task: bool = self.state_manager.is_running_task()
+            is_running_task: bool = AgentBase.get_state_manager().is_running_task()
 
             if is_running_task:
                 # Perform reasoning to guide action selection within the task
@@ -236,7 +274,7 @@ class AgentBase:
                 raise ValueError("Action router returned no decision.")
 
             # ===================================
-            # 4. Get Action
+            # 5. Get Action
             # ===================================
             action_name = action_decision.get("action_name")
             action_params = action_decision.get("parameters", {})
@@ -251,19 +289,16 @@ class AgentBase:
                     f"Action '{action_name}' not found in the library. "
                     "Check DB connectivity or ensure the action is registered."
                 )
-
+            
             # Determine parent action
             if not parent_id and is_running_task:
-                current_step = self.state_manager.get_current_step(session_id)
                 if current_step and current_step.get("action_id"):
                     parent_id = current_step["action_id"]
 
             parent_id = parent_id or None  # enforce None at root
 
-            logger.debug(f"[PARENT ACTION ID] {parent_id}")
-
             # ===================================
-            # 5. Execute Action
+            # 6. Execute Action
             # ===================================
             try:
                 action_output = await self.action_manager.execute_action(
@@ -280,11 +315,11 @@ class AgentBase:
                 raise
 
             # ===================================
-            # 6. Post-Action Handling
+            # 7. Post-Action Handling
             # ===================================
             new_session_id = action_output.get("task_id") or session_id
 
-            self.state_manager.bump_event_stream(new_session_id)
+            AgentBase.get_state_manager().bump_event_stream(new_session_id)
 
             # Schedule next trigger if continuing a task
             await self.create_new_trigger(new_session_id, action_output, state_session)
@@ -308,7 +343,7 @@ class AgentBase:
 
                     logger.debug("[AGENT BASE] Action failed")
 
-                    self.state_manager.bump_event_stream(session_to_use)
+                    AgentBase.get_state_manager().bump_event_stream(session_to_use)
 
                     logger.debug("[AGENT BASE] Action failed and then bumped")
                     logger.debug(f"[AGENT BASE] Action Output: {action_output}")
@@ -323,7 +358,7 @@ class AgentBase:
         finally:
             # Always end session safely
             try:
-                self.state_manager.end_session()
+                AgentBase.get_state_manager().end_session()
             except Exception:
                 logger.warning("[REACT] Failed to end session safely")
 
@@ -387,14 +422,14 @@ class AgentBase:
         Fully wrapped in try/except so errors do not break the main REACT loop.
         """
         try:
-            if not self.state_manager.is_running_task():
+            if not AgentBase.get_state_manager().is_running_task():
                 # Nothing to schedule if no task is running
                 return
 
             # Resolve current step for parent action ID
             parent_action_id = None
             try:
-                current_step = self.state_manager.get_current_step(new_session_id)
+                current_step = AgentBase.get_state_manager().get_current_step(new_session_id)
                 if current_step:
                     parent_action_id = current_step.get("action_id")
             except Exception as e:
@@ -441,9 +476,9 @@ class AgentBase:
             chat_content = user_input
             logger.info(f"[CHAT RECEIVED] {chat_content}")
             gui_mode = payload.get("gui_mode")
-            await self.state_manager.start_session("", gui_mode)
+            await AgentBase.get_state_manager().start_session("", gui_mode)
 
-            self.state_manager.record_user_message(chat_content)
+            AgentBase.get_state_manager().record_user_message(chat_content)
 
             await self.triggers.put(
                 Trigger(
@@ -500,7 +535,7 @@ class AgentBase:
 
         await self.triggers.clear()
         self.task_manager.reset()
-        self.state_manager.reset()
+        AgentBase.get_state_manager().reset()
         self.event_stream_manager.clear_all()
 
         return "Agent state reset. Starting fresh." 

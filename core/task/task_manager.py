@@ -11,7 +11,7 @@ from core.logger import logger
 from core.database_interface import DatabaseInterface
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.config import AGENT_WORKSPACE_ROOT
-from core.state_manager import StateManager
+from core.state.state_manager import StateManager
 
 class TaskManager:
     def __init__(
@@ -26,8 +26,8 @@ class TaskManager:
         self.triggers = triggers
         self.db_interface = db_interface
         self.event_stream_manager = event_stream_manager
-        self.active: Dict[str, Task] = {}
         self.state_manager = state_manager
+        self.active: Dict[str, Task] = {}
         self.workspace_root = Path(AGENT_WORKSPACE_ROOT)
 
     def reset(self) -> None:

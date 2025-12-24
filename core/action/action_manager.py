@@ -26,7 +26,7 @@ from core.logger import logger
 from core.prompt import RESOLVE_ACTION_INPUT_PROMPT
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.context_engine import ContextEngine
-from core.state_manager import StateManager
+from core.state.state_manager import StateManager
 
 nest_asyncio.apply()
 
@@ -56,7 +56,7 @@ class ActionManager:
         self.context_engine = context_engine
         # Track in-flight actions so we can mark them aborted on shutdown
         self._inflight: dict[str, dict] = {}
-        self.state_manager: StateManager = state_manager
+        self.state_manager = state_manager
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -231,6 +231,9 @@ class ActionManager:
             logger.warning(f"Action {action.name} completed with status: {status}. But no event stream manager to log to.")
         
         logger.debug(f"Persisting final state for action {action.name}...")
+        if action.name not in ['mark task cancel', 'start next step', 'mark task completed', 'send message', 'ask question', 'mark task error', 'switch to CLI mode', 'switch to GUI mode', 'create and start task', 'ignore']:
+            self.state_manager.set_agent_property("action_count", self.state_manager.get_agent_property("action_count") + 1)
+
         self._log_action_history(
             run_id=run_id,
             action=action,
