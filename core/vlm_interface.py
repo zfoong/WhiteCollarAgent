@@ -16,6 +16,8 @@ from PIL import Image
 import pytesseract
 from openai import OpenAI
 
+from core.models.factory import ModelFactory
+from core.models.types import InterfaceType
 from core.google_gemini_client import GeminiClient
 from core.logger import logger
 
@@ -25,42 +27,28 @@ class VLMInterface:
     def __init__(
         self,
         *,
-        provider: str = "gemini",
-        model: str | None = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
         temperature: float = 0.0,
-        ollama_url: str = "http://localhost:11434/api/generate",
     ) -> None:
-        self.provider     = provider
-        self.temperature  = temperature
-        self.ollama_url   = ollama_url.rstrip("/") + "/api/generate" if "/api/" not in ollama_url else ollama_url
-        self.model        = model or (
-            "gpt-4o-2024-08-06"              if provider == "openai" else
-            # "skylark-vision-250515"          if provider == "byteplus" else
-            "seed-1-6-flash-250715"          if provider == "byteplus" else
-            "gemini-2.5-pro"                 if provider == "gemini" else
-            "llava-v1.6"                     # remote default
-        )
-
+        self.provider = provider
+        self.temperature = temperature
         self._gemini_client: GeminiClient | None = None
 
-        if provider == "openai":
-            self.api_key = os.getenv("OPENAI_API_KEY")
-            if not self.api_key:
-                raise EnvironmentError("OPENAI_API_KEY not set")
-            self.client = OpenAI(api_key=self.api_key)
-        elif provider == "gemini":
-            self.api_key = os.getenv("GOOGLE_API_KEY")
-            if not self.api_key:
-                raise EnvironmentError("GOOGLE_API_KEY not set")
-            self._gemini_client = GeminiClient(self.api_key)
-        elif provider == "byteplus":
-            self.api_key = os.getenv("BYTEPLUS_API_KEY")
-            if not self.api_key or not self.api_key.strip():
-                raise EnvironmentError("BYTEPLUS_API_KEY is not set")
-            self.byteplus_base_url = os.getenv(
-                "BYTEPLUS_BASE_URL",
-                "https://ark.ap-southeast.bytepluses.com/api/v3",
-            )
+        ctx = ModelFactory.create(
+            provider=provider,
+            interface=InterfaceType.VLM,
+            model_override=model,
+        )
+
+        self.model = ctx["model"]
+        self.client = ctx["client"]
+        self._gemini_client = ctx["gemini_client"]
+        self.remote_url = ctx["remote_url"]
+
+        if ctx["byteplus"]:
+            self.api_key = ctx["byteplus"]["api_key"]
+            self.byteplus_base_url = ctx["byteplus"]["base_url"]
 
     # ───────────────────────── Public ─────────────────────────
     # Should only be used when looking for specific attributes/items in
@@ -116,7 +104,8 @@ class VLMInterface:
             "stream": False,
             "temperature": self.temperature,
         }
-        r = requests.post(self.ollama_url, json=payload, timeout=120)
+        url: str = f"{self.remote_url.rstrip('/')}/vision"
+        r = requests.post(url, json=payload, timeout=120)
         r.raise_for_status()
         return r.json().get("response", "").strip()
     
