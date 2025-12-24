@@ -743,18 +743,6 @@ Task-specific rules:
 - The status of the first step must be "current".
 - The step name MUST be in plain English without underscore "_".
 - When making the plan, you do not have to keep asking the user to confirm things that you already know and minor things that do not affect the task.
-- MAX ACTIONS CONSTRAINT:
-  • The total number of actions in the task MUST NOT exceed limit.
-  • Use fewer actions whenever possible.
-  • If the task is simple, use significantly fewer actions.
-  • Do NOT split actions artificially to reach the limit.
-  • If the limit is above 80%, consider merging steps or removing non-essential actions.
-  • If the limit is above 90%, consider removing non-essential steps or actions.
-  • If the limit is above 95%, consider aborting the task and informing the user that the task is too complex to be completed within the action limit.
-- MAX TOKENS CONSTRAINT:
-  • The total number of tokens in the task plan MUST NOT exceed limit.
-  • If limit is above 80%, inform the user that the task is too complex and consider simplifying the task.
-  • If limit is above 95%, consider aborting the task and informing the user that the task is too complex to be completed within the token limit.  
 
 MOST IMPORTANT RULES THAT YOU HAVE TO FOLLOW REGARDLESS OF ANYTHING ELSE:
 - When making plan, you do not have to keep asking the user to confirm things that you already know and minor things that do not affect the task. Doing so is annoying to the user so DO NOT keep bothering the user if you can complete the task autonomously.
@@ -853,18 +841,6 @@ Task-specific rules for updating the task:
 - When the user requirement is fulfilled, update all status to "completed", except those that are "failed" or "skipped".
 - Each step in the task can take multiple actions to complete. In this case, you do not have to update the plan and should return an empty list. However, you must recognize that the agent might be stuck in a step after an endless loop of retrying. When this happens, you MUST change the plan.
 - When making or updating the plan, you do not have to keep asking the user to confirm things that you already know and minor things that do not affect the task. Doing so is annoying to the user, so DO NOT keep bothering the user if you can complete the task autonomously.
-- MAX ACTIONS CONSTRAINT:
-  • The total number of actions in the task MUST NOT exceed limit.
-  • Use fewer actions whenever possible.
-  • If the task is simple, use significantly fewer actions.
-  • Do NOT split actions artificially to reach the limit.
-  • If the limit is above 80%, consider merging steps or removing non-essential actions.
-  • If the limit is above 90%, consider removing non-essential steps or actions.
-  • If the limit is above 95%, consider aborting the task and informing the user that the task is too complex to be completed within the action limit.
-- MAX TOKENS CONSTRAINT:
-  • The total number of tokens in the task plan MUST NOT exceed limit.
-  • If limit is above 80%, inform the user that the task is too complex and consider simplifying the task.
-  • If limit is above 95%, consider aborting the task and informing the user that the task is too complex to be completed within the token limit.  
 
 Important rules you must follow:
 - DO NOT keep spamming the user. If one step is stuck, you have to move on. You must determine if you are stuck on the same step by reading the event stream.

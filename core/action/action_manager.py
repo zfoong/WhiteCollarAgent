@@ -258,8 +258,7 @@ class ActionManager:
             logger.warning(f"Action {action.name} completed with status: {status}. But no event stream manager to log to.")
         
         logger.debug(f"Persisting final state for action {action.name}...")
-        if action.name not in ['mark task cancel', 'start next step', 'mark task completed', 'send message', 'ask question', 'mark task error', 'switch to CLI mode', 'switch to GUI mode', 'create and start task', 'ignore']:
-            self.state_manager.set_agent_property("action_count", self.state_manager.get_agent_property("action_count") + 1)
+        self.state_manager.set_agent_property("action_count", self.state_manager.get_agent_property("action_count") + 1)
 
         self._log_action_history(
             run_id=run_id,
