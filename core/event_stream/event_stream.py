@@ -46,6 +46,24 @@ class EventStream:
         max_events: int = 60,
         temp_dir: Path | None = None,
     ) -> None:
+        """
+        Initialize an event stream for a single session or task.
+
+        The stream stores recent events verbatim while rolling older entries
+        into a head summary. Thresholds control when summarization occurs and
+        how many items are preserved after each roll-up. A temporary directory
+        can be provided to externalize very large messages to disk to avoid
+        bloating prompt context.
+
+        Args:
+            session_id: Identifier for the session that owns this stream.
+            llm: Language model interface used when generating summaries.
+            summarize_at: Number of tail events that triggers summarization.
+            tail_keep_after_summarize: Count of most-recent events to retain
+                in full after summarization.
+            max_events: Maximum number of events to emit in prompt snapshots.
+            temp_dir: Optional directory for writing oversized event payloads.
+        """
         self.session_id = session_id
         self.head_summary: Optional[str] = None
         self.llm = llm
@@ -66,6 +84,25 @@ class EventStream:
         display_message: str | None = None,
         action_name: str | None = None,
     ) -> int:
+        """
+        Append a new event to the stream and trigger summarization if needed.
+
+        Messages are optionally externalized to disk when they exceed the inline
+        threshold to keep prompt context lean. The returned index reflects the
+        event's position in the current tail buffer, which can help correlate
+        follow-up updates with prior logs.
+
+        Args:
+            kind: Category describing the event family (e.g., ``"action_start"``).
+            message: Full event message that may be externalized if too long.
+            severity: Importance level; defaults to ``"INFO"`` if unrecognized.
+            display_message: Optional alternative string for UI display.
+            action_name: Action identifier used when generating externalized
+                file names and contextual hints.
+
+        Returns:
+            The zero-based index of the event within ``tail_events``.
+        """
         if severity not in SEVERITIES:
             severity = "INFO"
         msg = self._externalize_message(message.strip(), action_name=action_name)
@@ -123,11 +160,26 @@ class EventStream:
             return message
 
     def summarize_if_needed(self) -> None:
+        """
+        Trigger summarization when the tail exceeds the configured threshold.
+
+        This lightweight guard keeps log volume manageable without requiring
+        callers to track counts. When the threshold is met, the stream defers to
+        :meth:`summarize_by_LLM` to roll up older entries.
+        Can be changed to summarize_by_rule too.
+        """
         if len(self.tail_events) >= self.summarize_at:
             self.summarize_by_LLM()
 
     def summarize_by_rule(self) -> None:
-        """Summarize the oldest chunk of tail_events into head_summary."""
+        """
+        Summarize the oldest events using a deterministic rule-based strategy.
+
+        The method aggregates counts by event kind and severity, preserves a
+        time window, and notes any deduplicated repeats. It updates
+        ``head_summary`` while trimming the rolled-up events from ``tail_events``
+        so that only the most recent items remain verbatim.
+        """
         if not self.tail_events:
             return
 
@@ -172,8 +224,14 @@ class EventStream:
             
     async def summarize_by_LLM(self) -> None:
         """
-        Force summarization of the oldest chunk using the LLM.
-        Rolls the previous head_summary + oldest tail_events chunk into a new head_summary.
+        Summarize the oldest tail events using the language model.
+
+        The previous ``head_summary`` and compacted tail events are fed to the
+        LLM with a focused prompt that asks for an operational roll-up. On
+        success the head summary is replaced and older events are pruned,
+        keeping only the configured number of recent entries. If the LLM call
+        fails, the method falls back to :meth:`summarize_by_rule` to avoid data
+        loss.
         """
         if not self.tail_events:
             return
@@ -244,7 +302,19 @@ class EventStream:
 
     def to_prompt_snapshot(self, max_events: int = 60, include_summary: bool = True) -> str:
         """
-        Returns a compact snapshot suitable for LLM context.
+        Build a compact, human-readable history for inclusion in LLM prompts.
+
+        The snapshot optionally includes the accumulated ``head_summary`` and
+        then appends up to ``max_events`` of the most recent tail events in
+        their compact string form. An empty stream returns ``"(no events)"`` to
+        make absence explicit.
+
+        Args:
+            max_events: Maximum number of recent events to include from the tail.
+            include_summary: Whether to prepend the rolled-up ``head_summary``.
+
+        Returns:
+            A newline-delimited string ready to embed in an LLM request.
         """
         lines: List[str] = []
         if include_summary and self.head_summary:
@@ -264,5 +334,11 @@ class EventStream:
         return [r.event for r in items]
 
     def clear(self) -> None:
+        """
+        Reset the stream by removing all summaries and tail events.
+
+        This is typically used in tests or when reusing a session identifier for
+        a new task to ensure no stale context leaks between runs.
+        """
         self.head_summary = None
         self.tail_events.clear()

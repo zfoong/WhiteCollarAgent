@@ -1,0 +1,95 @@
+/* docs/stylesheets/extra.css
+   Brand:
+   - coal black: #141517
+   - orange:     #ff4f18
+*/
+
+/* ---------------- Light mode (white UI, black text) ---------------- */
+/* docs/stylesheets/extra.css
+   Fix: force LIGHT mode top bar (header + tabs) to coal black (#141517)
+   Keep highlights/links orange (#ff4f18)
+*/
+
+/* ---------------- Light mode ---------------- */
+:root {
+  /* Header + tabs background */
+  --md-primary-fg-color: #141517 !important; /* header/tabs background */
+  --md-primary-bg-color: #ffffff !important; /* header/tabs text/icons */
+
+  /* Orange accents everywhere */
+  --md-accent-fg-color: #ff4f18 !important;
+  --md-typeset-a-color: #ff4f18 !important;
+  --md-typeset-mark-color: #ff4f1840;
+}
+
+/* Hard-force the actual elements (prevents any leftover blue) */
+.md-header,
+.md-tabs {
+  background-color: #141517 !important;
+  color: #ffffff !important;
+}
+
+/* Tabs text */
+.md-tabs__link {
+  color: #ffffffcc !important;
+}
+.md-tabs__link--active,
+.md-tabs__link:hover {
+  color: #ffffff !important;
+}
+
+/* Orange underline/indicator for active tab */
+.md-tabs__link--active {
+  border-bottom: 2px solid #ff4f18 !important;
+}
+
+/* Active/hover nav links should be orange */
+.md-nav__link--active,
+.md-nav__link:hover,
+.md-typeset a:hover {
+  color: #ff4f18 !important;
+}
+
+/* Search box styling in header */
+.md-search__form {
+  background-color: #1c1d20 !important;
+}
+.md-search__input,
+.md-search__input::placeholder {
+  color: #ffffff !important;
+}
+
+/* Text selection highlight */
+::selection { background: #ff4f1840; }
+::-moz-selection { background: #ff4f1840; }
+
+/* ---------------- Dark mode (keep as you already wanted) ---------------- */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #141517 !important;
+  --md-primary-bg-color: #ffffff !important;
+  --md-accent-fg-color: #ff4f18 !important;
+  --md-typeset-a-color: #ff4f18 !important;
+  --md-typeset-mark-color: #ff4f1840;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ddd !important;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #eee !important;
+}
+
+/* When dragging / active (this is the "highlighted" blue state) */
+::-webkit-scrollbar-thumb:active {
+  background: #ddd !important;
+}
+
+/* Firefox */
+* {
+  scrollbar-color: #ddd transparent !important;
+}
+
+/* Optional: prevent blue tap highlight on some browsers */
+* {
+  -webkit-tap-highlight-color: transparent;
+}

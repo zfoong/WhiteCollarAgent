@@ -18,13 +18,40 @@ from core.task.task import Task
 # TaskPlanner
 class TaskPlanner:
     def __init__(self, llm_interface, db_interface: Optional[DatabaseInterface] = None, fewshot_top_k: int = 1, context_engine: Optional[ContextEngine] = None):
+        """
+        Interface between high-level task descriptions and the LLM planner.
+
+        The planner owns prompt construction, few-shot retrieval, and
+        serialization helpers required to produce actionable task plans. It can
+        optionally leverage stored task documents as examples to guide plan
+        quality.
+
+        Args:
+            llm_interface: Client used to send prompts to the language model.
+            db_interface: Optional database layer for retrieving few-shot task
+                documents.
+            fewshot_top_k: Number of example task documents to include in the
+                prompt when available.
+            context_engine: Optional engine for generating system prompts and
+                contextual wrappers.
+        """
         self.llm_interface = llm_interface
         self.db_interface = db_interface
         self.fewshot_top_k = fewshot_top_k
         self.context_engine = context_engine or ContextEngine()
 
     async def plan_task(self, task_name: str, task_instruction: str) -> str:
-        """Ask the LLM for an initial plan as a JSON list (string)."""
+        """
+        Request an initial step-by-step plan from the LLM.
+
+        Args:
+            task_name: Name of the task being planned (for logging/trace).
+            task_instruction: Natural-language instruction provided by the
+                caller describing the desired outcome.
+
+        Returns:
+            A JSON string representing the planned steps produced by the LLM.
+        """
         logger.debug("[TaskPlanner] Generating initial plan from LLM...")
         plan_json = await self.ask_plan(task_instruction)
         return plan_json
@@ -41,6 +68,21 @@ class TaskPlanner:
         Ask the LLM to update the plan given current steps + recent events.
         If advance_next=True, the agent is explicitly asking to move to the
         next step; the prompt includes that directive to encourage baton move.
+
+        Args:
+            task_instruction: The original user instruction that anchors the
+                task.
+            task_plan: Current representation of the plan (``Task`` or raw
+                JSON-compatible object) to be included in the prompt.
+            event_stream: Serialized recent events that should inform the
+                updated plan.
+            advance_next: Whether to explicitly request movement to the next
+                step in the refreshed plan.
+
+        Returns:
+            A JSON string representing the updated plan, or a serialized
+            snapshot of the provided plan when serialization or the LLM call
+            fails.
         """
         try:
             directive = "\n\n[AGENT DIRECTIVE] advance_next = true" if advance_next else ""
@@ -74,6 +116,15 @@ class TaskPlanner:
             return fallback_snapshot
 
     async def ask_plan(self, user_query: str) -> str:
+        """
+        Build and send the initial planning prompt to the LLM.
+
+        Args:
+            user_query: Natural-language description of the task to plan.
+
+        Returns:
+            A JSON string representing the LLM's proposed plan.
+        """
         base_prompt = ASK_PLAN_PROMPT.format(user_query=user_query)
         prompt = self._augment_prompt_with_fewshots(base_prompt, user_query)
         system_prompt, _ = self.context_engine.make_prompt(

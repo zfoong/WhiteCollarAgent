@@ -42,7 +42,18 @@ class Event:
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def display_text(self) -> str:
-        """Return the short form that should appear in the CLI."""
+        """
+        Provide a concise message for TUI display without altering the underlying event.
+
+        The display text mirrors ``display_message`` if one was supplied during
+        logging, allowing callers to present a friendlier or truncated value in
+        dashboards while keeping the original ``message`` intact for summaries
+        and debugging.
+
+        Returns:
+            The display-specific message set on the event, or ``None`` when the
+            event should fall back to the full ``message`` value.
+        """
         return self.display_message
 
     @property

@@ -35,6 +35,18 @@ class TriggerQueue:
     """
 
     def __init__(self, llm: LLMInterface) -> None:
+        """
+        Initialize a concurrency-safe trigger queue.
+
+        The queue manages incoming :class:`Trigger` objects using a heap to
+        preserve ordering by ``fire_at`` timestamp and priority. A shared
+        :class:`asyncio.Condition` coordinates producers and consumers so agent
+        loops can await triggers without busy waiting.
+
+        Args:
+            llm: Interface used to resolve conflicts between competing triggers
+                for the same session.
+        """
         self._heap: List[Trigger] = []
         self._cv = asyncio.Condition()
         self.llm = llm
@@ -115,8 +127,13 @@ class TriggerQueue:
         return "\n\n".join([section for section in sections if section])
 
     async def clear(self) -> None:
-        """Remove all pending triggers from the queue."""
+        """
+        Remove all pending triggers from the queue.
 
+        The queue is cleared under the protection of the condition variable so
+        waiting consumers are notified immediately that the queue state has
+        changed.
+        """
         async with self._cv:
             self._heap.clear()
             self._cv.notify_all()
@@ -125,6 +142,17 @@ class TriggerQueue:
     # PUT
     # =================================================================
     async def put(self, trig: Trigger) -> None:
+        """
+        Insert a trigger into the queue, merging with existing session triggers.
+
+        When a trigger arrives for a session that already has queued work, the
+        method consults the LLM to generate a new session identifier that
+        represents the preferred trigger. Existing triggers for that session
+        are removed so the freshest trigger wins.
+
+        Args:
+            trig: Trigger instance describing when and why the agent should act.
+        """
         logger.debug(f"\n[PUT] Incoming trigger for session={trig.session_id}")
         self._print_queue("BEFORE PUT")
 
@@ -180,6 +208,18 @@ class TriggerQueue:
     # GET
     # =================================================================
     async def get(self) -> Trigger:
+        """
+        Retrieve the next trigger to execute, waiting until one is ready.
+
+        The method drains all triggers that are ready to fire, merges triggers
+        belonging to the same session, and returns the highest-priority
+        combined trigger. If no trigger is ready, it waits until either the
+        earliest trigger's ``fire_at`` time arrives or a producer notifies the
+        condition.
+
+        Returns:
+            The next merged :class:`Trigger` ready for execution.
+        """
         logger.debug("\n[GET] CALLED")
         self._print_queue("QUEUE BEFORE GET")
 
@@ -228,10 +268,22 @@ class TriggerQueue:
     # SIZE / LIST
     # =================================================================
     async def size(self) -> int:
+        """
+        Count how many triggers are currently queued.
+
+        Returns:
+            The number of triggers stored in the heap.
+        """
         async with self._cv:
             return len(self._heap)
 
     async def list_triggers(self) -> List[Trigger]:
+        """
+        List the triggers currently in the queue without altering order.
+
+        Returns:
+            A shallow copy of the internal trigger heap contents.
+        """
         async with self._cv:
             return list(self._heap)
 
@@ -239,6 +291,19 @@ class TriggerQueue:
     # FIRE NOW
     # =================================================================
     async def fire(self, session_id: str) -> bool:
+        """
+        Mark a trigger for a given session as ready to fire immediately.
+
+        The ``fire_at`` timestamp for matching triggers is updated to the
+        current time, and waiting consumers are notified.
+
+        Args:
+            session_id: Identifier of the session whose trigger should fire
+                now.
+
+        Returns:
+            ``True`` if at least one trigger was updated, otherwise ``False``.
+        """
         async with self._cv:
             found = False
             for t in self._heap:
@@ -253,6 +318,13 @@ class TriggerQueue:
     # REMOVE SESSIONS
     # =================================================================
     async def remove_sessions(self, session_ids: list[str]) -> None:
+        """
+        Remove all triggers that belong to the provided session identifiers.
+
+        Args:
+            session_ids: Sessions whose queued triggers should be discarded.
+                An empty list leaves the queue unchanged.
+        """
         if not session_ids:
             return
         async with self._cv:

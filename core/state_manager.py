@@ -39,7 +39,22 @@ class StateSession:
         event_stream: str | None,
         gui_mode: bool,
     ) -> None:
-        """Initialise a fresh session with the minimal runtime state."""
+        """
+        Initialise a new in-memory session container for the active user.
+
+        Session are created per task and it stores the initial conversation, 
+        task, and event stream snapshots so downstream components (LLMs, UIs, tools)
+        can read a consistent baseline state. The singleton instance is 
+        replaced on every call, meaning this resets any previously 
+        active session context.
+
+        Args:
+            session_id: Unique identifier for the task that owns the state.
+            conversation_state: snapshot of conversation.
+            current_task: JSON-serialised task state for the workflow currently being executed.
+            event_stream: Event stream buffer that records events happen in task so far.
+            gui_mode: Flag indicating whether the agent is running in GUI mode.
+        """
 
         cls._instance = cls()
         inst = cls._instance
@@ -70,17 +85,28 @@ class StateSession:
     @classmethod
     def get_or_none(cls):
         """
-        Like get(), but returns None if no session is active.
+        Retrieve the current session container if it exists.
+
+        Returns:
+            StateSession | None: The current session, or ``None`` when no
+            session has been started.
         """
         return cls._instance
 
     @classmethod
     def end(cls):
         """
-        End the current session. Session data is cleared.
+        Clear the active session reference.
+
+        Downstream calls to :meth:`get` will raise ``RuntimeError`` until
+        :meth:`start` is invoked again. No persistent state is modified.
         """
         cls._instance = None
 
+    """
+    Call update when state changes to reflect on the latest state.
+    Otherwise the session does not get updated with latest state.
+    """
     def update_conversation_state(self, new_state: str) -> None:
         self.conversation_state = new_state
 
@@ -113,7 +139,15 @@ class StateManager:
     """Manages conversation snapshots, task state, and runtime session data."""
 
     def __init__(self, event_stream_manager: EventStreamManager, vlm_interface=None):
+        """
+        Build a manager responsible for coordinating runtime agent state.
 
+        Args:
+            event_stream_manager: Event stream backend used to persist and
+                retrieve user-visible logs.
+            vlm_interface: Optional visual language model interface used when
+                capturing screen context.
+        """
         # We have two types of state, persistant and session state
         # Persistant state are state that will not be changed frequently,
         # e.g. agent properties
@@ -126,7 +160,20 @@ class StateManager:
         self._conversation: List[ConversationMessage] = []
 
     async def start_session(self, session_id: str = "default", gui_mode: bool = False):
+        """
+        Prepare the singleton :class:`StateSession` for the provided session id.
 
+        The method rebuilds conversation, task, and event stream snapshots from
+        internal caches before delegating to :meth:`StateSession.start`. It is
+        typically invoked whenever a new user interaction begins so the agent
+        can answer with consistent state.
+
+        Args:
+            session_id: Identifier for the logical session being resumed or
+                created.
+            gui_mode: Whether the session should be flagged for GUI-aware
+                behaviour.
+        """
         conversation_state = await self.get_conversation_state()
 
         logger.debug(f"[SESSION ID]: this is the session id: {session_id}")
@@ -148,17 +195,31 @@ class StateManager:
     
     def end_session(self):
         """
-        End the session, clearing session context so the next user input starts fresh.
+        Terminate the current :class:`StateSession` and drop transient context.
+
+        This is safe to call even when no session is active; downstream calls
+        to :meth:`StateSession.get` will error until a new session is started.
         """
         StateSession.end()
 
     def clear_conversation_history(self) -> None:
-        """Drop all stored conversation messages for the active user."""
+        """
+        Remove all recorded conversation messages from memory.
+
+        The formatted conversation snapshot is also refreshed on the active
+        session so that future consumers see an empty history.
+        """
         self._conversation.clear()
         self._update_session_conversation_state()
 
     def reset(self) -> None:
-        """Fully reset runtime state, including tasks and session context."""
+        """
+        Clear all in-memory state managed by the :class:`StateManager`.
+
+        This removes tasks, agent properties, conversation history, and event
+        streams before ending the active session, effectively returning the
+        agent to a clean boot state.
+        """
         self.tasks.clear()
         self.agent_properties = {}
         self.clear_conversation_history()
@@ -180,6 +241,15 @@ class StateManager:
         return "\n".join(lines)
 
     async def get_conversation_state(self) -> str:
+        """
+        Return the current conversation transcript formatted for prompts.
+
+        Only the most recent 25 messages are included to keep context within
+        model token limits.
+
+        Returns:
+            str: Human-readable summary of the conversation history.
+        """
         return self._format_conversation_state()
 
     def _append_conversation_message(self, role: Literal["user", "agent"], content: str) -> None:
@@ -197,14 +267,36 @@ class StateManager:
             sess.update_conversation_state(self._format_conversation_state())
 
     def record_user_message(self, content: str) -> None:
+        """
+        Append a user-authored message to the tracked conversation history.
+
+        Args:
+            content: Raw text of the user's message.
+        """
         self._append_conversation_message("user", content)
         self._update_session_conversation_state()
 
     def record_agent_message(self, content: str) -> None:
+        """
+        Append an agent-authored message to the tracked conversation history.
+
+        Args:
+            content: Raw text of the agent's reply.
+        """
         self._append_conversation_message("agent", content)
         self._update_session_conversation_state()
     
     def get_current_step(self, session_id: str) -> Optional[dict]:
+        """
+        Retrieve the current or next pending step for a workflow.
+
+        Args:
+            session_id: Identifier for the workflow session to inspect.
+
+        Returns:
+            dict | None: The step dictionary marked ``current`` or ``pending``,
+            or ``None`` when the workflow is not found.
+        """
         wf = self.tasks.get(session_id)
         if not wf:
             return None
@@ -217,9 +309,34 @@ class StateManager:
         return None
     
     def get_event_stream_snapshot(self, session_id: str, *, max_events: int = 60) -> str:
+        """
+        Fetch a serialised event stream excerpt for the session.
+
+        Args:
+            session_id: Identifier for the event stream to read.
+            max_events: Maximum number of recent events to include in the
+                snapshot.
+
+        Returns:
+            str: Formatted event stream suitable for display or transmission.
+        """
         return self.event_stream_manager.snapshot(session_id, max_events=max_events)
         
     def get_current_task_state(self, session_id: str) -> Optional[str]:
+        """
+        Build a JSON summary of the current task for the given session.
+
+        The summary includes per-step metadata and high-level workflow inputs
+        so consumers can reconstruct task context without accessing internal
+        structures.
+
+        Args:
+            session_id: Identifier used to locate the workflow in ``tasks``.
+
+        Returns:
+            str | None: Prettified JSON string of the task state, or ``None``
+            when no task is active for the session.
+        """
         wf = self.tasks.get(session_id)
 
         logger.debug(f"[TASK] wf in StateManager: {wf}, session id: {session_id}")
@@ -256,8 +373,19 @@ class StateManager:
 
     def get_screen_state(self) -> Optional[str]:
         """
-        Capture the primary monitor (or the only monitor if single),
-        convert it to PNG bytes in memory, and send to the VLM.
+        Capture a screenshot of the primary display and send it to the VLM.
+
+        The capture occurs entirely in memory: the primary (or only) monitor is
+        grabbed with ``mss``, encoded to PNG bytes, and then forwarded to the
+        configured visual language model interface for analysis.
+
+        Returns:
+            str | None: Response from the visual model, or an error string if
+            capture fails. Raises when no VLM interface is configured.
+
+        Raises:
+            RuntimeError: If the ``vlm_interface`` dependency was not provided
+                at construction time.
         """
         if self.vlm_interface is None:
             raise RuntimeError("StateManager not initialised with VLMInterface.")
@@ -287,6 +415,13 @@ class StateManager:
             return f"[ScreenState ERROR] {e}"
 
     def bump_task_state(self, session_id: str) -> None:
+        """
+        Refresh the session's cached task snapshot from internal state.
+
+        Args:
+            session_id: Identifier of the workflow whose task state should be
+                propagated to :class:`StateSession`.
+        """
         sess = StateSession.get_or_none()
         if sess:
             sess.update_current_task(
@@ -294,6 +429,12 @@ class StateManager:
             )
             
     def bump_event_stream(self, session_id: str) -> None:
+        """
+        Update the session's event stream snapshot from the event manager.
+
+        Args:
+            session_id: Identifier for the event stream to capture.
+        """
         logger.debug(f"Process Started - Bump event stream for id: {session_id}")
         sess = StateSession.get_or_none()
         if sess:
@@ -301,31 +442,69 @@ class StateManager:
             sess.update_event_stream(self.get_event_stream_snapshot(session_id))
             
     async def bump_conversation_state(self) -> None:
+        """
+        Synchronise the session's conversation snapshot with the latest history.
+        """
         sess = StateSession.get_or_none()
         if sess:
             sess.update_conversation_state(await self.get_conversation_state())
 
     def is_running_task_with_id(self, session_id: str) -> bool:
+        """
+        Check whether a workflow with the given session id is tracked.
+
+        Args:
+            session_id: Identifier of the workflow to look up.
+
+        Returns:
+            bool: ``True`` when the workflow exists, ``False`` otherwise.
+        """
         wf = self.tasks.get(session_id)
         if not wf:
             return False
         return True
         
     def is_running_task(self) -> bool:
+        """
+        Determine if any workflows are currently registered.
+
+        Returns:
+            bool: ``True`` when at least one workflow exists.
+        """
         if self.tasks:
             return True
         else:
             return False
     
     def add_to_active_task(self, task_id: str, task: dict):
+        """
+        Add or replace an active workflow definition.
+
+        Args:
+            task_id: Identifier under which the workflow should be stored.
+            task: Workflow payload to persist.
+        """
         self.set_active_task(task_id, task)
 
     # TODO remove duplicate
     def set_active_task(self, task_id: str, task: dict):
+        """
+        Persist the workflow state and update session caches accordingly.
+
+        Args:
+            task_id: Identifier for the workflow being stored.
+            task: Workflow payload to persist.
+        """
         self.tasks[task_id] = task
         self.bump_task_state(task_id)
 
     def remove_active_task(self, task_id: str) -> None:
+        """
+        Remove a workflow from the active tasks list.
+
+        Args:
+            task_id: Identifier of the workflow to remove.
+        """        
         self.tasks.pop(task_id, None)
         sess = StateSession.get_or_none()
         if sess and sess.session_id == task_id:

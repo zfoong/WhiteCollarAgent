@@ -21,18 +21,30 @@ class ActionLibrary:
     """
 
     def __init__(self, llm_interface, db_interface: DatabaseInterface):
+        """
+        Initialize the library responsible for persisting actions.
+
+        Args:
+            llm_interface: LLM client used elsewhere for generating actions.
+            db_interface: Database gateway that handles MongoDB/ChromaDB storage.
+        """
         self.llm_interface = llm_interface
         self.db_interface = db_interface
 
     def store_action(self, action: Action):
-        """Stores an action using the database interface."""
+        """
+        Persist an action definition and stamp its update time.
+
+        Args:
+            action: Action instance to serialize and store.
+        """
         action_dict = action.to_dict()
         action_dict["updatedAt"] = datetime.datetime.utcnow().isoformat()
         self.db_interface.store_action(action_dict)
 
     def sync_databases(self):
         """
-        Ensures that all actions stored in MongoDB are also present in ChromaDB.
+        Ensures that all actions stored in data/actions folder are present in ChromaDB.
         If an action is missing from ChromaDB, it will be added.
         """
         logger.debug("Syncing MongoDB and ChromaDB...")
@@ -43,17 +55,42 @@ class ActionLibrary:
             logger.debug("Databases are already in sync. No missing actions found.")
 
     def retrieve_action(self, action_name: str) -> Optional[Action]:
-        """Retrieves an action by name (case-insensitive)."""
+        """
+        Fetch a single action by name.
+
+        Args:
+            action_name: Case-insensitive name of the action to retrieve.
+
+        Returns:
+            Optional[Action]: Hydrated action instance if found, otherwise ``None``.
+        """
         action_data = self.db_interface.get_action(action_name)
         if action_data:
             return Action.from_dict(action_data)
         return None
 
     def retrieve_default_action(self) -> List[Action]:
+        """
+        Retrieve actions marked as defaults.
+        These actions are always available to the agents regardless of the mode.
+
+        Returns:
+            List[Action]: All default actions stored in the database.
+        """
         docs = self.db_interface.list_actions(default=True)
         return [Action.from_dict(doc) for doc in docs]
 
     def search_action(self, query: str, top_k=50) -> List[str]:
+        """
+        Search for actions using vector similarity.
+
+        Args:
+            query: Natural-language description of the desired action.
+            top_k: Maximum number of action names to return.
+
+        Returns:
+            List[str]: Ranked list of matching action names.
+        """
         return self.db_interface.search_actions(query, top_k)
 
     def delete_action(self, action_name: str):

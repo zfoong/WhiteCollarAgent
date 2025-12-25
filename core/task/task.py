@@ -41,6 +41,19 @@ class Task:
     results: Dict[str, Any] = field(default_factory=dict)
 
     def get_current_step(self) -> Optional[Step]:
+        """
+        Return the step that should be executed next for this task.
+
+        The method first prefers any step explicitly marked as ``current`` to
+        preserve planner intent. If none is marked, it falls back to the first
+        ``pending`` step so execution can continue from the beginning of the
+        queue. If every step is terminal, ``None`` is returned to indicate that
+        the task has fully progressed.
+
+        Returns:
+            The :class:`Step` currently in progress or queued next, or ``None``
+            when no runnable steps remain.
+        """
         # Prefer explicitly marked current
         for step in self.steps:
             if step.status == "current":

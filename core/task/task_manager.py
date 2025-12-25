@@ -22,6 +22,24 @@ class TaskManager:
         event_stream_manager: EventStreamManager,
         state_manager: StateManager,
     ):
+        """
+        Coordinate task lifecycle management, including planning, execution,
+        persistence, and event logging.
+
+        The manager keeps an in-memory map of active :class:`Task` objects,
+        persists changes to the database, synchronizes the state manager, and
+        pushes triggers to the runtime queue to drive execution.
+
+        Args:
+            task_planner: Planner responsible for generating and updating step
+                plans from high-level instructions.
+            triggers: Queue used to schedule next actions for execution.
+            db_interface: Persistence layer for task and step status updates.
+            event_stream_manager: Event stream hub for user-visible progress
+                logging.
+            state_manager: In-memory state tracker for sharing task context
+                with other components.
+        """
         self.task_planner = task_planner
         self.triggers = triggers
         self.db_interface = db_interface
@@ -31,11 +49,34 @@ class TaskManager:
         self.workspace_root = Path(AGENT_WORKSPACE_ROOT)
 
     def reset(self) -> None:
-        """Clear all active tasks and detach any session-linked state."""
+        """
+        Clear all active tasks and detach session state.
+
+        This removes every tracked task from memory without updating storage,
+        which is suitable for test setups or hard resets. Any queued triggers
+        remain unaffected and should be cleaned separately if required.
+        """
         self.active.clear()
 
     # ─────────────────────── Creation ─────────────────────────────────
     async def create_task(self, task_name: str, task_instruction: str) -> str:
+        """
+        Generate a new task plan and register it as active.
+
+        The planner is invoked to break down the requested task into steps. A
+        temporary workspace is provisioned, the plan is normalized into a
+        :class:`Task`, and the result is recorded in the database and event
+        stream. If planning fails, a minimal placeholder step is created so the
+        task can still be surfaced.
+
+        Args:
+            task_name: Human-readable identifier supplied by the caller.
+            task_instruction: Free-form description of the work to be
+                completed.
+
+        Returns:
+            The unique identifier assigned to the created task.
+        """
         task_id = f"{task_name}_{uuid.uuid4().hex[:6]}"
         plan_json = await self.task_planner.plan_task(task_name, task_instruction)
         temp_dir = self._prepare_task_temp_dir(task_id)
@@ -108,6 +149,25 @@ class TaskManager:
         event_stream: str,
         advance_next: bool = False,
     ) -> Tuple[Optional[str], Optional[Step]]:
+        """
+        Refresh the plan for an active task using the latest event context.
+
+        The existing task is re-sent to the planner along with recent
+        event-stream content to produce an updated list of steps. The method
+        preserves or assigns a current step, logs changes, updates persistence
+        and state, and announces the next actionable step when available.
+
+        Args:
+            task_id: Identifier of the active task to refresh.
+            event_stream: Serialized event log representing recent execution
+                feedback.
+            advance_next: Whether the planner should be encouraged to move to
+                the next step during the update.
+
+        Returns:
+            A tuple of the task identifier and the newly current :class:`Step`,
+            or ``(None, None)`` if the task is not active.
+        """
         wf = self.active.get(task_id)
         if not wf:
             logger.warning(f"[TaskManager] No active task found for {task_id}")
@@ -186,6 +246,20 @@ class TaskManager:
 
     # ─────────────────────── Start execution ──────────────────────────────────
     async def start_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        Enqueue the current step of a task for execution.
+
+        The method ensures a step is marked current (assigning an ``action_id``
+        if necessary), schedules a trigger to drive execution, and records the
+        update in the event stream.
+
+        Args:
+            task_id: Identifier of the task whose current step should run.
+
+        Returns:
+            A status payload indicating whether a step was queued or if an
+            error occurred (e.g., task not found or missing current step).
+        """
         wf = self.active.get(task_id)
         if not wf:
             return {"error": "task_not_found"}
@@ -217,6 +291,17 @@ class TaskManager:
 
     # ─────────────────────── New tool-able controls ───────────────────────────
     async def mark_task_completed(self, task_id: str, message: Optional[str] = None) -> bool:
+        """
+        Mark an active task as completed and close any open step.
+
+        Args:
+            task_id: Identifier of the task to finalize.
+            message: Optional completion note to attach to the terminal step
+                and task log.
+
+        Returns:
+            ``True`` if the task existed and was finalized, otherwise ``False``.
+        """
         wf = self.active.get(task_id)
         if not wf:
             return False
@@ -226,6 +311,17 @@ class TaskManager:
         return True
 
     async def mark_task_error(self, task_id: str, message: Optional[str] = None) -> bool:
+        """
+        Finalize a task with an error state.
+
+        Args:
+            task_id: Identifier of the task to close.
+            message: Optional error description recorded against the terminal
+                step and task.
+
+        Returns:
+            ``True`` if the task was present and marked, otherwise ``False``.
+        """
         wf = self.active.get(task_id)
         if not wf:
             return False
@@ -234,6 +330,16 @@ class TaskManager:
         return True
 
     async def mark_task_cancel(self, task_id: str, reason: Optional[str] = None) -> bool:
+        """
+        Cancel a task and mark all unfinished steps accordingly.
+
+        Args:
+            task_id: Identifier of the task to cancel.
+            reason: Optional description of why the cancellation occurred.
+
+        Returns:
+            ``True`` if the task existed and was cancelled, otherwise ``False``.
+        """
         wf = self.active.get(task_id)
         if not wf:
             return False
@@ -254,6 +360,15 @@ class TaskManager:
         Finalize the current step as 'completed' and move to the next step.
         If replan=True, ask the planner to update the plan and advance; the
         resulting 'current' step (which may be newly created) will be used.
+
+        Args:
+            task_id: Identifier of the active task being advanced.
+            replan: Whether to request a fresh plan update before selecting the
+                next step.
+
+        Returns:
+            A status payload describing the next action (queued, completed, or
+            no_next_step) or an error if the task is unknown.
         """
         wf = self.active.get(task_id)
         if not wf:
@@ -309,53 +424,6 @@ class TaskManager:
             await triggers.remove_sessions(session_ids)
         return cancelled
 
-    async def recover_stale_current_steps(self) -> int:
-        count = 0
-        try:
-            items = self.db_interface.find_current_task_steps()
-        except Exception:
-            logger.error("[TaskManager] Failed to query current steps for recovery", exc_info=True)
-            return 0
-        for it in items:
-            wf_id = it.get("task_id")
-            st = it.get("step", {})
-            action_id = st.get("action_id")
-            if not action_id:
-                continue
-            try:
-                self.db_interface.update_step_status(
-                    task_id=wf_id,
-                    action_id=action_id,
-                    status="failed",
-                    failure_message="Agent stopped unexpectedly",
-                )
-            except Exception:
-                logger.error(
-                    f"[TaskManager] Failed to update step status in DB for {action_id}",
-                    exc_info=True,
-                )
-            count += 1
-        return count
-
-    async def abort_current_steps_on_shutdown(self) -> int:
-        total = 0
-        for wf in list(self.active.values()):
-            step = next((s for s in wf.steps if s.status == "current"), None)
-            if not step or not step.action_id:
-                continue
-            try:
-                step.status = "failed"
-                self.db_interface.update_step_status(
-                    task_id=wf.id,
-                    action_id=step.action_id,
-                    status="failed",
-                    failure_message="Agent shutting down",
-                )
-            except Exception:
-                logger.error(f"[TaskManager] Failed to update DB for step {step.action_id}", exc_info=True)
-            total += 1
-        return total
-
     # ─────────────────────── Internal helpers ─────────────────────────────────
     async def _ensure_and_log_current_step(self, wf: Task) -> Optional[Step]:
         """Ensure there is a current step, promote the first pending if needed, and persist the change."""
@@ -409,22 +477,20 @@ class TaskManager:
             self._cleanup_task_temp_dir(wf)
 
     def get_task(self, task_id: str) -> Optional[dict]:
+        """
+        Retrieve a serializable view of an active task.
+
+        Args:
+            task_id: Identifier of the task to fetch.
+
+        Returns:
+            A dictionary representation of the task suitable for JSON
+            serialization, or ``None`` if the task is not active.
+        """
         wf = self.active.get(task_id)
         if not wf:
             return None
         return asdict(wf)
-
-    def print_task_tree(self, task_id: str):
-        wf = self.active.get(task_id)
-        if not wf:
-            logger.warning(f"Task {task_id} not found")
-            return
-        logger.debug(f"Task {wf.id} ({wf.name}) – status: {wf.status}")
-        for idx, step in enumerate(wf.steps, start=1):
-            cursor = "← current" if step.status == "current" else ""
-            logger.debug(
-                f"  {idx:2d}. {step.step_name:<20} [{step.status}]  {step.description}  {cursor}"
-            )
 
     # ─────────────────────── Snapshot merge ───────────────────────────────────
     def _merge_steps(self, old_steps: List[Step], incoming_raw: List[Dict[str, Any]]) -> List[Step]:

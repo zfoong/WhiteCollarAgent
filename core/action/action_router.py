@@ -45,6 +45,14 @@ class ActionRouter:
     """
 
     def __init__(self, action_library: ActionLibrary, llm_interface, context_engine: ContextEngine):
+        """
+        Initialize the router responsible for selecting or creating actions.
+
+        Args:
+            action_library: Repository for storing and retrieving action definitions.
+            llm_interface: LLM client used to reason about which action to run.
+            context_engine: Provider of system prompts and context formatting.
+        """
         self.action_library = action_library
         self.llm_interface = llm_interface
         self.context_engine = context_engine
@@ -63,6 +71,15 @@ class ActionRouter:
         3. Asks the LLM if any candidate is valid, or if a new action is needed.
         4. If new action is needed, create & store it, then return it.
         5. Otherwise, return the chosen existing action with its parameters.
+
+        Args:
+            query: User's request that should be satisfied by an action.
+            action_type: Optional type filter forwarded to the LLM.
+            context: Additional conversational context to ground the prompt.
+
+        Returns:
+            Dict[str, Any]: Parsed decision containing ``action_name`` and
+            ``parameters`` ready for execution or creation.
         """
         conversation_mode_actions = ["send message", "ask question", "create and start task", "ignore"]
         action_candidates = []
@@ -109,6 +126,18 @@ class ActionRouter:
         4. If new action is needed, return an empty action name, and let the outer
            loop create the action.
         5. Otherwise, return the chosen existing action along with parameters.
+        
+        Args:
+            query: Task-level instruction for the next step.
+            action_type: Optional action type hint supplied to the LLM.
+            GUI_mode: Whether the user is interacting through a GUI, affecting
+                which actions are visible.
+            context: Serialized task context to embed in the prompt.
+
+        Returns:
+            Dict[str, Any]: Decision payload with ``action_name`` and
+            normalized ``parameters`` for execution, or an empty ``action_name``
+            when a new action should be created.
         """
         action_candidates = []
         action_name_candidates = []
