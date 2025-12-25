@@ -215,7 +215,7 @@ class ActionManager:
             )
 
 
-            current_step = self.state_manager.get_current_step(session_id)
+            current_step = self.state_manager.get_current_step()
             if current_step:
                 self.event_stream_manager.log(
                     "task", 

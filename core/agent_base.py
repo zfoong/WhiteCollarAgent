@@ -205,7 +205,7 @@ class AgentBase:
             # ===================================
             # 1. Start Session
             # ===================================
-            await AgentBase.get_state_manager().start_session(session_id, gui_mode)
+            await AgentBase.get_state_manager().start_session(gui_mode)
 
             # ===================================
             # 2. Handle GUI mode
@@ -279,7 +279,7 @@ class AgentBase:
             
             # Determine parent action
             if not parent_id and is_running_task:
-                current_step = AgentBase.get_state_manager().get_current_step(session_id)
+                current_step = AgentBase.get_state_manager().get_current_step()
                 if current_step and current_step.get("action_id"):
                     parent_id = current_step["action_id"]
 
@@ -345,7 +345,7 @@ class AgentBase:
         finally:
             # Always end session safely
             try:
-                AgentBase.get_state_manager().end_session()
+                AgentBase.get_state_manager().clean_state()
             except Exception:
                 logger.warning("[REACT] Failed to end session safely")
 
@@ -474,7 +474,7 @@ class AgentBase:
             # Resolve current step for parent action ID
             parent_action_id = None
             try:
-                current_step = AgentBase.get_state_manager().get_current_step(new_session_id)
+                current_step = AgentBase.get_state_manager().get_current_step()
                 if current_step:
                     parent_action_id = current_step.get("action_id")
             except Exception as e:
@@ -521,7 +521,7 @@ class AgentBase:
             chat_content = user_input
             logger.info(f"[CHAT RECEIVED] {chat_content}")
             gui_mode = payload.get("gui_mode")
-            await AgentBase.get_state_manager().start_session("", gui_mode)
+            await AgentBase.get_state_manager().start_session(gui_mode)
 
             AgentBase.get_state_manager().record_user_message(chat_content)
 

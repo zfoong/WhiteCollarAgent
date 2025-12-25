@@ -89,15 +89,13 @@ class InternalActionInterface:
 
         InternalActionInterface.state_manager.record_agent_message(message)
 
-        if STATE and STATE.session_id:
-            session_id = STATE.session_id
-            event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
-            event_stream_manager.log(
-                "agent",
-                message,
-                display_message=message
-            )
-            InternalActionInterface.state_manager.bump_event_stream()
+        event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
+        event_stream_manager.log(
+            "agent",
+            message,
+            display_message=message
+        )
+        InternalActionInterface.state_manager.bump_event_stream()
 
     @staticmethod
     def do_ignore():
@@ -110,15 +108,13 @@ class InternalActionInterface:
 
         InternalActionInterface.state_manager.record_agent_message(question)
 
-        if STATE and STATE.session_id:
-            session_id = STATE.session_id
-            event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
-            event_stream_manager.log(
-                "agent_question",
-                question,
-                display_message=question
-            )
-            InternalActionInterface.state_manager.bump_event_stream()
+        event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
+        event_stream_manager.log(
+            "agent_question",
+            question,
+            display_message=question
+        )
+        InternalActionInterface.state_manager.bump_event_stream()
 
     # ───────────────── CLI and GUI mode ─────────────────
     @staticmethod
@@ -138,9 +134,9 @@ class InternalActionInterface:
             
         task_id = await cls.task_manager.create_task(task_name, task_description)
 
-        await cls.task_manager.start_task(task_id)
-        wf_dict = cls.task_manager.get_task(task_id)
-        cls.state_manager.add_to_active_task(task_id, wf_dict)
+        await cls.task_manager.start_task()
+        wf_dict = cls.task_manager.get_task()
+        cls.state_manager.add_to_active_task(wf_dict)
         return task_id
 
     @classmethod
@@ -148,12 +144,9 @@ class InternalActionInterface:
         """
         End the task as 'completed'. If task_id is None, tries the active one for this session.
         """
-        session_id = STATE.session_id
-        if not session_id:
-            return {"status": "error", "error": "no_active_task"}
         try:
-            ok = await cls.task_manager.mark_task_completed(session_id, message=message)
-            return {"status": "ok" if ok else "error", "task_id": session_id}
+            ok = await cls.task_manager.mark_task_completed(message=message)
+            return {"status": "ok" if ok else "error"}
         except Exception as e:
             logger.error(f"[InternalActions] mark_task_completed failed: {e}", exc_info=True)
             return {"status": "error", "error": str(e)}
@@ -163,12 +156,9 @@ class InternalActionInterface:
         """
         End the task as 'cancelled' (aborted by user). If task_id is None, tries the active one for this session.
         """
-        session_id = STATE.session_id
-        if not session_id:
-            return {"status": "error", "error": "no_active_task"}
         try:
-            ok = await cls.task_manager.mark_task_cancel(session_id, reason=reason)
-            return {"status": "ok" if ok else "error", "task_id": session_id}
+            ok = await cls.task_manager.mark_task_cancel(reason=reason)
+            return {"status": "ok" if ok else "error"}
         except Exception as e:
             logger.error(f"[InternalActions] mark_task_cancel failed: {e}", exc_info=True)
             return {"status": "error", "error": str(e)}
@@ -178,12 +168,9 @@ class InternalActionInterface:
         """
         End the task as 'error'. If task_id is None, tries the active one for this session.
         """
-        session_id = STATE.session_id
-        if not session_id:
-            return {"status": "error", "error": "no_active_task"}
         try:
-            ok = await cls.task_manager.mark_task_error(session_id, message=message)
-            return {"status": "ok" if ok else "error", "task_id": session_id}
+            ok = await cls.task_manager.mark_task_error(message=message)
+            return {"status": "ok" if ok else "error"}
         except Exception as e:
             logger.error(f"[InternalActions] mark_task_error failed: {e}", exc_info=True)
             return {"status": "error", "error": str(e)}
@@ -198,15 +185,11 @@ class InternalActionInterface:
         Advance to the next step. If update_plan=True, request the planner
         to update the plan and advance to the next (possibly newly created) step.
         """
-        session_id = STATE.session_id
-        if not session_id:
-            return {"status": "error", "error": "no_active_task"}
         try:
             result = await cls.task_manager.start_next_step(
-                task_id=session_id,
                 replan=update_plan,
             )
-            return {"status": "ok", "result": result, "task_id": session_id}
+            return {"status": "ok", "result": result}
         except Exception as e:
             logger.error(f"[InternalActions] start_next_step failed: {e}", exc_info=True)
             return {"status": "error", "error": str(e)}

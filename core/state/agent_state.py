@@ -38,7 +38,6 @@ class AgentState:
         gui_mode: Optional[bool] = None,
     ) -> None:
         """Update only fields that changed."""
-        self.session_id = session_id
         self.conversation_state = conversation_state
         self.current_task = current_task
         self.event_stream = event_stream
