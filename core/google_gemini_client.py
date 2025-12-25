@@ -61,7 +61,7 @@ class GeminiClient:
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Generate text for a purely textual prompt."""
         contents = [
             {
@@ -87,7 +87,13 @@ class GeminiClient:
         response = self._post_json(
             f"{_normalise_model_name(model)}:generateContent", payload
         )
-        return self._extract_text(response)
+        total_tokens = response.get("usageMetadata", {}).get("totalTokenCount", 0)
+        content = self._extract_text(response)
+
+        return {
+            "tokens_used": total_tokens,
+            "content": content
+        }
 
     def generate_multimodal(
         self,
