@@ -22,31 +22,20 @@ by specialise agent.
 """
 
 class ContextEngine:
-    """
-    Constructs structured prompts for the LLM by integrating:
-    1) System message components:
-       - Agent info & mechanism
-       - Business info & agent’s role in the business
-       - User identity & info
-       - Instructions (safety, compliance, do/don't)
-       - Environmental, temporal & agent-state cues
-       
-    2) User message components:
-       - Query
-       - Retrieved memory
-       - Reasoning
-       - Expected output format
+    """Build structured prompts for the LLM from runtime state.
+
+    The engine centralizes all context-building logic so callers can request a
+    ready-to-send pair of system and user messages without worrying about where
+    the information originates (conversation history, event stream, etc.).
     """
 
     def __init__(self, state_manager: StateManager, agent_identity="General AI Assistant"):
         """
         Initializes the ContextEngine with optional defaults for each prompt component.
 
-        :param agent_identity: Basic identity or persona of the agent.
-        :param business_info: Dict or string describing the specific business context.
-        :param user_info: Dict or string representing user identity/permissions/preferences.
-        :param instructions: Dict or string with safety guidelines, compliance, do/do-not list, etc.
-        :param environment_state: Dict or string with time/date, conversation/action history, etc.
+        agent_identity:
+            Default identity/persona string to include in the system prompt when
+            no role-specific hook is provided.
         """
         self.agent_identity = agent_identity
         self.system_messages = []

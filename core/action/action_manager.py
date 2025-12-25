@@ -50,6 +50,19 @@ class ActionManager:
                  event_stream_manager: EventStreamManager,
                  context_engine: ContextEngine,
                  state_manager: StateManager):
+        """
+        Build an :class:`ActionManager` that can execute and track actions.
+
+        Args:
+            action_library: Source of action definitions and metadata.
+            llm_interface: LLM client used for input resolution and routing
+                follow-up decisions.
+            db_interface: Persistence layer for action history records.
+            event_stream_manager: Publisher used to log execution events for
+                live task updates.
+            context_engine: Provider for system prompts when prompting the LLM.
+            state_manager: State controller for task progress updates.
+        """
         self.action_library = action_library
         self.llm_interface = llm_interface
         self.db_interface = db_interface
@@ -75,8 +88,27 @@ class ActionManager:
         input_data: Optional[dict] = None,
     ) -> dict: 
         """
-        Run an Action, record the execution, and – via LLM – decide whether to
-        queue a follow-up trigger or declare the task completed.
+        Execute an action and persist the full run lifecycle.
+
+        The method normalizes platform-specific code, resolves inputs (via LLM
+        when necessary), executes either atomic or divisible actions, performs
+        optional observation checks, records status transitions, and logs
+        progress to the event stream.
+
+        Args:
+            action: Action definition to run.
+            context: Textual context for the current conversation or task.
+            event_stream: Serialized event stream for the prompt passed to the LLM.
+            parent_id: Optional run identifier when executing as a sub-action.
+            session_id: Session identifier used for logging and persistence.
+            is_running_task: Flag indicating whether the execution is part of an
+                active task workflow (controls logging behavior).
+            input_data: Pre-resolved action inputs. If omitted, inputs are
+                gathered by prompting the LLM.
+
+        Returns:
+            dict: Final output payload of the action execution, including
+            observation results when available.
         """
         # ───────────────────────────────────────────────────────────────────
         # 1. Resolve inputs via LLM
@@ -88,13 +120,8 @@ class ActionManager:
         )
         action.code = platform_code
 
-        if input_data is None:
-            input_data = await self.resolve_action_input(action, context, event_stream)
-        elif not isinstance(input_data, dict):
-            logger.warning(
-                f"Provided action input is not a dict. Falling back to empty dict. action={action.name}"
-            )
-            input_data = {}
+        if not isinstance(input_data, dict):
+            logger.error(f"Provided action input is not a dict. action={action.name}")
 
         logger.debug(f"[INPUT DATA] {input_data}")
         run_id = str(uuid.uuid4())
@@ -280,87 +307,6 @@ class ActionManager:
             started_at=started_at,
             ended_at=ended_at,
         )
-
-    # ------------------------------------------------------------------
-    # Recovery / shutdown helpers
-    # ------------------------------------------------------------------
-
-    async def recover_stale_actions(self) -> int:
-        """
-        On startup, mark any actions left in "running" as "error" locally.
-        """
-        try:
-            stale = self.db_interface.find_actions_by_status("running")
-        except Exception:
-            logger.error("Failed to query stale actions", exc_info=True)
-            return 0
-    
-        recovered = 0
-        for doc in stale:
-            try:
-                run_id = doc.get("runId")
-                if not run_id:
-                    continue
-    
-                ended_at = datetime.utcnow().isoformat()
-                outputs = {
-                    "error": "Agent stopped unexpectedly; marking running action as error",
-                    "error_code": "aborted_by_shutdown"
-                }
-    
-                # Mirror in Mongo (always) so we don't retry next startup
-                class _A:
-                    def __init__(self, name, action_type):
-                        self.name = name
-                        self.action_type = action_type
-    
-                action_stub = _A(doc.get("name", "unknown"), doc.get("type", "atomic"))
-                self._log_action_history(
-                    run_id=run_id,
-                    action=action_stub,
-                    inputs=doc.get("inputs"),
-                    outputs=outputs,
-                    status="error",
-                    started_at=doc.get("startedAt"),
-                    ended_at=ended_at,
-                    parent_id=doc.get("parentId"),
-                    session_id=doc.get("sessionId"),
-                )
-                recovered += 1
-    
-            except Exception:
-                logger.error("Failed to recover action", exc_info=True)
-    
-        return recovered
-
-    async def abort_inflight(self, reason: str = "Agent shutting down") -> int:
-        """Mark all currently in-flight actions as aborted."""
-        aborted = 0
-        for run_id, info in list(self._inflight.items()):
-            try:
-                ended_at = datetime.utcnow().isoformat()
-                outputs = {"error": reason, "error_code": "aborted_by_shutdown"}
-
-                # Mirror in Mongo
-                action = info["action"]
-                self._log_action_history(
-                    run_id=run_id,
-                    action=action,
-                    inputs=info.get("inputs"),
-                    outputs=outputs,
-                    status="error",
-                    started_at=info.get("started_at"),
-                    ended_at=ended_at,
-                    parent_id=info.get("parent_id"),
-                    session_id=info.get("session_id"),
-                )
-                aborted += 1
-            except Exception:
-                logger.error(f"Failed to abort in-flight action {run_id}", exc_info=True)
-            finally:
-                self._inflight.pop(run_id, None)
-        return aborted
-
     # ------------------------------------------------------------------
     # Action execution primitives (unchanged)
     # ------------------------------------------------------------------
@@ -502,80 +448,19 @@ class ActionManager:
     
         return {"success": False, "message": "Observation failed or timed out."}
 
-
-    # ------------------------------------------------------------------
-    # Input‑resolution helper (unchanged)
-    # ------------------------------------------------------------------
-
-    async def resolve_action_input(self, action: Action, context: str, event_stream: str) -> dict:
-        # TODO: add logic to cancel and print error when input schema requires
-        #       more information (ask user / update plan)
-    
-        param_details = []
-        for param_name, param_info in action.input_schema.items():
-            param_type = param_info.get("type", "string")
-            example = param_info.get("example", "")
-            descr = param_info.get("description", "")
-            param_details.append(
-                f"Parameter name: '{param_name}'\n"
-                f"  Type: {param_type}\n"
-                f"  Example: {example}\n"
-                f"  Description: {descr}\n"
-            )
-        param_details_text = "\n".join(param_details)
-
-        current_platform = platform.system().lower() # e.g. 'windows', 'linux', 'darwin'
-        logger.debug(f"My platform: {current_platform}")
-        platform_code = (
-            action.platform_overrides.get(current_platform, {}).get("code", action.code)
-        )
-        logger.debug(f"platform code:\n {platform_code}")
-    
-        prompt = RESOLVE_ACTION_INPUT_PROMPT.format(
-            name=action.name,
-            action_type=action.action_type,
-            description=action.description,
-            code=platform_code,
-            platform=current_platform,
-            param_details_text=param_details_text,
-            context=context,
-            event_stream=event_stream,
-        )
-
-        system_prompt, _ = self.context_engine.make_prompt(
-            user_flags={"query": False, "expected_output": False},
-            system_flags={"event_stream": False},
-        )
-        raw_response = await self.llm_interface.generate_response_async(system_prompt, prompt)
-        normalized = self.normalize_booleans(raw_response)
-        
-        try:
-            input_values = ast.literal_eval(normalized)
-            if not isinstance(input_values, dict):
-                logger.error(
-                    f"[ERROR] Expected dict, got {type(input_values)} | raw_response={raw_response!r}"
-                )
-                input_values = {}
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.error(
-                f"[ERROR] Exception when resolving action input: {e}\n"
-                f"Raw response: {raw_response!r}\n"
-                f"Traceback:\n{tb}"
-            )
-            input_values = {}
-    
-        return input_values
-
     # ------------------------------------------------------------------
     # helper
     # ------------------------------------------------------------------
 
     def get_action_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Retrieve recent action history entries.
+
+        Args:
+            limit: Maximum number of history documents to return.
+
+        Returns:
+            List[Dict[str, Any]]: Collection of run metadata in reverse
+            chronological order.
+        """
         return self.db_interface.get_action_history(limit)
-    
-    def normalize_booleans(self, raw: str) -> str:
-        # Replace lowercase JSON booleans with Python ones
-        raw = re.sub(r"\btrue\b", "True", raw)
-        raw = re.sub(r"\bfalse\b", "False", raw)
-        return raw

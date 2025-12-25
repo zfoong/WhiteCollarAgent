@@ -27,6 +27,40 @@ class Action:
         platforms: List[str] = ["windows", "linux", "darwin"],
         platform_overrides: dict[str, dict] = {}
     ):
+        """
+        Initialize a new :class:`Action` definition.
+
+        An action is the executable unit the agent can pick during routing. It can
+        either be **atomic** (directly runnable code) or **divisible** (a set of
+        sub-actions). Platform overrides can supply platform-specific code or
+        schemas when the same logical action needs different implementations on
+        Windows, Linux, or macOS.
+
+        Args:
+            name: Unique identifier for the action as referenced by routers and tasks.
+            description: Human readable summary of what the action does.
+            action_type: Either ``"atomic"`` or ``"divisible"`` indicating how the
+                action should be executed.
+            code: Python code to execute for atomic actions; ignored when
+                ``action_type`` is ``"divisible"``.
+            mode: Optional UI context flag (e.g., ``"GUI"`` or ``"CLI"``) to control
+                visibility.
+            input_schema: Schema describing expected inputs. Keys are parameter
+                names; values include type, example, and description metadata.
+            output_schema: Schema describing expected outputs in the same format as
+                ``input_schema``.
+            sub_actions: Child actions to run when ``action_type`` is
+                ``"divisible"``.
+            observer: Optional observation step to validate outputs after
+                execution.
+            last_use: Timestamp or marker for last usage, used for analytics.
+            default: Whether this action should be offered as a default choice in
+                routing flows.
+            platforms: Platforms where the action is valid. Defaults to all
+                supported operating systems.
+            platform_overrides: Platform-specific overrides for code and schemas,
+                keyed by lowercase platform name.
+        """
         self.name = name
         self.description = description
         self.action_type = action_type

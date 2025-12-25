@@ -43,9 +43,24 @@ class EventStreamManager:
         action_name: str | None = None,
     ) -> int:
         """
-        Convenience: log directly to a session's event stream.
-        Creates the stream if it does not exist.
-        Returns the index of the logged event.
+        Log directly to a session's event stream, creating it on demand.
+
+        The manager records debug breadcrumbs around stream creation to aid in
+        tracing concurrent tasks. Returned indices match those produced by
+        :meth:`core.event_stream.event_stream.EventStream.log` and can be used
+        to correlate updates.
+
+        Args:
+            session_id: Target stream identifier; a new stream is created when
+                none exists.
+            kind: Event family such as ``"action_start"`` or ``"warn"``.
+            message: Main event text.
+            severity: Importance level, defaulting to ``"INFO"``.
+            display_message: Optional trimmed message for UI surfaces.
+            action_name: Optional action label for file-based externalization.
+
+        Returns:
+            Index of the logged event within the target stream's tail.
         """
         logger.debug(f"Process Started - Logging event to stream: [{severity}] {kind} - {message}")
         stream = self.get_stream()

@@ -2,17 +2,14 @@
 """
 core.agent_base
 
-Generic, extensible agent that powers every role-specific AI worker.
+Generic, extensible agent that serves every role-specific AI worker.
 This is a vanilla “base agent”, can be launched by instantiating **AgentBase**
 with default arguments; specialised agents simply subclass and override
 or extend the protected hooks.
 
-White Collar Agent is an open-sorce, light version of AI agent developed by CraftOS.
+White Collar Agent is an open-source, light version of AI agent developed by CraftOS.
 Here are the core features:
-- Planning (Managed in text file)
-- Single thread (multi-tasking not supported)
-- Single tenant (support only one user)
-- Not proactive (cannot initiate task)
+- Planning
 - Can switch between CLI/GUI mode
 - Contain task document for few-shot examples
 
@@ -84,6 +81,17 @@ class AgentBase:
         chroma_path: str = "./chroma_db",
         llm_provider: str = "byteplus",
     ) -> None:
+        """
+        This constructor that initializes all agent components.
+
+        Args:
+            data_dir: Filesystem path where persistent agent data (plans,
+                history, etc.) is stored.
+            chroma_path: Directory for the local Chroma vector store used by the
+                RAG components.
+            llm_provider: Provider name passed to :class:`LLMInterface` and
+                :class:`VLMInterface`.
+        """        
         # persistence & memory
         self.db_interface = self._build_db_interface(
             data_dir = data_dir, chroma_path=chroma_path
@@ -118,7 +126,7 @@ class AgentBase:
         self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 
         self.action_manager = ActionManager(
-            self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, self.state_manager
+            self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, AgentBase.get_state_manager()
         )
         self.action_router = ActionRouter(self.action_library, self.llm, self.context_engine)
 
@@ -128,13 +136,13 @@ class AgentBase:
             self.triggers,
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
-            state_manager=self.state_manager,
+            state_manager=AgentBase.get_state_manager(),
         )
 
         InternalActionInterface.initialize(
             self.llm,
             self.task_manager,
-            self.state_manager,
+            AgentBase.get_state_manager(),
             vlm_interface=self.vlm,
         )
 
@@ -160,7 +168,19 @@ class AgentBase:
         description: str,
         handler: Callable[[], Awaitable[str | None]],
     ) -> None:
-        """Register a command that can be triggered by user input."""
+        """
+        Register an in-band command that users can invoke from chat.
+
+        Commands are simple hooks (e.g. ``/reset``) that map to coroutine
+        handlers. They are surfaced in the UI and routed via
+        :meth:`get_commands`.
+
+        Args:
+            name: Command string the user types; case-insensitive.
+            description: Human-readable description used in help menus.
+            handler: Awaitable callable that performs the command action and
+                returns an optional message to display.
+        """
 
         self._command_registry[name.lower()] = AgentCommand(
             name=name.lower(), description=description, handler=handler
@@ -173,7 +193,17 @@ class AgentBase:
 
     # ─────────────────────────── agent “turn” ────────────────────────────
     async def react(self, trigger: Trigger) -> None:
-        """Execute one agent turn responding to *trigger* in a resilient manner."""
+        """
+        This is the main agent cycle. It executes a full agent turn in response to an incoming trigger.
+
+        The method routes the request through action selection, execution, and
+        follow-up scheduling while logging to the event stream. Errors are
+        captured and recorded without crashing the outer loop.
+
+        Args:
+            trigger: The :class:`Trigger` wakes agent up, and describes when and why the agent
+                should act, including session context and payload.
+        """
         session_id = trigger.session_id
         new_session_id = None
         action_output = {}  # ensure safe reference in error paths
@@ -228,7 +258,7 @@ class AgentBase:
             # 4. Select Action
             # ===================================
             logger.debug("[REACT] selecting action")
-            is_running_task: bool = self.state_manager.is_running_task()
+            is_running_task: bool = AgentBase.get_state_manager().is_running_task()
 
             if is_running_task:
                 # Perform reasoning to guide action selection within the task
@@ -452,11 +482,21 @@ class AgentBase:
 
     async def _create_new_trigger(self, new_session_id, action_output, STATE):
         """
-        Schedule the next trigger if a task is running.
-        Fully wrapped in try/except so errors do not break the main REACT loop.
+        Schedule a follow-up trigger when a task is ongoing.
+
+        This helper inspects the current task state and enqueues a new trigger
+        so the agent can continue multi-step executions. It is defensive by
+        design so failures do not interrupt the main ``react`` loop.
+
+        Args:
+            new_session_id: Session identifier to continue.
+            action_output: Result dictionary returned by the previous action
+                execution; may contain timing metadata.
+            state_session: The current :class:`StateSession` object, used to
+                propagate session context and payload.
         """
         try:
-            if not self.state_manager.is_running_task():
+            if not AgentBase.get_state_manager().is_running_task():
                 # Nothing to schedule if no task is running
                 return
 
@@ -512,7 +552,7 @@ class AgentBase:
             gui_mode = payload.get("gui_mode")
             await self.state_manager.start_session(gui_mode)
 
-            self.state_manager.record_user_message(chat_content)
+            AgentBase.get_state_manager().record_user_message(chat_content)
 
             await self.triggers.put(
                 Trigger(
@@ -565,11 +605,19 @@ class AgentBase:
     # ────────────────────────── internals ────────────────────────────────
 
     async def reset_agent_state(self) -> str:
-        """Reset runtime state so the agent behaves like a fresh instance."""
+        """
+        Reset runtime state so the agent behaves like a fresh instance.
+
+        Clears triggers, resets task and state managers, and purges event
+        streams. Useful for debugging or user-initiated resets.
+
+        Returns:
+            Confirmation message summarizing the reset.
+        """
 
         await self.triggers.clear()
         self.task_manager.reset()
-        self.state_manager.reset()
+        AgentBase.get_state_manager().reset()
         self.event_stream_manager.clear_all()
 
         return "Agent state reset. Starting fresh." 
@@ -599,7 +647,15 @@ class AgentBase:
 
     # ─────────────────────────── lifecycle ──────────────────────────────
     async def run(self, *, provider: str | None = None, api_key: str = "") -> None:
-        """Launch the interactive CLI loop."""
+        """
+        Launch the interactive TUI loop for the agent.
+
+        Args:
+            provider: Optional provider override passed to the TUI before chat
+                starts; defaults to the provider configured during
+                initialization.
+            api_key: Optional API key presented in the TUI for convenience.
+        """
 
         # Allow the TUI to present provider/api-key configuration before chat starts.
         cli = TUIInterface(

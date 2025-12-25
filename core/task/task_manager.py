@@ -23,6 +23,24 @@ class TaskManager:
         event_stream_manager: EventStreamManager,
         state_manager: StateManager,
     ):
+        """
+        Coordinate task lifecycle management, including planning, execution,
+        persistence, and event logging.
+
+        The manager keeps an in-memory map of active :class:`Task` objects,
+        persists changes to the database, synchronizes the state manager, and
+        pushes triggers to the runtime queue to drive execution.
+
+        Args:
+            task_planner: Planner responsible for generating and updating step
+                plans from high-level instructions.
+            triggers: Queue used to schedule next actions for execution.
+            db_interface: Persistence layer for task and step status updates.
+            event_stream_manager: Event stream hub for user-visible progress
+                logging.
+            state_manager: In-memory state tracker for sharing task context
+                with other components.
+        """
         self.task_planner = task_planner
         self.triggers = triggers
         self.db_interface = db_interface
@@ -37,6 +55,23 @@ class TaskManager:
 
     # ─────────────────────── Creation ─────────────────────────────────
     async def create_task(self, task_name: str, task_instruction: str) -> str:
+        """
+        Generate a new task plan and register it as active.
+
+        The planner is invoked to break down the requested task into steps. A
+        temporary workspace is provisioned, the plan is normalized into a
+        :class:`Task`, and the result is recorded in the database and event
+        stream. If planning fails, a minimal placeholder step is created so the
+        task can still be surfaced.
+
+        Args:
+            task_name: Human-readable identifier supplied by the caller.
+            task_instruction: Free-form description of the work to be
+                completed.
+
+        Returns:
+            The unique identifier assigned to the created task.
+        """
         task_id = f"{task_name}_{uuid.uuid4().hex[:6]}"
         plan_json = await self.task_planner.plan_task(task_name, task_instruction)
         temp_dir = self._prepare_task_temp_dir(task_id)
@@ -249,6 +284,15 @@ class TaskManager:
         Finalize the current step as 'completed' and move to the next step.
         If replan=True, ask the planner to update the plan and advance; the
         resulting 'current' step (which may be newly created) will be used.
+
+        Args:
+            task_id: Identifier of the active task being advanced.
+            replan: Whether to request a fresh plan update before selecting the
+                next step.
+
+        Returns:
+            A status payload describing the next action (queued, completed, or
+            no_next_step) or an error if the task is unknown.
         """
         wf = self.active
         if not wf:

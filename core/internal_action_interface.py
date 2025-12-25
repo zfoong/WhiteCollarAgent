@@ -25,8 +25,8 @@ from uuid import uuid4
 class InternalActionInterface:
     """
     Provides static/class methods so it can be used without instantiation.
-    Calls that need the LLM references can do so via class-level variables.
-    Allow agent to access core functions
+    Allow agent to access internal functions of the WhiteCollarAgent framework
+    via actions.
     """
 
     # Class-level references for LLM
@@ -39,6 +39,23 @@ class InternalActionInterface:
     def initialize(cls, llm_interface: LLMInterface,
                    task_manager: TaskManager, state_manager: StateManager,
                    vlm_interface: VLMInterface | None = None):
+        """
+        Register the shared interfaces that actions depend on.
+
+        This must be called once at application startup so later static calls can
+        access the language model, task manager, state manager, and optional
+        vision model without creating new instances.
+
+        Args:
+            llm_interface: Core large language model interface for text
+                generation and reasoning.
+            task_manager: Orchestrates task creation, execution, and state
+                updates.
+            state_manager: Persists session state and provides access to event
+                streams and agent properties.
+            vlm_interface: Optional vision-language model interface used for
+                image understanding and screen descriptions.
+        """
         cls.llm_interface = llm_interface
         cls.task_manager = task_manager
         cls.state_manager = state_manager
@@ -47,6 +64,22 @@ class InternalActionInterface:
     # ─────────────────────── LLM Access for Actions ───────────────────────
     @classmethod
     def use_llm(cls, prompt: str, system_message: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Generate a response from the configured LLM.
+
+        Args:
+            prompt: User or agent prompt sent to the language model.
+            system_message: Optional system instructions to steer the response
+                style or constraints.
+
+        Returns:
+            A mapping containing the key ``"llm_response"`` with the model
+            output.
+
+        Raises:
+            RuntimeError: If the interface has not been initialised with an
+                :class:`LLMInterface`.
+        """
         if cls.llm_interface is None:
             raise RuntimeError("InternalActionInterface not initialized with LLMInterface.")
         response = cls.llm_interface.generate_response(prompt, system_message)
@@ -54,6 +87,20 @@ class InternalActionInterface:
     
     @classmethod
     def describe_image(cls, image_path: str, prompt: str | None = None) -> str:
+        """
+        Produce a textual description for an image using the VLM.
+
+        Args:
+            image_path: Absolute path to the image to describe.
+            prompt: Optional user prompt to guide the vision-language model.
+
+        Returns:
+            A natural-language description returned by the VLM.
+
+        Raises:
+            RuntimeError: If no :class:`VLMInterface` was configured during
+                initialization.
+        """
         if cls.vlm_interface is None:
             raise RuntimeError("InternalActionInterface not initialized with VLMInterface.")
         return cls.vlm_interface.describe_image(image_path, user_prompt=prompt)
@@ -63,8 +110,17 @@ class InternalActionInterface:
     @classmethod
     def describe_screen(cls) -> dict[str, str]:
         """
-        Capture the entire virtual desktop and return:
-          { 'description': markdown_text, 'file_path': absolute_png_path }
+        Capture the current virtual desktop and describe it with the VLM.
+
+        The screen is saved to a timestamped PNG inside the agent workspace and
+        then passed to the vision model for summarisation.
+
+        Returns:
+            A mapping with the VLM description under ``"description"`` and the
+            saved screenshot path under ``"file_path"``.
+
+        Raises:
+            RuntimeError: If no :class:`VLMInterface` is available.
         """
         if cls.vlm_interface is None:
             raise RuntimeError("InternalActionInterface not initialised with VLMInterface.")
@@ -84,6 +140,15 @@ class InternalActionInterface:
     async def do_chat(
         message: str,
     ) -> None:
+        """
+        Record an agent-authored chat message and publish it to the event stream.
+
+        Args:
+            message: Text content the agent wants to send to the user or log.
+
+        Raises:
+            RuntimeError: If the state manager has not been configured.
+        """
         if InternalActionInterface.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with StateManager.")
 
@@ -99,10 +164,23 @@ class InternalActionInterface:
 
     @staticmethod
     def do_ignore():
+        """
+        Note that the agent chose to ignore the latest user input.
+        """
         logger.debug("[Agent Action] Ignoring user message.")
 
     @staticmethod
     async def do_ask_question(question: str) -> None:
+        """
+        Record and broadcast a follow-up question from the agent.
+
+        Args:
+            question: The clarifying question or information request posed to
+                the user.
+
+        Raises:
+            RuntimeError: If the state manager has not been configured.
+        """
         if InternalActionInterface.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with StateManager.")
 
@@ -128,7 +206,22 @@ class InternalActionInterface:
     # ───────────────── Task Management ─────────────────
     @classmethod
     async def do_create_and_run_task(cls, task_name: str, task_description: str) -> str:
-        
+        """
+        Create a new task and immediately start it.
+
+        The task metadata is persisted and registered as the active task for the
+        current session.
+
+        Args:
+            task_name: Short name for the task.
+            task_description: Detailed description of the work to perform.
+
+        Returns:
+            The created task identifier.
+
+        Raises:
+            RuntimeError: If task or state managers have not been initialised.
+        """
         if cls.task_manager is None or cls.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with Task/State managers.")
             
@@ -142,7 +235,16 @@ class InternalActionInterface:
     @classmethod
     async def mark_task_completed(cls, message: Optional[str] = None) -> Dict[str, Any]:
         """
-        End the task as 'completed'. If task_id is None, tries the active one for this session.
+        Mark the current session task as completed.
+
+        If no session is active, returns an error payload instead of raising.
+
+        Args:
+            message: Optional completion note to store alongside the task.
+
+        Returns:
+            A status dictionary indicating success or failure and the relevant
+            task id.
         """
         try:
             ok = await cls.task_manager.mark_task_completed(message=message)
@@ -154,7 +256,16 @@ class InternalActionInterface:
     @classmethod
     async def mark_task_cancel(cls, reason: Optional[str] = None) -> Dict[str, Any]:
         """
-        End the task as 'cancelled' (aborted by user). If task_id is None, tries the active one for this session.
+        Cancel the current session task.
+
+        If no session is active, returns an error payload instead of raising.
+
+        Args:
+            reason: Optional explanation of why the task was cancelled.
+
+        Returns:
+            A status dictionary indicating success or failure and the relevant
+            task id.
         """
         try:
             ok = await cls.task_manager.mark_task_cancel(reason=reason)
@@ -166,7 +277,16 @@ class InternalActionInterface:
     @classmethod
     async def mark_task_error(cls, message: Optional[str] = None) -> Dict[str, Any]:
         """
-        End the task as 'error'. If task_id is None, tries the active one for this session.
+        Mark the current session task as failed.
+
+        If no session is active, returns an error payload instead of raising.
+
+        Args:
+            message: Optional error detail to store alongside the task.
+
+        Returns:
+            A status dictionary indicating success or failure and the relevant
+            task id.
         """
         try:
             ok = await cls.task_manager.mark_task_error(message=message)
@@ -182,8 +302,18 @@ class InternalActionInterface:
         update_plan: bool = False,
     ) -> Dict[str, Any]:
         """
-        Advance to the next step. If update_plan=True, request the planner
-        to update the plan and advance to the next (possibly newly created) step.
+        Advance the active task to its next step.
+
+        When ``update_plan`` is True, the planner is asked to refresh the plan
+        before moving forward.
+
+        Args:
+            update_plan: Whether to replan the task before starting the next
+                step.
+
+        Returns:
+            A status dictionary indicating success and the planner result, or an
+            error payload when no task is active.
         """
         try:
             result = await cls.task_manager.start_next_step(

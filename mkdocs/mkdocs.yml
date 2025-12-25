@@ -1,0 +1,64 @@
+site_name: White Collar Agent
+repo_url: https://github.com/zfoong/WhiteCollarAgent
+repo_name: zfoong/WhiteCollarAgent
+
+
+theme:
+  name: material
+  favicon: assets/favicon.ico
+  logo: assets/logo.png
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.instant
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.details
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [".."]
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 2
+            members_order: source
+            docstring_section_style: table
+  - gen-files:
+      scripts:
+        - scripts/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - API Reference: reference/
