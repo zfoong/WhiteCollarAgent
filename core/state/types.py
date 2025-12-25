@@ -1,13 +1,24 @@
 from typing import Any, Dict, Literal, TypedDict
 from core.config import MAX_ACTIONS_PER_TASK, MAX_TOKEN_PER_TASK
+from core.logger import logger
 
 class AgentProperties:
     def __init__(self, current_task_id: str, action_count: int):
         self.current_task_id = current_task_id
         self.action_count = action_count
-        self.max_actions_per_task = MAX_ACTIONS_PER_TASK
+        self.max_actions_per_task = MAX_ACTIONS_PER_TASK        
         self.token_count = 0
-        self.max_tokens_per_task = MAX_TOKEN_PER_TASK
+        self.max_tokens_per_task = MAX_TOKEN_PER_TASK        
+        
+        # Validate config value
+        if self.max_actions_per_task < 5:
+            logger.warning(f"[MAX ACTIONS] The maximum actions per task is set to {self.max_actions_per_task}, which is lesser than the minimum. Resetting maximum actions per task to 5")
+            self.max_actions_per_task = 5
+            
+        if self.max_tokens_per_task < 100000:
+            logger.warning(f"[MAX TOKENS] The maximum tokens per task is set to {self.max_tokens_per_task}, which is lesser than the minimum. Resetting maximum tokens per task to 100,000")
+            self.max_tokens_per_task = 100000
+            
 
     # ───────────────
     # Public API

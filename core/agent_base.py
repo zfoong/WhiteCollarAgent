@@ -236,7 +236,7 @@ class AgentBase:
             if STATE.gui_mode:
                 logger.debug("[GUI MODE] Entered GUI mode.")
                 png_bytes = GUIHandler.get_screen_state()
-                screen_md = self.vlm_interface.scan_ui_bytes(png_bytes, use_ocr=False)
+                screen_md = self.vlm.scan_ui_bytes(png_bytes, use_ocr=False)
 
                 if self.event_stream_manager:
                     self.event_stream_manager.log(
@@ -380,12 +380,12 @@ class AgentBase:
 
         # Check action limits
         if (action_count / max_actions) >= 1.0:
-            response = await InternalActionInterface.mark_task_cancel(reason=f"Task reached the maximum actions allowed limit: {max_actions}")
-            task_cancelled: bool = True if response.get('status') == "ok" else Fakse
+            response = await self.task_manager.mark_task_cancel(reason=f"Task reached the maximum actions allowed limit: {max_actions}")
+            task_cancelled: bool = response
             if self.event_stream_manager and task_cancelled:
                 self.event_stream_manager.log(
                     "warning",
-                    f"[Warning] Action limit reached: 100% of the maximum ({max_actions} actions) has been used. Aborting task.",
+                    f"Action limit reached: 100% of the maximum actions ({max_actions} actions) has been used. Aborting task.",
                     display_message=f"Action limit reached: 100% of the maximum ({max_actions} actions) has been used. Aborting task.",
                 )
                 self.state_manager.bump_event_stream()
@@ -394,7 +394,7 @@ class AgentBase:
             if self.event_stream_manager:
                 self.event_stream_manager.log(
                     "warning",
-                    f"[Warning] Action limit nearing: 80% of the maximum ({max_actions} actions) has been used. "
+                    f"Action limit nearing: 80% of the maximum actions ({max_actions} actions) has been used. "
                     "Consider wrapping up the task or informing the user that the task may be too complex. "
                     "If necessary, mark the task as aborted to prevent premature termination.",
                     display_message=None,
@@ -404,12 +404,12 @@ class AgentBase:
 
         # Check token limits
         if (token_count / max_tokens) >= 1.0:
-            response = await InternalActionInterface.mark_task_cancel(reason=f"Task reached the maximum tokens allowed limit: {max_tokens}")
-            task_cancelled: bool = True if response.get('status') == "ok" else Fakse
+            response = await self.task_manager.mark_task_cancel(reason=f"Task reached the maximum tokens allowed limit: {max_tokens}")
+            task_cancelled: bool = response
             if self.event_stream_manager and task_cancelled:
                 self.event_stream_manager.log(
                     "warning",
-                    f"[Warning] Token limit reached: 100% of the maximum ({max_tokens} tokens) has been used. Aborting task.",
+                    f"Token limit reached: 100% of the maximum tokens ({max_tokens} tokens) has been used. Aborting task.",
                     display_message=f"Action limit reached: 100% of the maximum ({max_tokens} tokens) has been used. Aborting task.",
                 )
                 self.state_manager.bump_event_stream()
@@ -418,7 +418,7 @@ class AgentBase:
             if self.event_stream_manager:
                 self.event_stream_manager.log(
                     "warning",
-                    f"[Warning] Token limit nearing: 80% of the maximum ({max_tokens} tokens) has been used. "
+                    f"Token limit nearing: 80% of the maximum tokens ({max_tokens} tokens) has been used. "
                     "Consider wrapping up the task or informing the user that the task may be too complex. "
                     "If necessary, mark the task as aborted to prevent premature termination.",
                     display_message=None,
