@@ -250,7 +250,7 @@ class AgentBase:
             # ===================================
             # 3. Check Limits
             # ===================================
-            should_continue:bool = await self._check_agent_limits(session_id=session_id)
+            should_continue:bool = await self._check_agent_limits()
             if not should_continue:
                 return
 
@@ -371,7 +371,7 @@ class AgentBase:
 
     # ───────────────────── helpers used by handlers/commands ──────────────
 
-    async def _check_agent_limits(self, session_id) -> bool:
+    async def _check_agent_limits(self) -> bool:
         agent_properties = STATE.get_agent_properties()
         action_count: int = agent_properties.get("action_count", 0)
         max_actions: int = agent_properties.get("max_actions_per_task", 0)
