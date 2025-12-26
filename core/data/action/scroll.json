@@ -5,6 +5,7 @@
   "name": "scroll",
   "description": "Scrolls the active window one viewport up or down (≈90 % of the screen height, leaving ~10 % overlap).",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "direction": {

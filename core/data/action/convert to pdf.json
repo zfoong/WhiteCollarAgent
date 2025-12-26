@@ -3,6 +3,7 @@
   "name": "convert_to_pdf",
   "description": "Converts a .txt, .md, or .docx file into a PDF using Pandoc (xelatex backend) and saves it at the specified location. Validates dependencies first.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "ALL",
   "platforms": ["linux", "windows", "darwin"],
   "input_schema": {

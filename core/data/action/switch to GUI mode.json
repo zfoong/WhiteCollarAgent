@@ -5,6 +5,7 @@
   "name": "switch to GUI mode",
   "description": "Switch the agent to GUI mode by setting gui_mode to True in the current StateSession via InternalActionInterface.switch_to_GUI_mode(). Use when the agent should operate with GUI/screen control.",
   "type": "atomic",
+  "execution_mode": "internal",
   "mode": "CLI",
   "input_schema": {},
   "output_schema": {

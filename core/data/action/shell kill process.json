@@ -3,6 +3,7 @@
   "name": "shell kill process (cross-platform)",
   "description": "Terminates a process by PID or image name across Windows, macOS, and Linux.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {
     "pid": {

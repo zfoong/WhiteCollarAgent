@@ -5,6 +5,7 @@
   "name": "view image",
   "description": "Uses a Visual Language Model to analyse an image and return a detailed, markdown-ready description.",
   "type": "atomic",
+  "execution_mode": "internal",
   "mode": "CLI",
   "input_schema": {
     "image_path": {

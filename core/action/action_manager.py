@@ -15,6 +15,7 @@ import nest_asyncio
 from typing import Optional, List, Dict, Any
 from core.action.action_library import ActionLibrary
 from core.action.action import Action
+from core.action.action_executor import ActionExecutor
 import io
 import sys
 import traceback
@@ -71,6 +72,7 @@ class ActionManager:
         # Track in-flight actions so we can mark them aborted on shutdown
         self._inflight: dict[str, dict] = {}
         self.state_manager = state_manager
+        self.executor = ActionExecutor()
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -312,41 +314,24 @@ class ActionManager:
     # ------------------------------------------------------------------
 
     async def execute_atomic_action(self, action: Action, input_data: dict):
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        mystdout = io.StringIO()
-        mystderr = io.StringIO()
-
-        # print("[ACTION] Running atomic action...")
-
         try:
-            input_json = repr(input_data)
-            
-            python_script = f"""import json;input_data = {input_json};{action.code}"""
-            logger.debug(f"Running script :\n{python_script}")
+            output = await self.executor.execute_action(action, input_data)
 
-            sys.stdout = mystdout
-            sys.stderr = mystderr
-            exec(python_script, {})
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
+            logger.debug(f"The action output is:\n{output}")
 
-            output_json = mystdout.getvalue().strip()
-            output_err = mystderr.getvalue().strip()
+            # If there was an error, return it directly
+            if "error" in output:
+                logger.error(f"Action execution error: {output['error']}")
+                return output  # DO NOT parse
 
-            # print(f"[ACTION] output_json is : {output_json}")
-            logger.debug(f"The action output is :\n{output_json}")
-            if output_err:
-                logger.warning(f"The action produced error :\n{output_err}")
-            
-            parsed_output = self._parse_action_output(output_json)
+            # Otherwise, parse the raw stdout
+            raw_stdout = output.get("raw_stdout", "")
+            parsed_output = self._parse_action_output(raw_stdout)
 
             logger.debug(f"[ACTION] Parsed action output: {parsed_output}")
             return parsed_output
 
         except Exception as e:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
             logger.exception("Error occurred while executing atomic action")
             return {"error": f"Execution failed: {str(e)}"}
 

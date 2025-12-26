@@ -5,6 +5,7 @@
   "name": "download from url",
   "description": "Download any file from an arbitrary internet URL (HTTP/HTTPS) into the agent workspace, following redirects. Use when you need external resources such as datasets, binaries, or documents. DO NOT use this action to download attachment sent over chat",
   "type": "atomic",
+  "execution_mode": "internal",
   "mode": "CLI",
   "code": "import json, asyncio, httpx, uuid, os\nfrom pathlib import Path\nfrom core.config import AGENT_WORKSPACE_ROOT\n\nurl       = input_data['url']                           # required\nfilename  = input_data.get('filename') or url.split('/')[-1] or str(uuid.uuid4())\ndest_dir  = Path(input_data.get('dest_dir', AGENT_WORKSPACE_ROOT)).expanduser()\ndest_dir.mkdir(parents=True, exist_ok=True)\nfile_path = dest_dir / filename\n\nasync def _download():\n    async with httpx.AsyncClient() as client:\n        async with client.stream('GET', url, follow_redirects=True, timeout=60) as resp:\n            resp.raise_for_status()\n            with file_path.open('wb') as out:\n                async for chunk in resp.aiter_bytes(chunk_size=1<<16):  # 64 KB\n                    out.write(chunk)\n\nasyncio.run(_download())\n\nsize = file_path.stat().st_size\nprint(json.dumps({'status': 'ok', 'path': str(file_path), 'size_bytes': size}))",
   "input_schema": {

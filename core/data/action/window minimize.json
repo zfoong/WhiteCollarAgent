@@ -5,6 +5,7 @@
   "name": "window minimize",
   "description": "Minimizes an application window. If a title is provided, the first matching window is minimized; otherwise the currently active window is minimized.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "title": {

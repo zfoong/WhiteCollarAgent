@@ -3,6 +3,7 @@
   "name": "stream read",
   "description": "Reads a text file and returns a paginated slice of lines and segments, similar to `sed -n 'start,endp'` but safe for very long lines.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "platforms": ["windows", "linux", "darwin"],
 "input_schema": {

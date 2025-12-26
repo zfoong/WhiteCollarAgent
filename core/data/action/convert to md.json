@@ -3,6 +3,7 @@
   "name": "clean_to_md",
   "description": "Cleans scraped text from .txt, .md, or .docx and converts it into clean, well-structured Markdown suitable for PDF conversion.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "ALL",
   "platforms": ["linux", "windows", "darwin"],
   "input_schema": {

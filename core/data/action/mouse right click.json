@@ -5,6 +5,7 @@
   "name": "mouse right click",
   "description": "Performs a single right-button mouse click at the specified screen coordinates (or at the current cursor position if no coordinates are provided).",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "x": {

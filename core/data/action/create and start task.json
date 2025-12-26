@@ -5,6 +5,7 @@
   "name": "create and start task",
   "description": "Creates a new task with multiple actions and start running the task. Use this when the request requires more than one step. You MUST include the user's request comprehensively, without losing any information. It has to retain 100% the user's requirement.",
   "type": "atomic",
+  "execution_mode": "internal",
   "mode": "ALL",
   "code": "import json; import asyncio; import core.internal_action_interface as internal_action_interface; task_name=input_data['task_name']; task_description=input_data['task_description']; task_id=asyncio.run(internal_action_interface.InternalActionInterface.do_create_and_run_task(task_name, task_description)); print(json.dumps({'status':'ok','task_id':task_id}))",
   "input_schema": {

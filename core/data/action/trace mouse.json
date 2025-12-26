@@ -5,6 +5,7 @@
   "name": "trace mouse",
   "description": "Moves the mouse cursor along a sequence of points, optionally with easing, per-segment duration, and pauses between segments.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "points": {

@@ -5,6 +5,7 @@
   "name": "ignore",
   "description": "If a user message requires no response or action, use ignore.",
   "type": "atomic",
+  "execution_mode": "internal",
   "mode": "CLI",
   "code": "import json; import core.internal_action_interface as internal_action_interface; internal_action_interface.InternalActionInterface.do_ignore(); print(json.dumps({'status':'ignored'}))",
   "input_schema": {},

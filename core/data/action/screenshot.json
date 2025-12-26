@@ -3,6 +3,7 @@
   "name": "screenshot",
   "description": "Takes a screenshot of the agent screen.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "ALL",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {

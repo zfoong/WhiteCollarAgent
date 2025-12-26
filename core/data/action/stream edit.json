@@ -3,6 +3,7 @@
   "name": "stream edit",
   "description": "Applies a regex-based edit to a slice of lines in a text file, returning paginated original and edited segments. Similar to sed with paging.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "platforms": ["windows", "linux", "darwin"],
 "input_schema": {

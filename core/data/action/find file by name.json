@@ -3,6 +3,7 @@
   "name": "find file by name",
   "description": "Finds files by name or pattern across the system. Supports wildcards, relative paths, and recursive search.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {

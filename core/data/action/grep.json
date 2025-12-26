@@ -3,6 +3,7 @@
   "name": "grep",
   "description": "Searches a text file for keywords and returns matching chunks with pagination.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {

@@ -5,6 +5,7 @@
   "name": "read web page from URL",
   "description": "Downloads a web page by URL and returns a clean, markdown-friendly text summary and title (no JavaScript execution).",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "input_schema": {
     "url": {

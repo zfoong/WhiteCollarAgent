@@ -5,6 +5,7 @@
   "name": "keyboard typing",
   "description": "Types the given text at the current keyboard focus in any active application window.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "text": {

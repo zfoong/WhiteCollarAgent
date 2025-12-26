@@ -5,6 +5,7 @@
   "name": "list folder",
   "description": "Lists the contents of a specified folder/directory.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "input_schema": {
     "path": {

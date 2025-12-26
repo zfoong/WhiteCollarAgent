@@ -453,7 +453,7 @@ class AgentBase:
         )
 
         # Format the user prompt with the incoming query
-        prompt = STEP_REASONING_PROMPT.format(user_query=query)
+        prompt = STEP_REASONING_PROMPT
 
         # Track the last parsing/validation error for meaningful failure reporting
         last_error: Exception | None = None

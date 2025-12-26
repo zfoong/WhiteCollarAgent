@@ -5,6 +5,7 @@
   "name": "open application",
   "description": "Launches a Windows application (executable) with optional command-line arguments.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "exe_path": {

@@ -5,6 +5,7 @@
   "name": "open browser",
   "description": "Opens a web browser (Chrome, Edge, Firefox, Safari, or system default) across platforms. Optionally opens a specified URL.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "url": {

@@ -4,6 +4,7 @@
   "description": "Summarizes all .txt, .md, and .docx files inside a directory using improved summarization logic with chunking and centroid-based clustering.",
   "type": "atomic",
   "mode": "CLI",
+  "execution_mode": "sandboxed",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {
     "directory_path": {

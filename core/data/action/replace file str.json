@@ -5,6 +5,7 @@
   "name": "replace file str",
   "description": "Replaces all occurrences of a search string (literal or regex) in a text file with a replacement string.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "input_schema": {
     "file_path": {

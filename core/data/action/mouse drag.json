@@ -5,6 +5,7 @@
     "name": "mouse drag",
     "description": "Performs a left-button drag from a start coordinate to an end coordinate.",
     "type": "atomic",
+    "execution_mode": "sandboxed",
     "mode": "GUI",
     "input_schema": {
         "start_x": {

@@ -5,6 +5,7 @@
   "name": "mouse move",
   "description": "Moves the mouse cursor to a specific screen coordinate.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "x": {

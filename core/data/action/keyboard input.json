@@ -5,6 +5,7 @@
   "name": "keyboard input",
   "description": "Sends arbitrary keystrokes or key-combination shortcuts to the currently focused window (e.g., \"ctrl+c\", [\"alt+tab\", \"f5\"]).",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "keys": {

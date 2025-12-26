@@ -3,6 +3,7 @@
   "name": "summarize file content",
   "description": "Reads a text file and write the summary to a new text file.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {

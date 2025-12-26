@@ -5,6 +5,7 @@
   "name": "send HTTP requests",
   "description": "Sends HTTP requests (GET, POST, PUT, PATCH, DELETE) with optional headers, params, and body.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "input_schema": {
     "method": {

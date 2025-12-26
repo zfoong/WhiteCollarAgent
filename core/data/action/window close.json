@@ -5,6 +5,7 @@
   "name": "window close",
   "description": "Closes an application window. If a title is provided, the first matching window is closed; otherwise the currently active window is closed.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "GUI",
   "input_schema": {
     "title": {

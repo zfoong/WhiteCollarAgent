@@ -5,6 +5,7 @@
   "name": "view screen",
   "description": "Captures the entire screen and converts it into an LLM-friendly, markdown description.",
   "type": "atomic",
+  "execution_mode": "internal",
   "mode": "GUI",
   "input_schema": {},
   "output_schema": {

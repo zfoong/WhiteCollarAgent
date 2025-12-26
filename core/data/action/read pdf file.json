@@ -3,6 +3,7 @@
   "name": "read pdf file",
   "description": "Securely reads a PDF with Docling and returns compact, layout-aware JSON including page sizes, bboxes, text, and form-field candidates. Implements a robust fallback using pypdfium2 and pdfminer.six if Docling cannot determine page sizes or extract text.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "mode": "CLI",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {
