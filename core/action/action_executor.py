@@ -56,7 +56,8 @@ input_data = json.loads({json.dumps(json.dumps(input_data))})
 
 # ─── USER CODE ───
 {action_code}
-"""
+""",
+                encoding="utf-8",
             )
 
             proc = subprocess.run(
@@ -120,7 +121,7 @@ class ActionExecutor:
         action: Action,
         input_data: dict,
         *,
-        timeout: int = 15,
+        timeout: int = 1800,
     ) -> dict:
         execution_mode = getattr(action, "execution_mode", "sandboxed")
 
@@ -129,16 +130,22 @@ class ActionExecutor:
 
         elif execution_mode == "sandboxed":
             loop = asyncio.get_running_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    PROCESS_POOL,
-                    _atomic_action_venv_process,
-                    action.code,
-                    input_data,
-                    timeout,
-                ),
-                timeout=timeout + 5,
-            )
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        PROCESS_POOL,
+                        _atomic_action_venv_process,
+                        action.code,
+                        input_data,
+                        timeout,
+                    ),
+                    timeout=timeout + 5,
+                )
+            except asyncio.TimeoutError:
+                return {
+                    "error": f"Execution timed out after {timeout}s while running sandboxed action.",
+                    "raw_stdout": "",
+                }
 
         else:
             raise ValueError(f"Unknown execution_mode: {execution_mode}")
@@ -148,8 +155,8 @@ class ActionExecutor:
             return {
                 "error": result["stderr"],
                 "raw_stdout": result.get("stdout", ""),
+                "raw_stderr": result.get("stderr", ""), # TODO remove this after testing
             }
-
         return {
             "raw_stdout": result.get("stdout", ""),
         }
