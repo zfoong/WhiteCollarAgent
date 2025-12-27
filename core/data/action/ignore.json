@@ -7,7 +7,7 @@
   "type": "atomic",
   "execution_mode": "internal",
   "mode": "CLI",
-  "code": "import json; import core.internal_action_interface as internal_action_interface; internal_action_interface.InternalActionInterface.do_ignore(); print(json.dumps({'status':'ignored'}))",
+  "code": "import json; import core.internal_action_interface as internal_action_interface; internal_action_interface.InternalActionInterface.do_ignore(); output = json.dumps({'status':'ignored'})",
   "input_schema": {},
   "output_schema": {
     "status": {

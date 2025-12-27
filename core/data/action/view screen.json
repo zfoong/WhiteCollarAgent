@@ -35,5 +35,5 @@
   "scope": [
     "global"
   ],
-  "code": "import json\nimport core.internal_action_interface as iai\n\ntry:\n    result = iai.InternalActionInterface.describe_screen()\n    print(json.dumps({'status': 'success', 'description': result['description'], 'file_path': result['file_path'], 'message': ''}))\nexcept Exception as e:\n    print(json.dumps({'status': 'error', 'description': '', 'file_path': '', 'message': str(e)}))"
+  "code": "import json\nimport core.internal_action_interface as iai\n\ntry:\n    result = iai.InternalActionInterface.describe_screen()\n    output = json.dumps({'status': 'success', 'description': result['description'], 'file_path': result['file_path'], 'message': ''})\nexcept Exception as e:\n    output = json.dumps({'status': 'error', 'description': '', 'file_path': '', 'message': str(e)})"
 }

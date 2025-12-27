@@ -37,7 +37,7 @@
   },
   "subActions": [],
   "default": false,
-  "code": "import os, json\n\npath = input_data['path']\ncontents = os.listdir(path)\nprint(json.dumps({'status': 'success', 'path': path, 'contents': contents}))",
+  "code": "import os, json\n\npath = input_data['path']\ntry:\n    contents = os.listdir(path)\n    output = json.dumps({'status': 'success', 'path': path, 'contents': contents})\nexcept Exception as e:\n    output = json.dumps({'status': 'error', 'path': '', 'contents': [], 'message': str(e)})",
   "scope": [
     "global"
   ]

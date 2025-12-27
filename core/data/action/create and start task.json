@@ -7,7 +7,7 @@
   "type": "atomic",
   "execution_mode": "internal",
   "mode": "ALL",
-  "code": "import json; import asyncio; import core.internal_action_interface as internal_action_interface; task_name=input_data['task_name']; task_description=input_data['task_description']; task_id=asyncio.run(internal_action_interface.InternalActionInterface.do_create_and_run_task(task_name, task_description)); print(json.dumps({'status':'ok','task_id':task_id}))",
+  "code": "import json; import asyncio; import core.internal_action_interface as internal_action_interface; task_name=input_data['task_name']; task_description=input_data['task_description']; task_id=asyncio.run(internal_action_interface.InternalActionInterface.do_create_and_run_task(task_name, task_description)); output = json.dumps({'status':'ok','task_id':task_id})",
   "input_schema": {
     "task_name": {
       "type": "string",

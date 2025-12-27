@@ -7,7 +7,7 @@
   "type": "atomic",
   "execution_mode": "internal",
   "mode": "ALL",
-  "code": "import json; import asyncio; import core.internal_action_interface as internal_action_interface; question = input_data['question']; wait_for_user_reply = bool(input_data.get('wait_for_user_reply', False)); asyncio.run(internal_action_interface.InternalActionInterface.do_ask_question(question)); fire_at_delay = 10800 if wait_for_user_reply else 0; print(json.dumps({'status': 'ok', 'question': question, 'fire_at_delay': fire_at_delay}))",
+  "code": "import json; import asyncio; import core.internal_action_interface as internal_action_interface; question = input_data['question']; wait_for_user_reply = bool(input_data.get('wait_for_user_reply', False)); asyncio.run(internal_action_interface.InternalActionInterface.do_ask_question(question)); fire_at_delay = 10800 if wait_for_user_reply else 0; output = json.dumps({'status': 'ok', 'question': question, 'fire_at_delay': fire_at_delay})",
   "input_schema": {
     "question": {
       "type": "string",
