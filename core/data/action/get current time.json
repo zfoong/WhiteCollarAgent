@@ -20,7 +20,7 @@
   "createdAt": "2025-04-14T05:33:15.797799",
   "lastUse": null,
   "updatedAt": "2025-04-14T05:33:15.797799",
-  "code": "import json\nfrom datetime import datetime\n\ndatetime_obj = datetime.now()\nformatted_time = datetime_obj.strftime('%Y-%m-%d %H:%M:%S')\n\nresult = {\n    \"time\": formatted_time\n}\n\nprint(json.dumps(result))",
+  "code": "import json\nfrom datetime import datetime\n\ndatetime_obj = datetime.now()\nformatted_time = datetime_obj.strftime('%Y-%m-%d %H:%M:%S')\n\nresult = {\n    \"time\": formatted_time\n}\n\noutput = json.dumps(result)",
   "scope": [
     "global"
   ]

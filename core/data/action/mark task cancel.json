@@ -6,7 +6,7 @@
   "description": "End the current task for this session as CANCELLED. Use this when the user aborts the task.",
   "type": "atomic",
   "execution_mode": "internal",
-  "code": "import json, asyncio\nimport core.internal_action_interface as iai\n\nreason = input_data.get('reason')\nres = asyncio.run(iai.InternalActionInterface.mark_task_cancel(reason=reason))\nprint(json.dumps(res))",
+  "code": "import json, asyncio\nimport core.internal_action_interface as iai\n\nreason = input_data.get('reason')\nres = asyncio.run(iai.InternalActionInterface.mark_task_cancel(reason=reason))\noutput = json.dumps(res)",
   "input_schema": {
     "reason": {
       "type": "string",

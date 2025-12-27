@@ -6,7 +6,7 @@
   "description": "End the current task for this session as ERROR. Use this if the task is stuck, impossible to complete, or encountered a fatal error.",
   "type": "atomic",
   "execution_mode": "internal",
-  "code": "import json, asyncio\nimport core.internal_action_interface as iai\n\nmessage = input_data.get('message')\nres = asyncio.run(iai.InternalActionInterface.mark_task_error(message=message))\nprint(json.dumps(res))",
+  "code": "import json, asyncio\nimport core.internal_action_interface as iai\n\nmessage = input_data.get('message')\nres = asyncio.run(iai.InternalActionInterface.mark_task_error(message=message))\noutput = json.dumps(res)",
   "input_schema": {
     "message": {
       "type": "string",

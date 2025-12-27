@@ -33,7 +33,7 @@
   },
   "subActions": [],
   "default": false,
-  "code": "import json\nfrom pathlib import Path\n\nbase_path = str(input_data.get('path', '')).strip()\nfolder_name = str(input_data.get('folder_name', '')).strip()\n\nif not base_path or not folder_name:\n    print(json.dumps({'status': 'error', 'path': '', 'message': 'Both path and folder_name are required.'}))\n    exit()\n\ntry:\n    target = (Path(base_path).expanduser() / folder_name)\n    target.mkdir(parents=True, exist_ok=True)\n    print(json.dumps({'status': 'success', 'path': str(target.resolve())}))\nexcept Exception as e:\n    print(json.dumps({'status': 'error', 'path': '', 'message': str(e)}))",
+  "code": "import json\nfrom pathlib import Path\n\nbase_path = str(input_data.get('path', '')).strip()\nfolder_name = str(input_data.get('folder_name', '')).strip()\n\nif not base_path or not folder_name:\n    output = json.dumps({'status': 'error', 'path': '', 'message': 'Both path and folder_name are required.'})\n    exit()\n\ntry:\n    target = (Path(base_path).expanduser() / folder_name)\n    target.mkdir(parents=True, exist_ok=True)\n    output = json.dumps({'status': 'success', 'path': str(target.resolve())})\nexcept Exception as e:\n    output = json.dumps({'status': 'error', 'path': '', 'message': str(e)})",
   "scope": [
     "global"
   ]

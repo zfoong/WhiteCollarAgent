@@ -6,7 +6,7 @@
   "description": "Advance the running workflow to the NEXT step for this session. If update_plan is true, first update the plan (e.g., when the old plan is outdated or new info is available) and then advance to the next step, which may be newly created by the updated plan.",
   "type": "atomic",
   "execution_mode": "internal",
-  "code": "import json, asyncio\nimport core.internal_action_interface as iai\n\nupdate_plan = bool(input_data.get('update_plan', False))\nres = asyncio.run(iai.InternalActionInterface.start_next_step(update_plan=update_plan))\nprint(json.dumps(res))",
+  "code": "import json, asyncio\nimport core.internal_action_interface as iai\n\nupdate_plan = bool(input_data.get('update_plan', False))\nres = asyncio.run(iai.InternalActionInterface.start_next_step(update_plan=update_plan))\noutput = json.dumps(res)",
   "input_schema": {
     "update_plan": {
       "type": "boolean",

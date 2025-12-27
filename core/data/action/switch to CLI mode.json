@@ -30,5 +30,5 @@
   "scope": [
     "global"
   ],
-  "code": "import json\nimport core.internal_action_interface as iai\ntry:\n    iai.InternalActionInterface.switch_to_CLI_mode()\n    print(json.dumps({\"status\": \"ok\", \"gui_mode\": False}))\nexcept Exception as e:\n    print(json.dumps({\"status\": \"error\", \"error\": str(e)}))"
+  "code": "import json\nimport core.internal_action_interface as iai\ntry:\n    iai.InternalActionInterface.switch_to_CLI_mode()\n    output = json.dumps({\"status\": \"ok\", \"gui_mode\": False})\nexcept Exception as e:\n    output = json.dumps({\"status\": \"error\", \"error\": str(e)})"
 }

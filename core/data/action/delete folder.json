@@ -28,7 +28,7 @@
   },
   "subActions": [],
   "default": false,
-  "code": "import os, json\nimport shutil\n\npath = input_data['path']\nshutil.rmtree(path)\nprint(json.dumps({'status': 'success', 'deleted': path}))",
+  "code": "import os, json\nimport shutil\n\npath = input_data['path']\ntry:\n    shutil.rmtree(path)\n    output = json.dumps({'status': 'success', 'deleted': path})\nexcept Exception as e:\n    output = json.dumps({'status': 'error', 'deleted': '', 'message': str(e)})",
   "scope": [
     "global"
   ]

@@ -49,8 +49,8 @@
     "subActions": [
     ],
     "default": false,
-    "scope": [
-        "global"
-    ],
-    "code": "import json, sys, subprocess, importlib\npkg = 'pyautogui'\ntry:\n    importlib.import_module(pkg)\nexcept ImportError:\n    subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg, '--quiet'])\nimport pyautogui\nsx = input_data.get('start_x')\nsy = input_data.get('start_y')\nex = input_data.get('end_x')\ney = input_data.get('end_y')\nduration = float(input_data.get('duration', 0))\nif None in (sx, sy, ex, ey):\n    print(json.dumps({'status': 'error', 'message': 'All coordinates are required.'}))\n    exit()\ntry:\n    pyautogui.moveTo(int(sx), int(sy))\n    pyautogui.mouseDown(button='left')\n    pyautogui.dragTo(int(ex), int(ey), duration=duration, button='left')\n    pyautogui.mouseUp(button='left')\n    print(json.dumps({'status': 'success', 'message': ''}))\nexcept Exception as e:\n    print(json.dumps({'status': 'error', 'message': str(e)}))"
+  "scope": [
+    "global"
+  ],
+  "code": "import json, sys, subprocess, importlib\npkg = 'pyautogui'\ntry:\n    importlib.import_module(pkg)\nexcept ImportError:\n    subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg, '--quiet'])\nimport pyautogui\nsx = input_data.get('start_x')\nsy = input_data.get('start_y')\nex = input_data.get('end_x')\ney = input_data.get('end_y')\nduration = float(input_data.get('duration', 0))\nif None in (sx, sy, ex, ey):\n    output = json.dumps({'status': 'error', 'message': 'All coordinates are required.'})\n    exit()\ntry:\n    pyautogui.moveTo(int(sx), int(sy))\n    pyautogui.mouseDown(button='left')\n    pyautogui.dragTo(int(ex), int(ey), duration=duration, button='left')\n    pyautogui.mouseUp(button='left')\n    output = json.dumps({'status': 'success', 'message': ''})\nexcept Exception as e:\n    output = json.dumps({'status': 'error', 'message': str(e)})"
 }
