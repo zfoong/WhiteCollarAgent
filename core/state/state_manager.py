@@ -1,18 +1,26 @@
 import json
+import asyncio
+import threading
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Any
 from core.state.types import AgentProperties, ConversationMessage
 from core.state.agent_state import STATE
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.task.task import Task, Step
 from core.logger import logger
+from core.prompt import CONVERSATION_SUMMARIZATION_PROMPT
 
 
 class StateManager:
     """Manages conversation snapshots, task state, and runtime session data."""
 
-    def __init__(self, event_stream_manager: EventStreamManager):
-
+    def __init__(
+        self,
+        event_stream_manager: EventStreamManager,
+        *,
+        summarize_at: int = 30,
+        tail_keep_after_summarize: int = 15,
+    ):
         # We have two types of state, persistant and session state
         # Persistant state are state that will not be changed frequently,
         # e.g. agent properties
@@ -21,6 +29,21 @@ class StateManager:
         self.task: Optional[Task] = None
         self.event_stream_manager = event_stream_manager
         self._conversation: List[ConversationMessage] = []
+        
+        self.head_summary: Optional[str] = None
+        self.summarize_at = summarize_at
+        self.tail_keep_after_summarize = tail_keep_after_summarize
+        self._summarize_task: Optional[asyncio.Task] = None
+        self._lock = threading.RLock()
+        
+        MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION = 10
+        if tail_keep_after_summarize + MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION > summarize_at:
+            logger.warning(
+                f"[CONVERSATION SUMMARIZATION] Value for tail_keep_after_summarize ({tail_keep_after_summarize}) "
+                f"is too large relative to summarize_at ({summarize_at}). "
+                f"Resetting tail_keep_after_summarize to {summarize_at - MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION}"
+            )
+            self.tail_keep_after_summarize = summarize_at - MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION
 
     async def start_session(self, gui_mode: bool = False):
 
@@ -46,7 +69,9 @@ class StateManager:
 
     def clear_conversation_history(self) -> None:
         """Drop all stored conversation messages for the active user."""
-        self._conversation.clear()
+        with self._lock:
+            self._conversation.clear()
+            self.head_summary = None
         self._update_session_conversation_state()
 
     def reset(self) -> None:
@@ -59,29 +84,38 @@ class StateManager:
         self.clean_state()
         
     def _format_conversation_state(self) -> str:
-        if not self._conversation:
-            return ""
-
-        lines: List[str] = []
-        for message in self._conversation[-25:]:
-            timestamp = message["timestamp"]
-            role = message["role"]
-            content = message["content"]
-            lines.append(f"{timestamp}: {role}: \"{content}\"")
-
-        return "\n".join(lines)
+        with self._lock:
+            lines: List[str] = []
+            
+            # Include summary if available
+            if self.head_summary:
+                lines.append("Summary of previous conversation:")
+                lines.append(self.head_summary)
+                lines.append("")
+            
+            # Include recent messages
+            if self._conversation:
+                lines.append("Recent conversation:")
+                for message in self._conversation[-25:]:
+                    timestamp = message["timestamp"]
+                    role = message["role"]
+                    content = message["content"]
+                    lines.append(f"{timestamp}: {role}: \"{content}\"")
+            
+            return "\n".join(lines) if lines else ""
 
     async def get_conversation_state(self) -> str:
         return self._format_conversation_state()
 
     def _append_conversation_message(self, role: Literal["user", "agent"], content: str) -> None:
-        self._conversation.append(
-            {
-                "role": role,
-                "content": content,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-        )
+        with self._lock:
+            self._conversation.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            )
 
     def _update_session_conversation_state(self) -> None:
         STATE.update_conversation_state(self._format_conversation_state())
@@ -89,10 +123,12 @@ class StateManager:
     def record_user_message(self, content: str) -> None:
         self._append_conversation_message("user", content)
         self._update_session_conversation_state()
+        self.summarize_if_needed()
 
     def record_agent_message(self, content: str) -> None:
         self._append_conversation_message("agent", content)
         self._update_session_conversation_state()
+        self.summarize_if_needed()
     
     def get_current_step(self) -> Optional[Step]:
         wf: Optional[Task] = self.task
@@ -164,4 +200,104 @@ class StateManager:
 
     def remove_active_task(self) -> None:
         self.task = None
-        STATE.update_current_task(None) 
+        STATE.update_current_task(None)
+    
+    # ───────────────────── summarization & pruning ───────────────────────
+    
+    def summarize_if_needed(self) -> None:
+        """
+        Trigger summarization when the conversation exceeds the configured threshold.
+        
+        Uses asyncio.create_task to schedule summarize_by_LLM() without requiring
+        callers of record_*_message() to be async/await.
+        """
+        with self._lock:
+            if len(self._conversation) < self.summarize_at:
+                return
+        
+        if self._summarize_task is not None and not self._summarize_task.done():
+            return
+        
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("[StateManager] No running event loop; cannot schedule summarization.")
+            return
+        
+        self._summarize_task = loop.create_task(self.summarize_by_LLM(), name="conversation_summarize")
+        self._summarize_task.add_done_callback(self._on_summarize_done)
+    
+    def _on_summarize_done(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("[StateManager] summarize_by_LLM task crashed unexpectedly")
+    
+    async def summarize_by_LLM(self) -> None:
+        """
+        Summarize the oldest conversation messages using the language model.
+        
+        This version is concurrency-safe with synchronous record_*_message() calls:
+        - Snapshot the chunk under a lock
+        - Release lock while awaiting the LLM
+        - Re-acquire lock to apply summary + prune using the *current* conversation
+          so messages appended during the await are not lost.
+        """
+        with self._lock:
+            if not self._conversation:
+                return
+            
+            cutoff = max(0, len(self._conversation) - self.tail_keep_after_summarize)
+            
+            if cutoff <= 0:
+                # Nothing old enough to summarize
+                return
+            
+            chunk = list(self._conversation[:cutoff])
+            first_ts = chunk[0]["timestamp"] if chunk else None
+            last_ts = chunk[-1]["timestamp"] if chunk else None
+            window = ""
+            if first_ts and last_ts:
+                window = f"{first_ts} to {last_ts}"
+            
+            compact_lines = "\n".join(
+                f"{msg['timestamp']}: {msg['role']}: \"{msg['content']}\""
+                for msg in chunk
+            )
+            previous_summary = self.head_summary or "(none)"
+        
+        prompt = CONVERSATION_SUMMARIZATION_PROMPT.format(
+            window=window,
+            previous_summary=previous_summary,
+            compact_lines=compact_lines
+        )
+        
+        try:
+            llm = self.event_stream_manager.llm
+            llm_output = await llm.generate_response_async(user_prompt=prompt)
+            new_summary = (llm_output or "").strip()
+            
+            logger.debug(f"[CONVERSATION SUMMARIZATION] llm_output_len={len(llm_output or '')}")
+            
+            if not new_summary:
+                logger.warning("[CONVERSATION SUMMARIZATION] LLM returned empty summary; not updating.")
+                return
+            
+            # Apply + prune under lock
+            # Remove exactly the messages we summarized (first 'cutoff' messages)
+            # New messages added during await will remain at the end
+            with self._lock:
+                self.head_summary = new_summary
+                if cutoff >= len(self._conversation):
+                    # All messages were summarized, clear everything
+                    self._conversation = []
+                else:
+                    # Remove the summarized messages, keep the rest (including any new ones)
+                    self._conversation = self._conversation[cutoff:]
+                self._update_session_conversation_state()
+        
+        except Exception:
+            logger.exception("[StateManager] LLM summarization failed. Keeping all messages without summarization.")
+            return 
