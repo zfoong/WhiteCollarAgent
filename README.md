@@ -15,7 +15,7 @@
 
   <img src="https://img.shields.io/github/license/zfoong/WhiteCollarAgent" alt="License">
 
-  <a href="https://discord.gg/MRmjubap">
+  <a href="https://discord.gg/ZN9YHc37HG">
     <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" alt="Discord">
   </a>
   
