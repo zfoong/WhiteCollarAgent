@@ -352,13 +352,15 @@ OLDEST_MESSAGES_CHUNK:
 </messages>
 """
 
+AGENT_ROLE_PROMPT = """
+<role>
+{role}
+</role>
+"""
+
 # --- Context Engine ---
 # TODO: Inject OS information into the prompt, we put Windows as default for now.
 AGENT_INFO_PROMPT = """
-<objective>
-You are an AI agent, named 'white collar agent', developed by CraftOS, a general computer-use AI agent that can switch between CLI/GUI mode.
-</objective>
-
 <context>
 Here are your responsibilities:
 - You aid the user with general computer-use and browser-use tasks, following their request.

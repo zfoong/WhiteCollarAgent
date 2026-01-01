@@ -56,7 +56,7 @@ def bark(input_data: dict) -> dict:
     name="sit",
     description="Display an ASCII image of a dog sitting.",
     execution_mode="internal",
-    input_schema={},  # no inputs
+    input_schema={}, 
     output_schema={
         "status": {
             "type": "string",
@@ -72,8 +72,7 @@ def sit(input_data: dict) -> dict:
     import asyncio
     import core.internal_action_interface as internal_action_interface
 
-    # Sitting dog ASCII (side profile, seated posture)
-    dog_ascii = r"""
+    dog_ascii = r""".
           __
        __()'`;
      //,   /`
@@ -90,7 +89,7 @@ from core.action.action_framework.registry import action
     name="wiggle tail",
     description="Display an ASCII image of a dog sitting and wiggling its tail.",
     execution_mode="internal",
-    input_schema={},  # no inputs
+    input_schema={}, 
     output_schema={
         "status": {
             "type": "string",
@@ -106,7 +105,7 @@ def wiggle_tail(input_data: dict) -> dict:
     import asyncio
     import core.internal_action_interface as internal_action_interface
 
-    dog_ascii = r"""
+    dog_ascii = r""".
            __
      (~(__()'`;       
       /,    /`   
@@ -148,7 +147,7 @@ def eat(input_data: dict) -> dict:
     import asyncio
     import core.internal_action_interface as internal_action_interface
 
-    dog_ascii = r"""
+    dog_ascii = r""".
            __
       (___()'`;       
       /,    /`   ____
@@ -203,19 +202,19 @@ def sniff(input_data: dict) -> dict:
     message = f"*dog found {found}*"
 
     frames = [
-        r"""
+        r""".
            __
       (___()'`;
       /,    /`    ~
       \\"--\\
 """,
-        r"""
+        r""".
            __
       (___()'`;   ~ ~
       /,    /`    ~
       \\"--\\
 """,
-        r"""
+        r""".
            __
       (___()'`;  ~ ~ ~
       /,    /`   ~ ~
@@ -225,7 +224,7 @@ def sniff(input_data: dict) -> dict:
 
     for f in frames:
         asyncio.run(internal_action_interface.InternalActionInterface.do_chat(f))
-        time.sleep(1)
+        time.sleep(10)
 
     asyncio.run(internal_action_interface.InternalActionInterface.do_chat(message))
     return {"status": "success", "found": found, "message": message}
@@ -290,28 +289,28 @@ def dig(input_data: dict) -> dict:
     dig_seconds = max(5.0, min(10.0, dig_seconds))
 
     frames = [
-        r"""
+        r""".
            __
       (___()'`;
       /,    /`  
       \\"--\\
             
 """,
-        r"""
+        r""".
            __
       (___()'`;   
       /,    \\  
       \\"--` \\ ' "
              
 """,
-        r"""
+        r""".
            __
       (___()'`;
       /,    /`  
       \\"--\\ " '  
         
 """,
-        r"""
+        r""".
            __
       (___()'`;   
       /,    \\  
@@ -320,8 +319,7 @@ def dig(input_data: dict) -> dict:
 """
     ]
 
-    # 4 frames, loop for dig_seconds total.
-    frame_delay = 1
+    frame_delay = 3
     total_frames = int(dig_seconds / frame_delay)
     for i in range(total_frames):
         f = frames[i % 4]
