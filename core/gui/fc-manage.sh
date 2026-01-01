@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ==========================================
-# Firecracker Background & Snapshot Controller v3
+# Firecracker Background & Snapshot Controller v4
 # ==========================================
 # This script manages a single Firecracker VM instance in the background.
 # It supports starting fresh, stopping cleanly, pausing to disk (snapshot),
-# and resuming from a snapshot.
+# resuming from a snapshot, and purging state.
 #
-# Usage: sudo ./fc-manage.sh [start|stop|restart|pause|resume|status|tail|clean]
+# Usage: sudo ./fc-manage.sh [start|stop|restart|pause|resume|purge|status|tail|clean]
 # ==========================================
 
 set -e
@@ -239,7 +239,7 @@ cmd_start() {
     boot_args="console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw ip=$VM_IP::$HOST_IP:$NETMASK_LEN::eth0:off"
     curl_api PUT "boot-source" "{\"kernel_image_path\": \"$KERNEL_PATH\", \"boot_args\": \"$boot_args\"}"
 
-    # 2. Set Rootfs Drive - FIX: Added drive_id to body
+    # 2. Set Rootfs Drive
     # We ensure the file is accessible by the firecracker process (running as root)
     chmod +r "$ROOTFS_PATH"
     curl_api PUT "drives/rootfs" "{\"drive_id\": \"rootfs\", \"path_on_host\": \"$ROOTFS_PATH\", \"is_root_device\": true, \"is_read_only\": false}"
@@ -304,6 +304,20 @@ cmd_resume() {
     echo "VM resumed successfully. IP: $VM_IP"
 }
 
+cmd_purge() {
+    echo "--- Purging VM State ---"
+    # 1. Stop the VM if it's running (cmd_stop handles running checks and network cleanup)
+    cmd_stop
+
+    # 2. Delete Snapshot files
+    if [ -d "$SNAPSHOT_DIR" ]; then
+        echo "Removing snapshot files from $SNAPSHOT_DIR..."
+        rm -f "$MEM_FILE_PATH" "$SNAPSHOT_FILE_PATH"
+    fi
+
+    echo "VM state and snapshots have been removed. The next 'start' will boot fresh."
+}
+
 cmd_status() {
     if is_running; then
         PID=$(cat "$PID_FILE")
@@ -318,6 +332,7 @@ cmd_status() {
 
 cmd_clean() {
     if is_running; then echo "Cannot clean while running. Stop it first."; exit 1; fi
+    echo "WARNING: This will delete downloaded images and Firecracker binary."
     echo "Cleaning up workspace $WORKDIR..."
     # Don't delete the whole workdir, just data and snapshots
     rm -rf "$DATA_DIR" "$SNAPSHOT_DIR" "$LOG_FILE" "$PID_FILE"
@@ -337,11 +352,12 @@ case "$1" in
     restart) cmd_stop; sleep 2; "$SELF_PATH" start ;;
     pause)   cmd_pause ;;
     resume)  cmd_resume ;;
+    purge)   cmd_purge ;;
     status)  cmd_status ;;
     clean)   cmd_clean ;;
     tail)    tail -f "$LOG_FILE" ;;
     *)
-        echo "Usage: sudo $0 [start|stop|restart|pause|resume|status|clean|tail]"
+        echo "Usage: sudo $0 [start|stop|restart|pause|resume|purge|status|clean|tail]"
         exit 1
         ;;
 esac
