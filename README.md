@@ -25,7 +25,7 @@
 
 ---
 <p align="center">
-  <a href="README.ja.md">🇯🇵 日本語版はこちら</a>
+  <a href="README.ja.md"> 日本語版はこちら</a> | <a href="README.cn.md"> 中文版README </a>
 </p>
 
 ## 🚀 Overview
