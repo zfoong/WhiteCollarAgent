@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 
 from tzlocal import get_localzone
+import json
 
 from core.config import AGENT_WORKSPACE_ROOT
 from core.logger import logger
 from core.prompt import (
+    AGENT_ROLE_PROMPT,
     AGENT_INFO_PROMPT,
     AGENT_STATE_PROMPT,
     ENVIRONMENTAL_CONTEXT_PROMPT,
@@ -12,6 +14,7 @@ from core.prompt import (
 )
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
+from typing import Optional, Dict, Any
 
 """
 core.context_engine
@@ -66,8 +69,9 @@ class ContextEngine:
         Calls the injected role-specific prompt function, if any.
         """
         if self._role_info_func:
-            return self._role_info_func()
-        return ""  # No-op by default
+            role = self._role_info_func()
+            return AGENT_ROLE_PROMPT.format(role=role)
+        return ""
 
     def create_system_agent_state(self):
         """Return formatted agent properties for the current session."""
@@ -114,10 +118,11 @@ class ContextEngine:
     def create_system_task_state(self):
         """Return formatted task/plan state for the current session."""
 
-        current_task = STATE.current_task
+        current_task: Optional[Task] = STATE.current_task
 
         if current_task:
-            return "\nThe plan of the current on-going task:" + f"\n{current_task}"
+            current_task_dict: Dict[str, Any] = current_task.to_dict(fold=True, current_step_index=STATE.agent_properties.get_property("current_step_index"))
+            return "\nThe plan of the current on-going task:" + f"\n{json.dumps(current_task_dict, indent=4)}"
         return ""
 
     def create_system_policy(self):
@@ -186,8 +191,8 @@ class ContextEngine:
         """
 
         system_default_flags = {
-            "agent_info": True,
             "role_info": True,
+            "agent_info": True,
             "agent_state": self.state_manager.is_running_task(),
             "conversation_history": True,
             "event_stream": True,
@@ -205,8 +210,8 @@ class ContextEngine:
         user_flags = {**user_default_flags, **(user_flags or {})}
 
         system_sections = [
-            ("agent_info", self.create_system_agent_info),
             ("role_info", self.create_system_role_info),
+            ("agent_info", self.create_system_agent_info),
             ("agent_state", self.create_system_agent_state),
             ("conversation_history", self.create_system_conversation_history),
             ("event_stream", self.create_system_event_stream_state),

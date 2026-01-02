@@ -4,21 +4,22 @@
 from dataclasses import dataclass
 from typing import Optional
 from core.state.types import AgentProperties
+from core.task.task import Task
 
 @dataclass
 class AgentState:
     """Authoritative runtime state for the agent."""
 
     conversation_state: Optional[str] = None
-    current_task: Optional[str] = None
+    current_task: Optional[Task] = None
     event_stream: Optional[str] = None
     gui_mode: bool = False
-    agent_properties: AgentProperties = AgentProperties(current_task_id="", action_count=0)
+    agent_properties: AgentProperties = AgentProperties(current_task_id="", action_count=0, current_step_index=0)
 
     def update_conversation_state(self, new_state: str) -> None:
         self.conversation_state = new_state
 
-    def update_current_task(self, new_task: Optional[str]) -> None:
+    def update_current_task(self, new_task: Optional[Task]) -> None:
         self.current_task = new_task
 
     def update_event_stream(self, new_event_stream: Optional[str]) -> None:
@@ -31,7 +32,7 @@ class AgentState:
         self,
         *,
         conversation_state: Optional[str] = None,
-        current_task: Optional[str] = None,
+        current_task: Optional[Task] = None,
         event_stream: Optional[str] = None,
         gui_mode: Optional[bool] = None,
     ) -> None:

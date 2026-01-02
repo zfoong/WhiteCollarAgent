@@ -92,6 +92,7 @@ class AgentBase:
             llm_provider: Provider name passed to :class:`LLMInterface` and
                 :class:`VLMInterface`.
         """        
+        
         # persistence & memory
         self.db_interface = self._build_db_interface(
             data_dir = data_dir, chroma_path=chroma_path
@@ -105,8 +106,6 @@ class AgentBase:
         
         # action & task layers
         self.action_library = ActionLibrary(self.llm, db_interface=self.db_interface)
-        self.action_library.sync_databases()  # base tools
-        self._register_extra_actions()        # role-specific tools
         
         self.task_docs_path = "core/data/task_document"
         if self.task_docs_path:
@@ -429,7 +428,7 @@ class AgentBase:
         # No limits close or reached
         return True
 
-    async def _perform_reasoning(self, query: str, retries: int = 2) -> ReasoningResult:
+    async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = True) -> ReasoningResult:
         """
         Perform LLM-based reasoning on a user query to guide action selection.
 
@@ -453,7 +452,7 @@ class AgentBase:
         )
 
         # Format the user prompt with the incoming query
-        prompt = STEP_REASONING_PROMPT.format(user_query=query)
+        prompt = STEP_REASONING_PROMPT
 
         # Track the last parsing/validation error for meaningful failure reporting
         last_error: Exception | None = None
@@ -466,12 +465,20 @@ class AgentBase:
                 user_prompt=prompt,
             )
 
-            # Log raw LLM output for debugging and observability
-            print(f"[REASONING attempt={attempt}] {response}")
-
             try:
                 # Parse and validate the structured JSON response
-                return self._parse_reasoning_response(response)
+                reasoning_result = self._parse_reasoning_response(response)
+
+                if self.event_stream_manager and log_reasoning_event:
+                    self.event_stream_manager.log(
+                        "agent reasoning",
+                        reasoning_result.reasoning,
+                        severity="DEBUG",
+                        display_message=None,
+                    )
+                    self.state_manager.bump_event_stream()
+
+                return reasoning_result
 
             except ValueError as e:
                 # Capture the error and retry if attempts remain
@@ -505,7 +512,7 @@ class AgentBase:
             try:
                 current_step = self.state_manager.get_current_step()
                 if current_step:
-                    parent_action_id = current_step.get("action_id")
+                    parent_action_id = current_step.action_id
             except Exception as e:
                 logger.error(f"[TRIGGER] Failed to get current step for session {new_session_id}: {e}", exc_info=True)
 
@@ -578,23 +585,13 @@ class AgentBase:
         fragment that is **prepended** to the standard one.
         """
         return ""
-
-    def _register_extra_actions(self) -> None:
-        """
-        Sub-classes override to register additional Action objects,
-        e.g.::
-
-            from .actions import email_campaign
-            self.action_library.register_module(email_campaign)
-        """
-        return
     
     def _generate_role_info_prompt(self) -> str:
         """
         Subclasses override this to return role-specific system instructions
         (responsibilities, behaviour constraints, expected domain tasks, etc).
         """
-        return ""
+        return "You are an AI agent, named 'white collar agent', developed by CraftOS, a general computer-use AI agent that can switch between CLI/GUI mode."
 
     def _build_db_interface(self, *, data_dir: str, chroma_path: str):
         """A tiny wrapper so a subclass can point to another DB/collection."""

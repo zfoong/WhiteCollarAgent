@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-
 @dataclass
 class Step:
     step_index: int
@@ -24,6 +23,22 @@ class Step:
     # Identifier used to correlate steps across logs and triggers
     action_id: Optional[str] = None
 
+    def to_dict(self, fold: bool = False, current_step_index: int = 0) -> Dict[str, Any]:
+        """Return a dictionary representation of the step."""
+        item = {
+            "step_index": self.step_index,
+            "step_name": self.step_name,
+            "status": self.status,
+        }
+        if self.failure_message:
+            item["failure_message"] = self.failure_message
+
+        if fold and current_step_index == self.step_index:
+            item["description"] = self.description
+            item["action_instruction"] = self.action_instruction
+            item["validation_instruction"] = self.validation_instruction
+            
+        return item
 
 @dataclass
 class Task:
@@ -64,3 +79,14 @@ class Task:
                 return step
         return None
 
+    def to_dict(self, fold: bool = False, current_step_index: int = 0) -> Dict[str, Any]:
+        """Return a dictionary representation of the task."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "instruction": self.instruction,
+            "goal": self.goal,
+            "inputs_params": self.inputs_params,
+            "context": self.context,
+            "steps": [step.to_dict(fold=fold, current_step_index=current_step_index) for step in self.steps],
+        }

@@ -72,9 +72,9 @@ class EventStreamManager:
             action_name=action_name,
         )
 
-    def snapshot(self, max_events: int = 60, include_summary: bool = True) -> str:
+    def snapshot(self, include_summary: bool = True) -> str:
         """Return a prompt snapshot of a specific session, or '(no events)' if not found."""
         stream = self.get_stream()
         if not stream:
             return "(no events)"
-        return stream.to_prompt_snapshot(max_events=max_events, include_summary=include_summary)
+        return stream.to_prompt_snapshot(include_summary=include_summary)

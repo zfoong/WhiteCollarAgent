@@ -193,7 +193,7 @@ class ActionRouter:
 
         max_retries = 3
         for attempt in range(max_retries):
-            decision = await self._prompt_for_decision(prompt)
+            decision = await self._prompt_for_decision(prompt, is_task=True)
 
             selected_action_name = decision.get("action_name", "")
             if selected_action_name == "":
@@ -215,14 +215,14 @@ class ActionRouter:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _prompt_for_decision(self, prompt: str) -> Dict[str, Any]:
+    async def _prompt_for_decision(self, prompt: str, is_task: bool = False) -> Dict[str, Any]:
         max_retries = 3
         last_error: Optional[Exception] = None
         current_prompt = prompt
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": False, "role_info": False, "conversation_history": False, "event_stream": False, "task_state": False, "policy": False},
+                system_flags={"agent_info": not is_task, "conversation_history": not is_task, "event_stream": False, "task_state": False, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             decision, parse_error = self._parse_action_decision(raw_response)

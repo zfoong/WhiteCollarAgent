@@ -9,6 +9,8 @@ workspace/
 white_collar_agent/external_tools/
 white_collar_agent/generated_task_document/
 **/__pycache__/
+**/rag_docs_actions/
+**/rag_docs_taskdocs/
 ollama_data/
 node_modules
 .env

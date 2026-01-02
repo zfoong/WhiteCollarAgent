@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import json
 import time
 from dataclasses import dataclass, field
 from collections import defaultdict, OrderedDict
@@ -15,7 +16,6 @@ from typing import Dict, List, Optional, Any
 from core.logger import logger
 from core.llm_interface import LLMInterface
 from core.state.agent_state import STATE
-
 from core.prompt import CHECK_TRIGGERS_STATE_PROMPT
 
 # ─────────────────────────── Data class ─────────────────────────────
@@ -95,9 +95,10 @@ class TriggerQueue:
 
     def create_task_state(self):
         """Return formatted task/plan context for trigger comparison."""
-        current_task = STATE.current_task
+        current_task: Optional[Task] = STATE.current_task
         if current_task:
-            return "The plan of the current on-going task:" + f"\n{current_task}"
+            current_task_dict: Dict[str, Any] = current_task.to_dict(fold=False, current_step_index=STATE.agent_properties.get_property("current_step_index"))
+            return "The plan of the current on-going task:" + f"\n{json.dumps(current_task_dict, indent=4)}"
         return ""
 
     def create_system_agent_state(self):

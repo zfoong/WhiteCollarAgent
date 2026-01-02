@@ -42,18 +42,6 @@ class ActionLibrary:
         action_dict["updatedAt"] = datetime.datetime.utcnow().isoformat()
         self.db_interface.store_action(action_dict)
 
-    def sync_databases(self):
-        """
-        Ensures that all actions stored in data/actions folder are present in ChromaDB.
-        If an action is missing from ChromaDB, it will be added.
-        """
-        logger.debug("Syncing MongoDB and ChromaDB...")
-        added_count = self.db_interface.sync_actions_to_chroma()
-        if added_count > 0:
-            logger.debug(f"Added {added_count} missing actions to ChromaDB.")
-        else:
-            logger.debug("Databases are already in sync. No missing actions found.")
-
     def retrieve_action(self, action_name: str) -> Optional[Action]:
         """
         Fetch a single action by name.

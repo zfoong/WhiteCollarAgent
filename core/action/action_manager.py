@@ -15,6 +15,7 @@ import nest_asyncio
 from typing import Optional, List, Dict, Any
 from core.action.action_library import ActionLibrary
 from core.action.action import Action
+from core.action.action_executor import ActionExecutor
 import io
 import sys
 import traceback
@@ -28,6 +29,7 @@ from core.event_stream.event_stream_manager import EventStreamManager
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
+from core.task.task import Step
 
 nest_asyncio.apply()
 
@@ -71,6 +73,7 @@ class ActionManager:
         # Track in-flight actions so we can mark them aborted on shutdown
         self._inflight: dict[str, dict] = {}
         self.state_manager = state_manager
+        self.executor = ActionExecutor()
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -243,14 +246,14 @@ class ActionManager:
             )
 
 
-            current_step = self.state_manager.get_current_step()
+            current_step: Optional[Step] = self.state_manager.get_current_step()
             if current_step:
                 self.event_stream_manager.log(
                     "task", 
-                    f"Running task step: '{current_step.get('step_name')}' – {current_step.get('description')}",
-                    display_message=f"Running task step: '{current_step.get('step_name')}' – {current_step.get('description')}"
+                    f"Running task step: '{current_step.step_name}' – {current_step.description}",
+                    display_message=f"Running task step: '{current_step.step_name}' – {current_step.description}"
                 )
-                logger.debug(f"[ActionManager] Step {current_step.get('step_name')} queued ({session_id})")
+                logger.debug(f"[ActionManager] Step {current_step.step_name} queued ({session_id})")
 
         else:
             logger.warning(f"Action {action.name} completed with status: {status}. But no event stream manager to log to.")
@@ -312,41 +315,20 @@ class ActionManager:
     # ------------------------------------------------------------------
 
     async def execute_atomic_action(self, action: Action, input_data: dict):
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        mystdout = io.StringIO()
-        mystderr = io.StringIO()
-
-        # print("[ACTION] Running atomic action...")
-
         try:
-            input_json = repr(input_data)
-            
-            python_script = f"""import json;input_data = {input_json};{action.code}"""
-            logger.debug(f"Running script :\n{python_script}")
+            output = await self.executor.execute_action(action, input_data)
 
-            sys.stdout = mystdout
-            sys.stderr = mystderr
-            exec(python_script, {})
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
+            logger.debug(f"The action output is:\n{output}")
 
-            output_json = mystdout.getvalue().strip()
-            output_err = mystderr.getvalue().strip()
+            # If there was an error, return it directly
+            if "error" in output:
+                logger.error(f"Action execution error: {output['error']}")
+                return output  # DO NOT parse
 
-            # print(f"[ACTION] output_json is : {output_json}")
-            logger.debug(f"The action output is :\n{output_json}")
-            if output_err:
-                logger.warning(f"The action produced error :\n{output_err}")
-            
-            parsed_output = self._parse_action_output(output_json)
-
-            logger.debug(f"[ACTION] Parsed action output: {parsed_output}")
-            return parsed_output
+            logger.debug(f"[ACTION] Parsed action output: {output}")
+            return output
 
         except Exception as e:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
             logger.exception("Error occurred while executing atomic action")
             return {"error": f"Execution failed: {str(e)}"}
 

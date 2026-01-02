@@ -18,6 +18,7 @@ class Action:
         action_type: str,
         code: Optional[str] = None,
         mode: Optional[str] = None,
+        execution_mode: str = "sandboxed",
         input_schema: Optional[dict] = None,   # e.g. {"a": {"type": "integer", "example": 2, "description": "First number"}}
         output_schema: Optional[dict] = None,  # e.g. {"result": {"type": "integer", "example": 5, "description": "Sum of a and b"}}
         sub_actions: Optional[List["Action"]] = None,
@@ -80,6 +81,7 @@ class Action:
         self.last_use = last_use
         self.default = default  
         self.mode = mode
+        self.execution_mode = execution_mode
 
     def to_dict(self):
         """Convert Action to a dictionary format (for database storage)."""
@@ -98,7 +100,8 @@ class Action:
             "lastUse": self.last_use,
             "default": self.default,
             "platforms": self.platforms,
-            "platform_overrides": self.platform_overrides
+            "platform_overrides": self.platform_overrides,
+            "execution_mode": self.execution_mode
         }
 
     @classmethod
@@ -124,7 +127,8 @@ class Action:
             observer=observer,
             default=data.get("default", False) ,
             platforms=data.get("platforms", ["windows", "linux", "darwin"]),
-            platform_overrides=data.get("platform_overrides", {})
+            platform_overrides=data.get("platform_overrides", {}),
+            execution_mode=data.get("execution_mode", "sandboxed")
         )
 
         return data_to_return

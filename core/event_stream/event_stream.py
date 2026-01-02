@@ -15,7 +15,7 @@ APIs:
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+import asyncio
 from datetime import datetime, timezone, timedelta
 import re
 from pathlib import Path
@@ -25,6 +25,7 @@ from core.llm_interface import LLMInterface
 from core.prompt import EVENT_STREAM_SUMMARIZATION_PROMPT
 from sklearn.feature_extraction.text import TfidfVectorizer
 from core.logger import logger
+import threading
 
 SEVERITIES = ("DEBUG", "INFO", "WARN", "ERROR") # TODO duplicated declare in event and event stream
 MAX_EVENT_INLINE_CHARS = 8000
@@ -42,7 +43,6 @@ class EventStream:
         llm: LLMInterface,
         summarize_at: int = 30,
         tail_keep_after_summarize: int = 15,
-        max_events: int = 60,
         temp_dir: Path | None = None,
     ) -> None:
         self.head_summary: Optional[str] = None
@@ -50,8 +50,15 @@ class EventStream:
         self.tail_events: List[EventRecord] = []
         self.summarize_at = summarize_at
         self.tail_keep_after_summarize = tail_keep_after_summarize
-        self.max_events = max_events
         self.temp_dir = temp_dir
+        
+        MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION= 10
+        if tail_keep_after_summarize + MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION > summarize_at:
+            logger.warning(f"Value for tail_keep_after_summarize is larger than summarize_at. Resetting tail_keep_after_summarize to {summarize_at - MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION}")
+            tail_keep_after_summarize = summarize_at - MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION
+           
+        self._summarize_task: asyncio.Task | None = None
+        self._lock = threading.RLock()
 
     # ────────────────────────────── logging ──────────────────────────────
 
@@ -115,20 +122,15 @@ class EventStream:
             return message
 
         try:
-            print("1 [ISSUE]")
             self.temp_dir.mkdir(parents=True, exist_ok=True)
-            print("2 [ISSUE]")
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S%f")
             suffix = "action"
             
             if action_name:
                 suffix = re.sub(r"[^A-Za-z0-9._-]", "_", action_name).strip("._-") or "action"
-            print("3 [ISSUE]")
             file_path = self.temp_dir / f"event_{suffix}_{ts}.txt"
-            print("4 [ISSUE]")
             file_path.write_text(message, encoding="utf-8")
             keywords = ", ".join(self._extract_keywords(message)) or "n/a"
-            print("5 [ISSUE]")
             return (
                 f"Action {action_name} completed. The output is too long therefore is saved in {file_path} to save token. | keywords: {keywords} | To retrieve the content, agent MUST use the 'grep' action to extract the context with keywords or use 'stream read' to read the content line by line in file."
             )
@@ -143,114 +145,87 @@ class EventStream:
         """
         Trigger summarization when the tail exceeds the configured threshold.
 
-        This lightweight guard keeps log volume manageable without requiring
-        callers to track counts. When the threshold is met, the stream defers to
-        :meth:`summarize_by_LLM` to roll up older entries.
-        Can be changed to summarize_by_rule too.
+        Uses asyncio.create_task to schedule summarize_by_LLM() without requiring
+        callers of log() to be async/await.
         """
-        if len(self.tail_events) >= self.summarize_at:
-            self.summarize_by_LLM()
-
-    def summarize_by_rule(self) -> None:
-        """
-        Summarize the oldest events using a deterministic rule-based strategy.
-
-        The method aggregates counts by event kind and severity, preserves a
-        time window, and notes any deduplicated repeats. It updates
-        ``head_summary`` while trimming the rolled-up events from ``tail_events``
-        so that only the most recent items remain verbatim.
-        """
-        if not self.tail_events:
+        if len(self.tail_events) < self.summarize_at:
             return
 
-        # Select chunk to roll up (older events)
-        cutoff = max(0, len(self.tail_events) - self.tail_keep_after_summarize)
-        chunk = self.tail_events[:cutoff]
-        self.tail_events = self.tail_events[cutoff:]
+        if self._summarize_task is not None and not self._summarize_task.done():
+            return
 
-        # Build a compact textual summary by kind/severity
-        counts_by_kind = {}
-        counts_by_sev = {}
-        repeats = 0
-        first_ts = chunk[0].ts if chunk else None
-        last_ts = chunk[-1].ts if chunk else None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("[EventStream] No running event loop; cannot schedule summarization.")
+            return
 
-        for rec in chunk:
-            k = rec.event.kind
-            s = rec.event.severity
-            counts_by_kind[k] = counts_by_kind.get(k, 0) + rec.repeat_count
-            counts_by_sev[s] = counts_by_sev.get(s, 0) + rec.repeat_count
-            if rec.repeat_count > 1:
-                repeats += (rec.repeat_count - 1)
-
-        def _fmt_counts(d: dict) -> str:
-            return ", ".join(f"{k}={v}" for k, v in sorted(d.items()))
-
-        window = ""
-        if first_ts and last_ts:
-            window = f"{first_ts.strftime('%H:%M:%S')}–{last_ts.strftime('%H:%M:%S')}"
-
-        summary_line = (
-            f"Rolled up {sum(counts_by_kind.values())} events [{window}] — "
-            f"kinds: {_fmt_counts(counts_by_kind)}; severities: {_fmt_counts(counts_by_sev)}"
-        )
-        if repeats:
-            summary_line += f"; collapsed repeats={repeats}"
-
-        if self.head_summary:
-            self.head_summary = self.head_summary + "\n" + summary_line
-        else:
-            self.head_summary = summary_line
+        self._summarize_task = loop.create_task(self.summarize_by_LLM(), name="eventstream_summarize")
+        self._summarize_task.add_done_callback(self._on_summarize_done)
             
+    def _on_summarize_done(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("[EventStream] summarize_by_LLM task crashed unexpectedly")        
+
     async def summarize_by_LLM(self) -> None:
         """
         Summarize the oldest tail events using the language model.
 
-        The previous ``head_summary`` and compacted tail events are fed to the
-        LLM with a focused prompt that asks for an operational roll-up. On
-        success the head summary is replaced and older events are pruned,
-        keeping only the configured number of recent entries. If the LLM call
-        fails, the method falls back to :meth:`summarize_by_rule` to avoid data
-        loss.
+        This version is concurrency-safe with synchronous log() calls:
+        - Snapshot the chunk under a lock
+        - Release lock while awaiting the LLM
+        - Re-acquire lock to apply summary + prune using the *current* tail
+          so events appended during the await are not lost.
         """
-        if not self.tail_events:
-            return
+        with self._lock:
+            if not self.tail_events:
+                return
 
-        # Select the chunk to roll up (oldest events), same policy as rule-based
-        cutoff = max(0, len(self.tail_events) - self.tail_keep_after_summarize)
-        if cutoff <= 0:
-            # Nothing old enough to summarize
-            return
+            cutoff = max(0, len(self.tail_events) - self.tail_keep_after_summarize)
 
-        chunk = self.tail_events[:cutoff]
-        remaining = self.tail_events[cutoff:]
+            if cutoff <= 0:
+                # Nothing old enough to summarize
+                return
 
-        # Prepare context for the LLM
-        first_ts = chunk[0].ts if chunk else None
-        last_ts = chunk[-1].ts if chunk else None
-        window = ""
-        if first_ts and last_ts:
-            window = f"{first_ts.isoformat()} to {last_ts.isoformat()}"
+            chunk = list(self.tail_events[:cutoff]) 
+            first_ts = chunk[0].ts if chunk else None
+            last_ts = chunk[-1].ts if chunk else None
+            window = ""
+            if first_ts and last_ts:
+                window = f"{first_ts.isoformat()} to {last_ts.isoformat()}"
 
-        # Compact lines to keep prompt small
-        compact_lines = "\n".join(r.compact_line() for r in chunk)
+            compact_lines = "\n".join(r.compact_line() for r in chunk)
+            previous_summary = self.head_summary or "(none)"
 
-        previous_summary = self.head_summary or "(none)"
+        prompt = EVENT_STREAM_SUMMARIZATION_PROMPT.format(window=window, previous_summary=previous_summary, compact_lines=compact_lines)
 
-        # Build a focused prompt for durable, operation-oriented summarization
-        prompt = EVENT_STREAM_SUMMARIZATION_PROMPT(window, previous_summary, compact_lines)
-
-        # Ask the LLM to synthesize the new head summary
         try:
             llm_output = await self.llm.generate_response_async(user_prompt=prompt)
             new_summary = (llm_output or "").strip()
-            if new_summary:
+            # timestamp can be added here. For example: (from 'start time' to 'end time')
+            
+            logger.debug(f"[EVENT STREAM SUMMARIZATION] llm_output_len={len(llm_output or '')}")
+
+            if not new_summary:
+                logger.warning("[EVENT STREAM SUMMARIZATION] LLM returned empty summary; not updating.")
+                return
+
+            # Apply + prune under lock
+            with self._lock:
                 self.head_summary = new_summary
-                # Drop the summarized events from the tail, keep only the recent ones
-                self.tail_events = remaining
+                if cutoff >= len(self.tail_events):
+                    self.tail_events = []
+                else:
+                    self.tail_events = self.tail_events[cutoff:]
+
         except Exception:
-            # If LLM fails, do not lose data—fallback to rule-based roll-up
-            self.summarize_by_rule()
+            logger.exception("[EventStream] LLM summarization failed. Keeping all events without summarization.")
+            return
+
     # ───────────────────── utilities ─────────────────────
 
     @staticmethod
@@ -280,7 +255,7 @@ class EventStream:
 
     # ───────────────────────── prompt accessors ──────────────────────────
 
-    def to_prompt_snapshot(self, max_events: int = 60, include_summary: bool = True) -> str:
+    def to_prompt_snapshot(self, include_summary: bool = True) -> str:
         """
         Build a compact, human-readable history for inclusion in LLM prompts.
 
@@ -290,7 +265,6 @@ class EventStream:
         make absence explicit.
 
         Args:
-            max_events: Maximum number of recent events to include from the tail.
             include_summary: Whether to prepend the rolled-up ``head_summary``.
 
         Returns:
@@ -298,11 +272,11 @@ class EventStream:
         """
         lines: List[str] = []
         if include_summary and self.head_summary:
-            lines.append("EARLIER (summary): " + self.head_summary)
+            lines.append("Summary of folded event stream: \n" + self.head_summary)
 
-        recent = self.tail_events[-max_events:]
+        recent = self.tail_events
         if recent:
-            lines.append("RECENT EVENTS:")
+            lines.append("Recent Event: ")
             lines.extend(r.compact_line() for r in recent)
 
         return "\n".join(lines) if lines else "(no events)"

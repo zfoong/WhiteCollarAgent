@@ -3,12 +3,13 @@ from core.config import MAX_ACTIONS_PER_TASK, MAX_TOKEN_PER_TASK
 from core.logger import logger
 
 class AgentProperties:
-    def __init__(self, current_task_id: str, action_count: int):
+    def __init__(self, current_task_id: str, action_count: int, current_step_index: int = 0):
         self.current_task_id = current_task_id
-        self.action_count = action_count
-        self.max_actions_per_task = MAX_ACTIONS_PER_TASK        
-        self.token_count = 0
-        self.max_tokens_per_task = MAX_TOKEN_PER_TASK        
+        self.current_step_index: int = current_step_index
+        self.action_count: int = action_count
+        self.max_actions_per_task: int = MAX_ACTIONS_PER_TASK        
+        self.token_count: int = 0
+        self.max_tokens_per_task: int = MAX_TOKEN_PER_TASK        
         
         # Validate config value
         if self.max_actions_per_task < 5:
@@ -44,6 +45,7 @@ class AgentProperties:
         """Internal: canonical source of agent state"""
         return {
             "current_task_id": self.current_task_id,
+            "current_step_index": self.current_step_index,
             "action_count": self.action_count,
             "max_actions_per_task": self.max_actions_per_task,
             "token_count": self.token_count,

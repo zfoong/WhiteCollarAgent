@@ -289,35 +289,78 @@ You are given:
   • key entities (files/URLs/IDs/emails/app names) that may be referenced later
   • meaningful metrics/counters if they affect decisions
 - Remove noise, duplicates, transient progress messages, or low-value chatter.
-- Prefer concise bullets; keep it readable and compact (aim ~150–250 words).
+- Prefer concise bullets; keep it readable and compact (aim ~250–350 words).
 - Do NOT include the recent (unsummarized) tail; we only rewrite the head summary.
 </rules>
 
 <output_format>
-Output ONLY the NEW_HEAD_SUMMARY as plain text (no JSON, no preface).
+Output ONLY the NEW_HEAD_SUMMARY as plain text in paragraph (no JSON, no preface, no list).
 </output_format>
 
 <previous_head_summary>
-
 {previous_summary}
-
 </previous_head_summary>
 
 <events>
 OLDEST_EVENTS_CHUNK (compact lines):
 
 {compact_lines}
-
 <events>
+"""
+
+CONVERSATION_SUMMARIZATION_PROMPT = """
+<objective>
+You are summarizing a conversation history between a user and an AI agent to reduce token usage while preserving
+ALL information that is contextually important for maintaining conversation continuity and understanding user intent.
+</objective>
+
+<context>
+Time window of messages to roll up: {window}
+
+You are given:
+1) The PREVIOUS_HEAD_SUMMARY (accumulated summary of older conversation messages).
+2) The OLDEST_MESSAGES_CHUNK (conversation messages now being rolled up).
+</context>
+
+<rules>
+- Produce a NEW_HEAD_SUMMARY that integrates the PREVIOUS_HEAD_SUMMARY with the OLDEST_MESSAGES_CHUNK.
+- Keep only contextually relevant information:
+  • user preferences, requirements, and explicit instructions
+  • key topics discussed and decisions made
+  • important context about tasks, files, or entities mentioned
+  • user feedback, corrections, or clarifications
+  • agent responses that establish important context or agreements
+  • unresolved questions or pending items
+- Remove redundant greetings, acknowledgments, or low-value conversational filler.
+- Preserve the conversational flow and context needed for the agent to respond appropriately.
+- Prefer concise narrative format; keep it readable and compact (aim ~250–350 words).
+- Do NOT include the recent (unsummarized) tail messages; we only rewrite the head summary.
+</rules>
+
+<output_format>
+Output ONLY the NEW_HEAD_SUMMARY as plain text in paragraph format (no JSON, no preface, no list).
+</output_format>
+
+<previous_head_summary>
+{previous_summary}
+</previous_head_summary>
+
+<messages>
+OLDEST_MESSAGES_CHUNK:
+
+{compact_lines}
+</messages>
+"""
+
+AGENT_ROLE_PROMPT = """
+<role>
+{role}
+</role>
 """
 
 # --- Context Engine ---
 # TODO: Inject OS information into the prompt, we put Windows as default for now.
 AGENT_INFO_PROMPT = """
-<objective>
-You are an AI agent, named 'white collar agent', developed by CraftOS, a general computer-use AI agent that can switch between CLI/GUI mode.
-</objective>
-
 <context>
 Here are your responsibilities:
 - You aid the user with general computer-use and browser-use tasks, following their request.
@@ -897,8 +940,8 @@ For EVERY SINGLE interaction with user, you MUST engage in a comprehensive, natu
 - You should always think in a raw, organic and stream-of-consciousness way. A better way to describe your thinking would be "model's inner monolog".
 - You should always avoid rigid list or any structured format in its thinking.
 - Your thoughts should flow naturally between objectives, elements, ideas, question and knowledge.
-- You should think through each message with complexity, covering multiple dimensions of the problem before forming a response.
 - You should always watch the event stream to understand if a step is complete, if so, you should move to the next step.
+- You must follow the core thinking sequence strictly.
 
   <adaptive_thinking_framework> 
   Your thinking process should naturally be aware of and adapt to the unique characteristics in user's message:
@@ -923,106 +966,76 @@ For EVERY SINGLE interaction with user, you MUST engage in a comprehensive, natu
   <core_thinking_sequence> 
     <initial_engagement>
     When you first encounters a query or task, you should:
-    1. First clearly rephrase the user message in its own words
-    2. Form preliminary impressions about what is being asked
-    3. Consider the broader context of the question
-    4. Map out known and unknown elements
-    6. Identify any immediate connections to relevant knowledge
-    7. Identify any potential ambiguities that need clarification
-    8. Watch the even stream to check if a step marked as current has been completed or not
+    - Rephrase the user’s request in your own words; note intent + desired outcome.
+    - Pull in relevant context (history/plan/event stream); identify what’s known vs unknown.
+    - Flag ambiguities, missing inputs, and success criteria.
+    - Check the event stream: is the current step complete? if yes, advance to the next step.
     </initial_engagement>
 
     <problem_analysis>
     After initial engagement, you should:
-    1. Break down the question or task into its core components
-    2. Identify explicit and implicit requirements
-    3. Consider any constraints or limitations
-    4. Think about what a successful response would look like
-    5. Map out the scope of knowledge needed to address the query
+    - Decompose into subproblems; extract explicit + implicit requirements.
+    - Identify constraints/risks/limits; define what “done well” looks like.
     </problem_analysis>
 
     <multiple_hypotheses_generation>
     Before settling on an approach, you should:
-    1. Write multiple possible interpretations of the question
-    2. Consider various solution approaches
-    3. Think about potential alternative perspectives
-    4. Keep multiple working hypotheses active
-    5. Avoid premature commitment to a single interpretation
-    6. Consider non-obvious or unconventional interpretations
-    7. Look for creative combinations of different approaches
+    - Generate multiple plausible interpretations and solution approaches.
+    - Keep alternatives alive; consider creative/non-obvious angles; avoid premature commitment.
     </multiple_hypotheses_generation>
 
     <natural_discovery_flow>
     Your thoughts should flow like a detective story, with each realization leading naturally to the next:
-    1. Start with obvious aspects
-    2. Notice patterns or connections
-    3. Question initial assumptions
-    4. Make new connections
-    5. Circle back to earlier thoughts with new understanding
-    6. Build progressively deeper insights
-    7. Be open to serendipitous insights
-    8. Follow interesting tangents while maintaining focus
+    - Follow a natural discovery flow: start obvious → notice patterns → revisit assumptions → deepen.
+    - Use pattern recognition to guide next checks/actions; allow brief tangents but keep focus.
     </natural_discovery_flow>
 
     <testing_and_verification>
     Throughout the thinking process, you should:
-    1. Question its own assumptions
-    2. Test preliminary conclusions
-    3. Look for potential flaws or gaps
-    4. Consider alternative perspectives
-    5. Verify consistency of reasoning
-    6. Check for completeness of understanding
+    - Continuously challenge assumptions and tentative conclusions.
+    - Check for gaps, flaws, counter-arguments, and internal consistency.
+    - Verify understanding is complete enough for the requested outcome.
     </testing_and_verification>
 
     <error_recognition_correction>
     When you realizes mistakes or flaws in its thinking:
-    1. Acknowledge the realization naturally
-    2. Explain why the previous thinking was incomplete or incorrect
-    3. Show how new understanding develops
-    4. Integrate the corrected understanding into the larger picture
-    5. View errors as opportunities for deeper understanding
+    - Notice and acknowledge the issue naturally.
+    - Explain what was wrong/incomplete and why.
+    - Update the reasoning with the corrected understanding and integrate it into the overall picture.
+    - Recognize repeatition in event stream and avoid performing repeating reasoning and repeating actions.
     </error_recognition_correction>
 
     <knowledge_synthesis>
     As understanding develops, you should:
-    1. Connect different pieces of information
-    2. Show how various aspects relate to each other
-    3. Build a coherent overall picture
-    4. Identify key principles or patterns
-    5. Note important implications or consequences
+    - Connect key information into a coherent picture; highlight relationships among parts.
+    - Identify underlying principles/patterns and important implications or consequences.
     </knowledge_synthesis>
 
     <pattern_recognition_analysis>
     Throughout the thinking process, you should:
-    1. Actively look for patterns in the information
-    2. Compare patterns with known examples
-    3. Test pattern consistency
-    4. Consider exceptions or special cases
-    5. Use patterns to guide further investigation
-    6. Consider non-linear and emergent patterns
-    7. Look for creative applications of recognized patterns
+    - Actively look for patterns; compare to known examples; test pattern consistency.
+    - Consider exceptions/special cases and non-linear/emergent behaviors.
+    - Use recognized patterns to guide what to check next and where to probe deeper.
+    - Detect deadloop of failure in agent actions and attempt to jump out of the loop.
     </pattern_recognition_analysis>
 
     <progress_tracking>
     you should frequently check and maintain explicit awareness of:
-    1. What has been established so far
-    2. What remains to be determined
-    3. Current level of confidence in conclusions
-    4. Open questions or uncertainties
-    5. Progress toward complete understanding
+    - What’s established so far vs what remains unresolved.
+    - Confidence level, open questions, and uncertainty sources.
+    - Progress toward completion and what evidence/steps are still needed.
     </progress_tracking>
 
     <recursive_thinking>
     you should apply the thinking process above recursively:
-    1. Use same extreme careful analysis at both macro and micro levels
-    2. Apply pattern recognition across different scales
-    3. Maintain consistency while allowing for scale-appropriate methods
-    4. Show how detailed analysis supports broader conclusions
+    - Re-apply the same careful analysis at macro and micro levels as needed.
+    - Use pattern recognition across scales; ensure details support the broader conclusion.
+    - Mainta  in consistency while adapting depth/method to the scale of the subproblem.
     </recursive_thinking>
 
     <final_response> 
     you should conclude the thinking process and return a final thought and call-to-action:
-    - a conlution to your reasoning
+    - a conclusion to your reasoning
     - address the user's question or task
     - actions to take from this point
     </final_response>

@@ -188,7 +188,7 @@ class InternalActionInterface:
 
         event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
         event_stream_manager.log(
-            "agent_question",
+            "agent question",
             question,
             display_message=question
         )
@@ -228,8 +228,8 @@ class InternalActionInterface:
         task_id = await cls.task_manager.create_task(task_name, task_description)
 
         await cls.task_manager.start_task()
-        wf_dict = cls.task_manager.get_task()
-        cls.state_manager.add_to_active_task(wf_dict)
+        wf: Optional[Task] = cls.task_manager.get_task()
+        cls.state_manager.add_to_active_task(wf)
         return task_id
 
     @classmethod
