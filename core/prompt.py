@@ -1116,7 +1116,7 @@ STEP_REASONING_PROMPT = """
 <objective>
 You are performing reasoning for the current step in a multi-step task workflow. 
 You have access to the full task definition, including all steps, instructions, and context.
-Your goal is to analyze whether the current step is complete, reason about it in detail, and produce a semantic query string that can be used to retrieve relevant actions from a vector database (e.g., ChromaDB).
+Your goal is to analyze whether the current step is complete, reason about it in detail, and produce a semantic query string that can be used to retrieve relevant atomic actions from a vector database (e.g., ChromaDB).
 </objective>
 
 <reasoning_protocol>
@@ -1129,10 +1129,11 @@ Follow these instructions carefully:
 5. Evaluate whether the step is theoretically complete based on available information.
 6. If the step is complete, the action_query should indicate that the next step should start (e.g., 'step complete, move to next step').
 7. If the step is not complete, generate a semantic query string describing the action needed to execute this step. 
-   The query should describe the action in natural language so that a vector database can retrieve relevant tools/actions.
+   The query should describe the action in natural language so that a vector database can retrieve relevant atomic tools/actions.
 8. Do NOT plan or act on any steps that are not the current step.
 9. Base your reasoning and decisions ONLY on the current step and any relevant context from the task.
 10. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
+11. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
 </reasoning_protocol>
 
 <quality_control>
