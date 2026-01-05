@@ -74,7 +74,7 @@ class DatabaseInterface:
         self.chroma_taskdocs_coll = self.chroma_taskdocs.get_or_create_collection("task_documents")
 
         # Ensure Chroma stays in sync with the filesystem sources on startup
-        self.sync_actions_to_chroma()
+        self.sync_actions_to_chroma(paths_to_scan=[self.actions_dir])
 
         # Retrieve everything currently in the collection
         stored_data = self.chroma_actions.get()
@@ -426,14 +426,14 @@ class DatabaseInterface:
         )
         return result.get("ids", [[]])[0] if result else []
 
-    def sync_actions_to_chroma(self) -> int:
+    def sync_actions_to_chroma(self, paths_to_scan: List[str] = None) -> int:
         """
         Build the Chroma action collection from JSON files on disk.
 
         Returns:
             Number of action definitions indexed in Chroma.
         """        
-        load_actions_from_directories()
+        load_actions_from_directories(paths_to_scan=paths_to_scan)
 
         actions: List[Dict[str, Any]] = registry_instance.list_all_actions_as_json()
 

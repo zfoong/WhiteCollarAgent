@@ -1,0 +1,6 @@
+data_dir: agents/dog_agent/data/
+rag_dir: rag_docs
+rag_namespace: dog_agent_knowledge
+
+max_tokens: 16000
+llm_provider: byteplus

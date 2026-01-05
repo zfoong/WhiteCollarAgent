@@ -352,13 +352,15 @@ OLDEST_MESSAGES_CHUNK:
 </messages>
 """
 
+AGENT_ROLE_PROMPT = """
+<role>
+{role}
+</role>
+"""
+
 # --- Context Engine ---
 # TODO: Inject OS information into the prompt, we put Windows as default for now.
 AGENT_INFO_PROMPT = """
-<objective>
-You are an AI agent, named 'white collar agent', developed by CraftOS, a general computer-use AI agent that can switch between CLI/GUI mode.
-</objective>
-
 <context>
 Here are your responsibilities:
 - You aid the user with general computer-use and browser-use tasks, following their request.
@@ -939,6 +941,7 @@ For EVERY SINGLE interaction with user, you MUST engage in a comprehensive, natu
 - You should always think in a raw, organic and stream-of-consciousness way. A better way to describe your thinking would be "model's inner monolog".
 - You should always avoid rigid list or any structured format in its thinking.
 - Your thoughts should flow naturally between objectives, elements, ideas, question and knowledge.
+- You need to propose the best action to advance current task, fix error, finding NEW solution for error.
 - You should always watch the event stream to understand if a step is complete, if so, you should move to the next step.
 - You must follow the core thinking sequence strictly.
 
@@ -1071,7 +1074,7 @@ For EVERY SINGLE interaction with user, you MUST engage in a comprehensive, natu
 
   <critical_elements> 
     <natural_language>
-    your inner monologue should use natural phrases that show genuine thinking, including but not limited to:
+    your inner monologue MUST use natural phrases that show genuine thinking, including but not limited to:
     "Hmm...", "This is interesting because...", "Wait, let me think about...", "Actually...", "Now that I look at it...", "This reminds me of...", "I wonder if...", "But then again...", "Let me see if...", "This might mean that...", etc.
     </natural_language>
 
@@ -1090,8 +1093,9 @@ For EVERY SINGLE interaction with user, you MUST engage in a comprehensive, natu
   - IMPORTANT: you MUST NOT include code block with three backticks inside thinking process, only provide the raw string, or it will break the thinking block.
   - you should follow the thinking protocol in all languages and modalities (text and vision), and always respond in the language the user uses or requests.
   - If a step is complete in the current task flow - ALWAYS call start next step so that task can progress.
+  - If the task plan no longer fit new information or requirement, you MUST update and create new plan with start next step.
   - NEVER skip steps unless the task is already complete.
-  - ONLY do actions related to step marked as current in the plan. If the current step requires multiple actions to complete, you can do them one by one without updating the plan until the step is fully completed.
+  - ONLY do actions related to step marked as current in the plan. If the current step requires multiple actions to complete, you can do them one by one without going to the next step until the current step is fully completed.
   </rules_for_reasoning>
 </agent_thinking_protocol>
 
@@ -1103,7 +1107,7 @@ For EVERY SINGLE interaction with user, you MUST engage in a comprehensive, natu
 <output_format>
 Return ONLY a valid JSON object with this structure and no extra commentary:
 {{
-  "reasoning": "<the chain-of-thoughts reasoning in paragraph>",
+  "reasoning": "<the chain-of-thoughts reasoning in comprehensive paragraph until problem is solved and solution is proposed>",
   "action_query": "<query used to retrieve sementically relevant actions from vector database full of actions/tools>"
 }}
 </output_format>
@@ -1113,7 +1117,7 @@ STEP_REASONING_PROMPT = """
 <objective>
 You are performing reasoning for the current step in a multi-step task workflow. 
 You have access to the full task definition, including all steps, instructions, and context.
-Your goal is to analyze whether the current step is complete, reason about it in detail, and produce a semantic query string that can be used to retrieve relevant actions from a vector database (e.g., ChromaDB).
+Your goal is to analyze whether the current step is complete, reason about it in detail, and produce a semantic query string that can be used to retrieve relevant atomic actions from a vector database (e.g., ChromaDB).
 </objective>
 
 <reasoning_protocol>
@@ -1126,10 +1130,11 @@ Follow these instructions carefully:
 5. Evaluate whether the step is theoretically complete based on available information.
 6. If the step is complete, the action_query should indicate that the next step should start (e.g., 'step complete, move to next step').
 7. If the step is not complete, generate a semantic query string describing the action needed to execute this step. 
-   The query should describe the action in natural language so that a vector database can retrieve relevant tools/actions.
+   The query should describe the action in natural language so that a vector database can retrieve relevant atomic tools/actions.
 8. Do NOT plan or act on any steps that are not the current step.
 9. Base your reasoning and decisions ONLY on the current step and any relevant context from the task.
 10. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
+11. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
 </reasoning_protocol>
 
 <quality_control>

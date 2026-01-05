@@ -6,6 +6,7 @@ import json
 from core.config import AGENT_WORKSPACE_ROOT
 from core.logger import logger
 from core.prompt import (
+    AGENT_ROLE_PROMPT,
     AGENT_INFO_PROMPT,
     AGENT_STATE_PROMPT,
     ENVIRONMENTAL_CONTEXT_PROMPT,
@@ -68,8 +69,9 @@ class ContextEngine:
         Calls the injected role-specific prompt function, if any.
         """
         if self._role_info_func:
-            return self._role_info_func()
-        return ""  # No-op by default
+            role = self._role_info_func()
+            return AGENT_ROLE_PROMPT.format(role=role)
+        return ""
 
     def create_system_agent_state(self):
         """Return formatted agent properties for the current session."""
@@ -199,8 +201,8 @@ class ContextEngine:
         """
 
         system_default_flags = {
-            "agent_info": True,
             "role_info": True,
+            "agent_info": True,
             "agent_state": self.state_manager.is_running_task(),
             "conversation_history": True,
             "event_stream": True,
@@ -218,8 +220,8 @@ class ContextEngine:
         user_flags = {**user_default_flags, **(user_flags or {})}
 
         system_sections = [
-            ("agent_info", self.create_system_agent_info),
             ("role_info", self.create_system_role_info),
+            ("agent_info", self.create_system_agent_info),
             ("agent_state", self.create_system_agent_state),
             ("conversation_history", self.create_system_conversation_history),
             ("event_stream", self.create_system_event_stream_state),

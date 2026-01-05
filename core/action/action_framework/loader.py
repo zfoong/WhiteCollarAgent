@@ -4,6 +4,7 @@ import importlib.util
 import sys
 from typing import List
 import logging
+from pathlib import Path
 
 logger = logging.getLogger("ActionLoader")
 
@@ -25,6 +26,8 @@ def load_actions_from_directories(base_dir: str = None, paths_to_scan: List[str]
 
     if paths_to_scan is None:
         paths_to_scan = DEFAULT_ACTION_PATHS
+    else:
+        paths_to_scan += DEFAULT_ACTION_PATHS
         
     logger.info(f"--- Starting Action Discovery from base: {base_dir} ---")
     
@@ -32,7 +35,8 @@ def load_actions_from_directories(base_dir: str = None, paths_to_scan: List[str]
     processed_files = set()
 
     for relative_path in paths_to_scan:
-        full_search_path = os.path.join(base_dir, relative_path)
+        relative_path = Path(relative_path)  
+        full_search_path = Path(base_dir) / relative_path
         
         if not os.path.exists(full_search_path):
             logger.debug(f"Skipping non-existent directory: {full_search_path}")
@@ -43,7 +47,9 @@ def load_actions_from_directories(base_dir: str = None, paths_to_scan: List[str]
         # Walk the directory tree
         for root, _, files in os.walk(full_search_path):
             # Special handling to only look into 'data/action' if we are scanning the 'agents' folder
-            if 'agents' in relative_path and 'data' in root and 'action' not in root:
+            root_path = Path(root) 
+            
+            if "agents" in relative_path.parts and "data" in root_path.parts and "action" not in root_path.parts:
                  continue
 
             for file in files:

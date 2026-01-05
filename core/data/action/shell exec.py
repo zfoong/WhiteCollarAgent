@@ -205,6 +205,9 @@ def shell_exec_windows(input_data: dict) -> dict:
 
     command = str(input_data.get('command', '')).strip()
     shell_choice = str(input_data.get('shell', 'cmd')).strip().lower()
+    if shell_choice == 'auto':
+        shell_choice = 'cmd'
+    shell_choice = shell_choice if shell_choice in ('cmd', 'powershell', 'pwsh') else 'cmd'
     timeout_val = input_data.get('timeout')
     cwd = input_data.get('cwd')
     env_input = input_data.get('env') or {}
@@ -226,7 +229,8 @@ def shell_exec_windows(input_data: dict) -> dict:
     elif shell_choice == 'pwsh':
         args = ['pwsh.exe', '-NoLogo', '-NonInteractive', '-NoProfile', '-Command', command]
     else:
-        args = ['cmd.exe', '/c', command]
+        # Use /d and /s to ensure quoted commands (e.g., paths with spaces) are handled consistently.
+        args = ['cmd.exe', '/d', '/s', '/c', command]
 
     run_kwargs = {
         'capture_output': True,

@@ -40,15 +40,32 @@ from core.action.action_framework.registry import action
     }
 )
 def convert_to_pdf_linux(input_data: dict) -> dict:
-    import os, sys, json, subprocess
+    import os, sys, json, subprocess, shutil
 
     def _check_dep(cmd):
         try:
-            subprocess.check_output([cmd, '--version'], stderr=subprocess.STDOUT)
+            subprocess.check_output([cmd, '--version'], stderr=subprocess.STDOUT, timeout=5)
             return True
         except Exception:
             return False
 
+    def _ensure_system_dep(cmd, install_cmd):
+        """Ensure a system dependency is installed, attempt installation if missing."""
+        if _check_dep(cmd):
+            return True
+        
+        # Try to install without sudo (will fail gracefully if permissions needed)
+        try:
+            subprocess.check_call(
+                install_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=120
+            )
+            # Verify installation succeeded
+            return _check_dep(cmd)
+        except Exception:
+            return False
 
     simulated_mode = input_data.get('simulated_mode', False)
     
@@ -71,13 +88,28 @@ def convert_to_pdf_linux(input_data: dict) -> dict:
         return {"status": "success", "pdf_file": output_pdf}
 
     # Ensure output directory
-    os.makedirs(os.path.dirname(output_pdf), exist_ok=True)
+    os.makedirs(os.path.dirname(output_pdf) if os.path.dirname(output_pdf) else '.', exist_ok=True)
 
-    # Dependency checks
-    if not _check_dep('pandoc'):
-        return {"status": "error", "message": "Missing dependency: pandoc"}
-    if not _check_dep('xelatex'):
-        return {"status": "error", "message": "Missing dependency: xelatex"}
+    # Ensure dependencies are installed
+    # Try apt first (Debian/Ubuntu)
+    if shutil.which('apt-get'):
+        if not _ensure_system_dep('pandoc', ['apt-get', 'install', '-y', 'pandoc']):
+            return {"status": "error", "message": "Failed to install pandoc. Please install manually: sudo apt-get install pandoc"}
+        if not _ensure_system_dep('xelatex', ['apt-get', 'install', '-y', 'texlive-xetex']):
+            return {"status": "error", "message": "Failed to install xelatex. Please install manually: sudo apt-get install texlive-xetex"}
+    # Try yum/dnf (RHEL/CentOS/Fedora)
+    elif shutil.which('yum') or shutil.which('dnf'):
+        pkg_mgr = 'dnf' if shutil.which('dnf') else 'yum'
+        if not _ensure_system_dep('pandoc', [pkg_mgr, 'install', '-y', 'pandoc']):
+            return {"status": "error", "message": f"Failed to install pandoc. Please install manually: sudo {pkg_mgr} install pandoc"}
+        if not _ensure_system_dep('xelatex', [pkg_mgr, 'install', '-y', 'texlive-xetex']):
+            return {"status": "error", "message": f"Failed to install xelatex. Please install manually: sudo {pkg_mgr} install texlive-xetex"}
+    else:
+        # Fallback: just check if installed
+        if not _check_dep('pandoc'):
+            return {"status": "error", "message": "Missing dependency: pandoc. Please install manually."}
+        if not _check_dep('xelatex'):
+            return {"status": "error", "message": "Missing dependency: xelatex. Please install manually."}
 
     # Attempt conversion
     try:
@@ -130,15 +162,34 @@ def convert_to_pdf_linux(input_data: dict) -> dict:
     }
 )
 def convert_to_pdf_windows(input_data: dict) -> dict:
-    import os, sys, json, subprocess
+    import os, sys, json, subprocess, shutil
 
     def _check_dep(cmd):
         try:
-            subprocess.check_output([cmd, '--version'], stderr=subprocess.STDOUT, shell=True)
+            subprocess.check_output([cmd, '--version'], stderr=subprocess.STDOUT, shell=True, timeout=5)
             return True
         except Exception:
             return False
 
+    def _ensure_system_dep(cmd, install_cmd):
+        """Ensure a system dependency is installed, attempt installation if missing."""
+        if _check_dep(cmd):
+            return True
+        
+        # Try to install via chocolatey if available
+        if shutil.which('choco'):
+            try:
+                subprocess.check_call(
+                    install_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=300,
+                    shell=True
+                )
+                return _check_dep(cmd)
+            except Exception:
+                pass
+        return False
 
     simulated_mode = input_data.get('simulated_mode', False)
     
@@ -157,12 +208,22 @@ def convert_to_pdf_windows(input_data: dict) -> dict:
     if simulated_mode:
         return {"status": "success", "pdf_file": output_pdf}
 
-    os.makedirs(os.path.dirname(output_pdf), exist_ok=True)
+    os.makedirs(os.path.dirname(output_pdf) if os.path.dirname(output_pdf) else '.', exist_ok=True)
 
-    if not _check_dep('pandoc'):
-        return {"status": "error", "message": "Missing dependency: pandoc"}
-    if not _check_dep('xelatex'):
-        return {"status": "error", "message": "Missing dependency: xelatex (MiKTeX/TeXLive)"}
+    # Try to install via chocolatey if available
+    if shutil.which('choco'):
+        if not _ensure_system_dep('pandoc', ['choco', 'install', 'pandoc', '-y']):
+            if not _check_dep('pandoc'):
+                return {"status": "error", "message": "Missing dependency: pandoc. Install via: choco install pandoc"}
+        if not _ensure_system_dep('xelatex', ['choco', 'install', 'miktex', '-y']):
+            if not _check_dep('xelatex'):
+                return {"status": "error", "message": "Missing dependency: xelatex. Install via: choco install miktex"}
+    else:
+        # Fallback: just check if installed
+        if not _check_dep('pandoc'):
+            return {"status": "error", "message": "Missing dependency: pandoc. Please install manually or install Chocolatey: choco install pandoc"}
+        if not _check_dep('xelatex'):
+            return {"status": "error", "message": "Missing dependency: xelatex (MiKTeX/TeXLive). Please install manually."}
 
     try:
         subprocess.check_call([
@@ -214,15 +275,33 @@ def convert_to_pdf_windows(input_data: dict) -> dict:
     }
 )
 def convert_to_pdf_darwin(input_data: dict) -> dict:
-    import os, sys, json, subprocess
+    import os, sys, json, subprocess, shutil
 
     def _check_dep(cmd):
         try:
-            subprocess.check_output([cmd, '--version'], stderr=subprocess.STDOUT)
+            subprocess.check_output([cmd, '--version'], stderr=subprocess.STDOUT, timeout=5)
             return True
         except Exception:
             return False
 
+    def _ensure_system_dep(cmd, install_cmd):
+        """Ensure a system dependency is installed, attempt installation if missing."""
+        if _check_dep(cmd):
+            return True
+        
+        # Try to install via homebrew if available
+        if shutil.which('brew'):
+            try:
+                subprocess.check_call(
+                    install_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=300
+                )
+                return _check_dep(cmd)
+            except Exception:
+                pass
+        return False
 
     def _execute_action():
         input_file = input_data.get('input_file')
@@ -236,14 +315,26 @@ def convert_to_pdf_darwin(input_data: dict) -> dict:
             base, _ = os.path.splitext(input_file)
             output_pdf = base + '.pdf'
 
-        os.makedirs(os.path.dirname(output_pdf), exist_ok=True)
+        os.makedirs(os.path.dirname(output_pdf) if os.path.dirname(output_pdf) else '.', exist_ok=True)
 
-        if not _check_dep('pandoc'):
-            output = (json.dumps({"status": "error", "message": "Missing dependency: pandoc"}))
-            return
-        if not _check_dep('xelatex'):
-            output = (json.dumps({"status": "error", "message": "Missing dependency: xelatex (MacTeX required)"}))
-            return
+        # Try to install via homebrew if available
+        if shutil.which('brew'):
+            if not _ensure_system_dep('pandoc', ['brew', 'install', 'pandoc']):
+                if not _check_dep('pandoc'):
+                    output = (json.dumps({"status": "error", "message": "Missing dependency: pandoc. Install via: brew install pandoc"}))
+                    return
+            if not _ensure_system_dep('xelatex', ['brew', 'install', '--cask', 'basictex']):
+                if not _check_dep('xelatex'):
+                    output = (json.dumps({"status": "error", "message": "Missing dependency: xelatex. Install via: brew install --cask basictex"}))
+                    return
+        else:
+            # Fallback: just check if installed
+            if not _check_dep('pandoc'):
+                output = (json.dumps({"status": "error", "message": "Missing dependency: pandoc. Please install manually or install Homebrew: brew install pandoc"}))
+                return
+            if not _check_dep('xelatex'):
+                output = (json.dumps({"status": "error", "message": "Missing dependency: xelatex (MacTeX required). Please install manually."}))
+                return
 
         try:
             subprocess.check_call([

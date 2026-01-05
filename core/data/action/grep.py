@@ -9,7 +9,7 @@ from core.action.action_framework.registry import action
         "input_file": {
             "type": "string",
             "example": "/path/to/input.txt",
-            "description": "Absolute or relative path to the input text file to search. The file must already exist on disk and be readable as UTF-8 text (binary files are not supported)."
+            "description": "Absolute to the input text file to search. The file must already exist on disk and be readable as UTF-8 text (binary files are not supported)."
         },
         "keywords": {
             "type": "array",
@@ -177,11 +177,12 @@ def grep_linux(input_data: dict) -> dict:
             formatted_chunks.append(para)
 
         result = {
+            'status': 'success',
             'chunks': formatted_chunks,
             'total_matches': total_matches,
             'returned_range': [start_idx_clamped, end_idx_clamped]
         }
-        output = (json.dumps(result))
+        return result
 
 
     def chunk_text(text, chunk_size=300, overlap=50):
@@ -225,7 +226,7 @@ def grep_linux(input_data: dict) -> dict:
         "input_file": {
             "type": "string",
             "example": "/path/to/input.txt",
-            "description": "Absolute or relative path to the input text file to search. The file must already exist on disk and be readable as UTF-8 text (binary files are not supported)."
+            "description": "Absolute to the input text file to search. The file must already exist on disk and be readable as UTF-8 text (binary files are not supported)."
         },
         "keywords": {
             "type": "array",
@@ -383,11 +384,12 @@ def grep_windows(input_data: dict) -> dict:
             formatted_chunks.append(para)
 
         result = {
+            'status': 'success',        
             'chunks': formatted_chunks,
             'total_matches': total_matches,
             'returned_range': [start_idx_clamped, end_idx_clamped]
         }
-        output = (json.dumps(result))
+        return result
 
 
     def chunk_text(text, chunk_size=300, overlap=50):
@@ -431,7 +433,7 @@ def grep_windows(input_data: dict) -> dict:
         "input_file": {
             "type": "string",
             "example": "/path/to/input.txt",
-            "description": "Absolute or relative path to the input text file to search. The file must already exist on disk and be readable as UTF-8 text (binary files are not supported)."
+            "description": "Absolute to the input text file to search. The file must already exist on disk and be readable as UTF-8 text (binary files are not supported)."
         },
         "keywords": {
             "type": "array",
@@ -589,11 +591,12 @@ def grep_darwin(input_data: dict) -> dict:
             formatted_chunks.append(para)
 
         result = {
+            'status': 'success',        
             'chunks': formatted_chunks,
             'total_matches': total_matches,
             'returned_range': [start_idx_clamped, end_idx_clamped]
         }
-        output = (json.dumps(result))
+        return result
 
 
     def chunk_text(text, chunk_size=300, overlap=50):
