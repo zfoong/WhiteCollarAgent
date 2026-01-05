@@ -12,5 +12,5 @@ def get_project_root() -> Path:
 
 PROJECT_ROOT = get_project_root()
 AGENT_WORKSPACE_ROOT = PROJECT_ROOT / "workspace"
-MAX_ACTIONS_PER_TASK: int = 50
-MAX_TOKEN_PER_TASK: int = 3000000 # of tokens
+MAX_ACTIONS_PER_TASK: int = 150
+MAX_TOKEN_PER_TASK: int = 6000000 # of tokens

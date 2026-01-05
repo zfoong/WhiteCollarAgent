@@ -2,14 +2,14 @@ from core.action.action_framework.registry import action
 
 @action(
     name="create and run python script",
-    description="This action takes a single Python code snippet as input and executes it in a fresh environment with no pre-installed third-party libraries—only base Python is available. The provided code must include any necessary installation steps (e.g., subprocess calls to pip) to ensure required packages are present. This action is intended for cases when the AI agent needs to create a one-off solution dynamically. The action captures stdout and stderr, and returns them along with the final status.",
+    description="This action takes a single Python code snippet as input and executes it in a fresh environment with no pre-installed third-party libraries—only base Python is available. This action is intended for cases when the AI agent needs to create a one-off solution dynamically.",
     execution_mode="sandboxed",
     default=True,
     input_schema={
         "code": {
             "type": "string",
-            "example": "import subprocess\nsubprocess.check_call(['pip', 'install', 'requests'])\nimport requests\nprint(requests.get('https://example.com').text)",
-            "description": "The Python code snippet to execute. It must be self-contained and handle all package installations needed at runtime. The input code MUST NOT have any malicious code, the code MUST BE SANDBOXED. The code must be production code with the highest level of quality. DO NOT give any placeholder code or fabricated data. You MUST NOT handle exception with system exit. The result of the code return to the agent can only be returned with 'print'."
+            "example": "import subprocess, sys\nsubprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet', 'requests'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nimport requests\nprint(requests.get('https://example.com').text)",
+            "description": "The Python code snippet to execute. It must be self-contained and handle all package installations needed at runtime. The input code MUST NOT have any malicious code, the code MUST BE SANDBOXED. The code must be production code with the highest level of quality. DO NOT give any placeholder code or fabricated data. You MUST NOT handle exception with system exit. To avoid corrupting the structured action output, silence noisy installers (e.g., pip) by passing '--quiet' and redirecting stdout/stderr. The result of the code return to the agent can only be returned with 'print'."
         }
     },
     output_schema={
@@ -36,7 +36,7 @@ from core.action.action_framework.registry import action
     },
     requirement=["traceback"],
     test_payload={
-        "code": "import subprocess\nsubprocess.check_call(['pip', 'install', 'requests'])\nimport requests\nprint(requests.get('https://example.com').text)",
+        "code": "import subprocess, sys\nsubprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet', 'requests'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nimport requests\nprint(requests.get('https://example.com').text)",
         "simulated_mode": True
     }
 )

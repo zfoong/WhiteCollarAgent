@@ -429,7 +429,7 @@ class AgentBase:
         # No limits close or reached
         return True
 
-    async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = True) -> ReasoningResult:
+    async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
         """
         Perform LLM-based reasoning on a user query to guide action selection.
 
