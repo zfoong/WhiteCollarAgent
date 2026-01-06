@@ -88,10 +88,9 @@ export OPENAI_API_KEY=<YOUR_KEY_HERE>
 or
 export GOOGLE_API_KEY=<YOUR_KEY_HERE>
 ```
-
-Run the CLI tool:
+Run:
 ```bash
-python -m core.main
+./run.sh
 ```
 
 This executes the built-in **White Collar Agent**, that you can communicate to:
@@ -99,7 +98,7 @@ This executes the built-in **White Collar Agent**, that you can communicate to:
 2. Ask it to perform complex series of tasks  
 3. Run command /help to seek help
 4. Get along with the AI agent
-
+5. Do advanced computer-use tasks with a dedicated but lightweight WebRTC Linux VM
 ---
 
 ## Run with container
