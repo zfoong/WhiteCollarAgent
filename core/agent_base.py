@@ -303,8 +303,8 @@ class AgentBase:
             # Determine parent action
             if not parent_id and is_running_task:
                 current_step = self.state_manager.get_current_step()
-                if current_step and current_step.get("action_id"):
-                    parent_id = current_step["action_id"]
+                if current_step and current_step.action_id:
+                    parent_id = current_step.action_id
 
             parent_id = parent_id or None  # enforce None at root
 

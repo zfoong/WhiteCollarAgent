@@ -2,6 +2,7 @@ import subprocess
 import sys
 import json
 import inspect
+import time
 from typing import Optional, Tuple, Dict, Any, Union
 
 # Adjust import path as needed for your project structure
@@ -66,20 +67,33 @@ try {
     # ==========================
 
     @classmethod
-    def get_screen_state(cls, container_id: str) -> bytes:
+    def get_screen_state(cls, container_id: str, debug: bool = False) -> bytes:
         """
         Injects an agent script into the specified Docker container to take
         a screenshot and streams the raw PNG bytes back.
         """
-        logger.debug(f"[GUIHandler] Initiating screen capture for '{container_id}'...")
+        logger.debug(f"[GUIHandler] Initiating screen capture for '{container_id}' (debug={debug})...")
         os_type = cls._detect_os(container_id)
-        
+
         if os_type == "linux":
-            return cls._get_linux_screen_with_auto_install(container_id)
+            img_bytes = cls._get_linux_screen_with_auto_install(container_id)
         elif os_type == "windows":
-            return cls._get_windows_screen(container_id)
+            img_bytes = cls._get_windows_screen(container_id)
         else:
-             raise RuntimeError(f"Could not determine OS type for container '{container_id}'")
+            raise RuntimeError(f"Could not determine OS type for container '{container_id}'")
+
+        if debug:
+            try:
+                timestamp = int(time.time())
+                safe_container_id = container_id.replace("/", "_")
+                debug_path = f"/tmp/{safe_container_id}_{timestamp}.png"
+                with open(debug_path, "wb") as f:
+                    f.write(img_bytes)
+                logger.debug(f"[GUIHandler] Saved debug screenshot to '{debug_path}'")
+            except Exception as e:
+                logger.error(f"[GUIHandler] Failed to save debug screenshot: {e}")
+
+        return img_bytes
 
     @classmethod
     def execute_action(cls, container_id: str, action_code: str, input_data: dict) -> Dict[str, Any]:
@@ -352,23 +366,62 @@ if __name__ == "__main__":
     
     # This is the raw code body from your example action
     sample_action_code = """
-def create_and_run_python_script(input_data: dict) -> dict:
-    import json
-    import sys
+def open_browser_linux(input_data: dict) -> dict:
+    import os
     import subprocess
-    
-    code_snippet = input_data.get("code", "")
-    if not code_snippet.strip():
-        return {"status": "error", "message": "No code provided"}
+    import shutil
+    import webbrowser
+
+    url = str(input_data.get('url', '')).strip()
+
+    candidates = [
+        shutil.which('google-chrome'),
+        shutil.which('google-chrome-stable'),
+        shutil.which('chromium'),
+        shutil.which('chromium-browser'),
+        shutil.which('brave-browser'),
+        shutil.which('firefox'),
+        shutil.which('microsoft-edge')
+    ]
 
     try:
-        # Simple execution for testing the harness
-        result = subprocess.check_output([sys.executable, "-c", code_snippet], stderr=subprocess.STDOUT, text=True)
-        return {"status": "success", "stdout": result.strip(), "stderr": ""}
-    except subprocess.CalledProcessError as e:
-        return {"status": "error", "stdout": e.stdout.strip(), "stderr": str(e), "message": "Execution failed"}
+        browser_path = next((p for p in candidates if p and os.path.isfile(p)), None)
+        if browser_path:
+            cmd = [browser_path, '--no-sandbox', '--temp-profile']
+            if url:
+                cmd.append(url)
+
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=os.environ.copy(),
+                close_fds=True
+            )
+
+            return {
+                'status': 'success',
+                'process_id': proc.pid,
+                'browser': os.path.basename(browser_path),
+                'executable_path': browser_path,
+                'message': f'Launched {os.path.basename(browser_path)} with temp profile.'
+            }
+        else:
+            if url:
+                webbrowser.open(url)
+            return {
+                'status': 'success',
+                'process_id': -1,
+                'browser': 'default system',
+                'executable_path': '',
+                'message': 'Attempted to open URL using system default mechanism.'
+            }
+
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            'status': 'error', 'process_id': -1, 'browser': '', 'executable_path': '', 'message': str(e)
+        }
 """
     
     sample_input = {"code": "print('Hello from inside the container action!')"}
