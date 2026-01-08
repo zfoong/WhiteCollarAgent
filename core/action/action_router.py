@@ -14,7 +14,7 @@ from core.action.action_library import ActionLibrary
 from core.context_engine import ContextEngine
 
 from core.logger import logger
-from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT
+from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT
 
 
 def _is_visible_in_mode(action, GUI_mode: bool) -> bool:
@@ -44,7 +44,7 @@ class ActionRouter:
     or creating new actions on the fly.
     """
 
-    def __init__(self, action_library: ActionLibrary, llm_interface, context_engine: ContextEngine):
+    def __init__(self, action_library: ActionLibrary, llm_interface, vlm_interface, context_engine: ContextEngine):
         """
         Initialize the router responsible for selecting or creating actions.
 
@@ -55,6 +55,7 @@ class ActionRouter:
         """
         self.action_library = action_library
         self.llm_interface = llm_interface
+        self.vlm_interface = vlm_interface
         self.context_engine = context_engine
 
     async def select_action(
@@ -211,6 +212,108 @@ class ActionRouter:
         # 3. If we fail to find a valid action name after the retries, raise an error
         raise ValueError("Invalid selected action returned by LLM after retries.")
 
+    async def select_action_in_GUI(
+        self,
+        image_bytes, 
+        query: str,
+        action_type: Optional[str] = None,
+        GUI_mode=False,
+        reasoning: str = "",
+    ) -> Dict[str, Any]:
+        """
+        When a task is running, this action selection will be used.
+
+        1. Retrieves top-k candidate action names from ChromaDB.
+        2. Builds a candidate list with searched and default action for the LLM.
+        3. Asks the LLM if any candidate is valid, or if a new action is needed.
+        4. If new action is needed, return an empty action name, and let the outer
+           loop create the action.
+        5. Otherwise, return the chosen existing action along with parameters.
+        
+        Args:
+            query: Task-level instruction for the next step.
+            action_type: Optional action type hint supplied to the LLM.
+            GUI_mode: Whether the user is interacting through a GUI, affecting
+                which actions are visible.
+            context: Serialized task context to embed in the prompt.
+
+        Returns:
+            Dict[str, Any]: Decision payload with ``action_name`` and
+            normalized ``parameters`` for execution, or an empty ``action_name``
+            when a new action should be created.
+        """
+        action_candidates = []
+        action_name_candidates = []
+    
+        # List of filtered default actions when creating task
+        ignore_actions = ["create and start task", "ignore"]
+    
+        # Retrieve default actions (could be multiple)
+        default_actions = self.action_library.retrieve_default_action()
+    
+        for act in default_actions:
+            if act.name in ignore_actions:
+                continue
+            if not _is_visible_in_mode(act, GUI_mode):
+                continue
+            action_candidates.append({
+                "name": act.name,
+                "description": act.description,
+                "type": act.action_type,
+                "input_schema": act.input_schema,
+                "output_schema": act.output_schema
+            })
+    
+        # Additional candidate actions from search
+        candidate_names = self.action_library.search_action(query, top_k=5)
+        logger.info(f"ActionRouter found candidate actions: {candidate_names}")
+        for name in candidate_names:
+            act = self.action_library.retrieve_action(name)
+            if not act:
+                continue
+            if act.name in ignore_actions:
+                continue
+            if not _is_visible_in_mode(act, GUI_mode):
+                continue
+            action_candidates.append({
+                "name": act.name,
+                "description": act.description,
+                "type": act.action_type,
+                "input_schema": act.input_schema,
+                "output_schema": act.output_schema
+            })
+    
+        # Dedupe names while preserving insertion order
+        action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
+    
+        # Build the instruction prompt for the LLM
+        prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
+            query=query,
+            reasoning=self._format_reasoning(reasoning),
+            action_candidates=self._format_candidates(action_candidates),
+            action_name_candidates=self._format_action_names(action_name_candidates),
+        )
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            decision = await self._prompt_for_decision_gui(image_bytes, prompt, is_task=True)
+
+            selected_action_name = decision.get("action_name", "")
+            if selected_action_name == "":
+                return decision
+
+            selected_action = self.action_library.retrieve_action(selected_action_name)
+            if selected_action is not None and _is_visible_in_mode(selected_action, GUI_mode):
+                decision["parameters"] = self._ensure_parameters(decision.get("parameters"))
+                return decision
+
+            logger.warning(
+                f"Received invalid action name '{selected_action_name}' during selection attempt {attempt + 1}"
+            )
+
+        # 3. If we fail to find a valid action name after the retries, raise an error
+        raise ValueError("Invalid selected action returned by LLM after retries.")
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -225,6 +328,38 @@ class ActionRouter:
                 system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": True, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+            decision, parse_error = self._parse_action_decision(raw_response)
+            if decision is not None:
+                decision.setdefault("parameters", {})
+                decision["parameters"] = self._ensure_parameters(decision.get("parameters"))
+                return decision
+
+            feedback_error = parse_error or "unknown parsing error"
+            last_error = ValueError(f"Unable to parse action decision on attempt {attempt + 1}: {feedback_error}")
+            logger.warning(
+                f"Failed to parse LLM decision on attempt {attempt + 1}: "
+                f"{raw_response} | error={feedback_error}"
+            )
+            current_prompt = self._augment_prompt_with_feedback(prompt, attempt + 1, raw_response, feedback_error)
+
+        if last_error:
+            raise last_error
+        raise ValueError("Unable to parse LLM decision")
+        
+    async def _prompt_for_decision_gui(self, image_bytes, prompt: str, is_task: bool = False) -> Dict[str, Any]:
+        max_retries = 3
+        last_error: Optional[Exception] = None
+        current_prompt = prompt
+        for attempt in range(max_retries):
+            system_prompt, _ = self.context_engine.make_prompt(
+                user_flags={"query": False, "expected_output": False},
+                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": True, "policy": False},
+            )
+            raw_response = await self.vlm_interface.generate_response_async(
+                image_bytes,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+            ) 
             decision, parse_error = self._parse_action_decision(raw_response)
             if decision is not None:
                 decision.setdefault("parameters", {})

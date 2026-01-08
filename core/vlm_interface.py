@@ -6,10 +6,10 @@ Created on Fri Aug  1 14:17:29 2025
 """
 
 from __future__ import annotations
+import asyncio
 import base64, os, requests
 from io import BytesIO
 from typing import Any, Dict, Optional, List
-from core.prompt import UI_ELEMS_SYS_PROMPT, UI_ELEMS_USER_PROMPT
 
 import json, re
 from PIL import Image
@@ -22,7 +22,7 @@ from core.google_gemini_client import GeminiClient
 from core.logger import logger
 
 class VLMInterface:
-    _CODE_BLOCK_RE = None     # not needed for vision
+    _CODE_BLOCK_RE = re.compile(r"^```(?:\w+)?\s*|\s*```$", re.MULTILINE)
 
     def __init__(
         self,
@@ -57,19 +57,41 @@ class VLMInterface:
     def describe_image_bytes(
         self,
         image_bytes: bytes,
-        *,
         system_prompt: str | None = None,
         user_prompt: str | None = "Describe this image in detail."
     ) -> str:
+        
+        logger.info(f"[LLM SEND] system={system_prompt} | user={user_prompt}")
+        
         if self.provider == "openai":
-            return self._openai_describe_bytes(image_bytes, system_prompt, user_prompt)
+            response = self._openai_describe_bytes(image_bytes, system_prompt, user_prompt)
         if self.provider == "remote":
-            return self._ollama_describe_bytes(image_bytes, system_prompt, user_prompt)
+            response = self._ollama_describe_bytes(image_bytes, system_prompt, user_prompt)
         if self.provider == "gemini":
-            return self._gemini_describe_bytes(image_bytes, system_prompt, user_prompt)
+            response = self._gemini_describe_bytes(image_bytes, system_prompt, user_prompt)
         if self.provider == "byteplus":
-            return self._byteplus_describe_bytes(image_bytes, system_prompt, user_prompt)
-        raise RuntimeError(f"Unsupported provider {self.provider!r}")
+            response = self._byteplus_describe_bytes(image_bytes, system_prompt, user_prompt)
+        
+        # TODO return response as content + token info, then clean up using:
+        # cleaned = re.sub(self._CODE_BLOCK_RE, "", response.get("content", "").strip())
+        
+        logger.info(f"[LLM RECV] {response}")
+        return response
+
+    async def generate_response_async(
+        self,
+        image_bytes,
+        system_prompt: Optional[str] = None,
+        user_prompt: Optional[str] = None,
+    ) -> str:
+        """Async wrapper that defers the blocking call to a worker thread."""
+        return await asyncio.to_thread(
+            self.describe_image_bytes,
+            image_bytes,
+            system_prompt,
+            user_prompt,
+        )
+
 
     # ───────────────────── Provider helpers ─────────────────────    
     def _openai_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
@@ -164,125 +186,3 @@ class VLMInterface:
 
         return ""
 
-    def _safe_json(self, text: str) -> Dict[str, Any]:
-        """Extract and parse the first JSON object from the model response."""
-        try:
-            m = re.search(r'\{[\s\S]*\}', text)
-            if not m:
-                return {}
-            return json.loads(m.group(0))
-        except Exception:
-            return {}
-
-    def _format_elements_readable(
-        self,
-        screen_size: Dict[str, int],
-        elems: List[Dict[str, Any]],
-        reasoning: str = ""
-    ) -> str:
-        lines = []
-        lines.append(f"# UI Elements ({len(elems)})")
-        if reasoning:
-            lines.append(f"# Reasoning: {reasoning}")
-        for i, e in enumerate(elems, 1):
-            b = e.get("bbox", {}) or {}
-            x, y, w, h = int(b.get("x", 0)), int(b.get("y", 0)), int(b.get("w", 0)), int(b.get("h", 0))
-            cx, cy = x + max(w, 0)//2, y + max(h, 0)//2
-            role = e.get("role", "other")
-            lbl = (e.get("label") or "").strip()
-            state = e.get("state", {}) or {}
-            enabled = bool(state.get("enabled", True))
-            selected = bool(state.get("selected", False))
-            conf = float(e.get("confidence", 0.5))
-            eid = (e.get("id") or f"el-{i}")[:64]
-            label_str = f"\"{lbl}\"" if lbl else "\"\""
-            lines.append(
-                f"{i}. [{role}] {label_str}  "
-                f"bbox(x={x},y={y},w={w},h={h}) center({cx},{cy})  "
-                f"state(enabled={enabled},selected={selected})  "
-                f"conf={conf:.2f}  id={eid}"
-            )
-        return "\n".join(lines) if lines else "# UI Elements (0)"
-
-    # --- primary simple API method: call this to get a readable string ---
-    def scan_ui_bytes(
-        self,
-        image_bytes: bytes,
-        *,
-        use_ocr: bool = False,
-        max_elements: int = 120
-    ) -> str:
-        """
-        Simple UI scan from in-memory bytes → readable list of elements.
-        """
-        # 1) Ask the VLM for a flat element list
-        raw = self.describe_image_bytes(
-            image_bytes,
-            system_prompt=UI_ELEMS_SYS_PROMPT,
-            user_prompt=UI_ELEMS_USER_PROMPT,
-        )
-        parsed = self._safe_json(raw)
-        screen = parsed.get("screen_size", {}) if isinstance(parsed, dict) else {}
-        elems = parsed.get("elements", []) if isinstance(parsed, dict) else []
-        reasoning = parsed.get("reasoning", "") if isinstance(parsed, dict) else ""
-        if reasoning:
-            logger.info(f"[VLMInterface] Reasoning: {reasoning}")
-
-        elems = elems if isinstance(elems, list) else []
-    
-        # 2) Basic cleanup + center computation; clamp + truncate
-        cleaned: List[Dict[str, Any]] = []
-        for idx, e in enumerate(elems[:max_elements]):
-            try:
-                b = e.get("bbox", {}) or {}
-                x, y, w, h = int(b.get("x", 0)), int(b.get("y", 0)), int(b.get("w", 0)), int(b.get("h", 0))
-                cx, cy = x + max(w, 0)//2, y + max(h, 0)//2
-                cleaned.append({
-                    "id": (str(e.get("id") or f"el-{idx}"))[:64],
-                    "role": str(e.get("role") or "other"),
-                    "label": (str(e.get("label") or "").strip())[:256],
-                    "bbox": {"x": x, "y": y, "w": w, "h": h},
-                    "center": {"cx": cx, "cy": cy},
-                    "state": {
-                        "enabled": bool((e.get("state") or {}).get("enabled", True)),
-                        "selected": bool((e.get("state") or {}).get("selected", False)),
-                    },
-                    "confidence": float(e.get("confidence", 0.5)),
-                })
-            except Exception:
-                continue
-    
-        # 3) Optional OCR backfill for labels (OFF by default)
-        if use_ocr and pytesseract is not None and Image is not None:
-            try:
-                img = Image.open(BytesIO(image_bytes)).convert("RGB")
-                ocr = pytesseract.image_to_data(img, output_type='dict')
-                owords = []
-                for i in range(len(ocr.get("text", []))):
-                    t = (ocr["text"][i] or "").strip()
-                    if not t:
-                        continue
-                    owords.append({
-                        "text": t,
-                        "bbox": {
-                            "x": int(ocr["left"][i]),
-                            "y": int(ocr["top"][i]),
-                            "w": int(ocr["width"][i]),
-                            "h": int(ocr["height"][i]),
-                        }
-                    })
-                def contains(a, b):
-                    return (b["x"] >= a["x"] and b["y"] >= a["y"] and
-                            (b["x"]+b["w"]) <= (a["x"]+a["w"]) and (b["y"]+b["h"]) <= (a["y"]+a["h"]))
-                for el in cleaned:
-                    if el["label"]:
-                        continue
-                    eb = el["bbox"]
-                    hits = [w["text"] for w in owords if contains(eb, w["bbox"])]
-                    if hits:
-                        el["label"] = " ".join(hits)[:256]
-            except Exception:
-                pass
-    
-        # 4) Format and return
-        return self._format_elements_readable(screen, cleaned, reasoning)

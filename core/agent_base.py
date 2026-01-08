@@ -45,7 +45,7 @@ from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from core.gui.handler import GUIHandler
 from core.trigger import Trigger, TriggerQueue
-from core.prompt import STEP_REASONING_PROMPT
+from core.prompt import STEP_REASONING_PROMPT, GUI_REASONING_PROMPT
 from core.config import MAX_ACTIONS_PER_TASK
 
 from core.task.task_manager import TaskManager
@@ -127,7 +127,7 @@ class AgentBase:
         self.action_manager = ActionManager(
             self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, self.state_manager
         )
-        self.action_router = ActionRouter(self.action_library, self.llm, self.context_engine)
+        self.action_router = ActionRouter(self.action_library, self.llm, self.vlm, self.context_engine)
 
         self.task_planner = TaskPlanner(llm_interface=self.llm, db_interface=self.db_interface, fewshot_top_k=1, context_engine=self.context_engine)
         self.task_manager = TaskManager(
@@ -226,32 +226,6 @@ class AgentBase:
             await self.state_manager.start_session(gui_mode)
 
             # ===================================
-            # 2. Handle GUI mode
-            # ===================================
-            logger.debug(f"[GUI MODE FLAG] {gui_mode}")
-            logger.debug(f"[GUI MODE FLAG - state] {STATE.gui_mode}")
-
-            # GUI-mode handling
-            if STATE.gui_mode:
-                logger.debug("[GUI MODE] Entered GUI mode.")
-                png_bytes = GUIHandler.get_screen_state(GUIHandler.TARGET_CONTAINER)
-                
-                if png_bytes is None:
-                    logger.warning("[GUI MODE] Failed to capture screen state")
-                    screen_md = "# UI Elements (0)\nScreen capture failed. GUI actions may not work correctly without display access."
-                else:
-                    screen_md = self.vlm.scan_ui_bytes(png_bytes, use_ocr=False)
-
-                if self.event_stream_manager:
-                    self.event_stream_manager.log(
-                        "screen",
-                        screen_md,
-                        display_message="Screen summary updated",
-                    )
-
-                self.state_manager.bump_event_stream()
-
-            # ===================================
             # 3. Check Limits
             # ===================================
             should_continue:bool = await self._check_agent_limits()
@@ -265,15 +239,39 @@ class AgentBase:
             is_running_task: bool = self.state_manager.is_running_task()
 
             if is_running_task:
-                # Perform reasoning to guide action selection within the task
-                reasoning_result: ReasoningResult = await self._perform_reasoning(query=query)
-                reasoning: str = reasoning_result.reasoning
-                action_query: str = reasoning_result.action_query
-
-                logger.debug(f"[AGENT QUERY] {action_query}")
-                action_decision = await self.action_router.select_action_in_task(
-                    query=action_query, reasoning=reasoning, GUI_mode=STATE.gui_mode
-                )
+                # GUI-mode handling
+                if STATE.gui_mode:
+                    logger.debug("[GUI MODE] Entered GUI mode.")
+                    png_bytes = GUIHandler.get_screen_state(GUIHandler.TARGET_CONTAINER)
+                    
+                    # Perform reasoning to guide action selection within the task
+                    reasoning_result: ReasoningResult = await self._perform_reasoning_GUI(png_bytes, query=query)
+                    reasoning: str = reasoning_result.reasoning
+                    action_query: str = reasoning_result.action_query
+                    
+                    if png_bytes is None:
+                        logger.warning("[GUI MODE] Error getting screenshot in GUI mode. Inform the user and switch back to CLI mode.")
+                        screen_md = "Error getting screenshot in GUI mode. Inform the user ans switch back to CLI mode."
+                        
+                        self.event_stream_manager.log(
+                            "screen",
+                            screen_md,
+                            display_message="Screen summary updated",
+                        )
+                    else:
+                        action_decision = await self.action_router.select_action_in_GUI(
+                            png_bytes, query=action_query, reasoning=reasoning, GUI_mode=STATE.gui_mode
+                        )
+                else:
+                    # Perform reasoning to guide action selection within the task
+                    reasoning_result: ReasoningResult = await self._perform_reasoning(query=query)
+                    reasoning: str = reasoning_result.reasoning
+                    action_query: str = reasoning_result.action_query
+    
+                    logger.debug(f"[AGENT QUERY] {action_query}")
+                    action_decision = await self.action_router.select_action_in_task(
+                        query=action_query, reasoning=reasoning, GUI_mode=STATE.gui_mode
+                    )
             else:
                 logger.debug(f"[AGENT QUERY] {query}")
                 action_decision = await self.action_router.select_action(
@@ -311,6 +309,7 @@ class AgentBase:
             # ===================================
             # 6. Execute Action
             # ===================================
+            logger.info(f"[GUI ACTION]: ready to run {action}")
             try:
                 action_output = await self.action_manager.execute_action(
                     action=action,
@@ -491,6 +490,65 @@ class AgentBase:
 
         # All retries exhausted — fail fast with a clear error
         raise RuntimeError("Failed to obtain valid reasoning from LLM") from last_error
+
+    async def _perform_reasoning_GUI(self, image_bytes, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
+        """
+        Perform LLM-based reasoning on a user query to guide action selection.
+
+        This function calls an asynchronous LLM API, validates its structured JSON
+        response, and retries if the output is malformed.
+
+        Args:
+            query (str): The raw user query from the user.
+            retries (int): Number of retry attempts if the LLM returns invalid JSON.
+
+        Returns:
+            ReasoningResult: A validated reasoning result containing:
+                - reasoning: The model's reasoning output
+                - action_query: A refined query used for action selection
+        """
+
+        # Build the system prompt using the current context configuration
+        system_prompt, _ = self.context_engine.make_prompt(
+            user_flags={"query": False, "expected_output": False},
+            system_flags={"policy": False},
+        )
+
+        # Format the user prompt with the incoming query
+        prompt = GUI_REASONING_PROMPT
+
+        # Track the last parsing/validation error for meaningful failure reporting
+        last_error: Exception | None = None
+
+        # Attempt the LLM call and parsing up to (retries + 1) times
+        for attempt in range(retries + 1):            
+            response = await self.vlm.generate_response_async(
+                image_bytes,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+            )
+
+            try:
+                # Parse and validate the structured JSON response
+                reasoning_result = self._parse_reasoning_response(response)
+
+                if self.event_stream_manager and log_reasoning_event:
+                    self.event_stream_manager.log(
+                        "agent GUI reasoning",
+                        reasoning_result.reasoning,
+                        severity="DEBUG",
+                        display_message=None,
+                    )
+                    self.state_manager.bump_event_stream()
+
+                return reasoning_result
+
+            except ValueError as e:
+                # Capture the error and retry if attempts remain
+                last_error = e
+
+        # All retries exhausted — fail fast with a clear error
+        raise RuntimeError("Failed to obtain valid reasoning from VLM") from last_error
 
     async def _create_new_trigger(self, new_session_id, action_output, STATE):
         """
