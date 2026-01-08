@@ -4,6 +4,7 @@ from tzlocal import get_localzone
 import json
 
 from core.config import AGENT_WORKSPACE_ROOT
+from core.gui.handler import GUIHandler
 from core.logger import logger
 from core.prompt import (
     AGENT_ROLE_PROMPT,
@@ -122,6 +123,16 @@ class ContextEngine:
             )
         return ""
 
+    def create_system_gui_event_stream_state(self):
+        """Return formatted GUI event stream context for the current session."""
+        gui_event_stream: str = GUIHandler.get_gui_event_stream()
+        if gui_event_stream:
+            return (
+                "\nUse the GUI event stream to understand the current situation, past agent actions to craft the input parameters:\nGUI Event stream (oldest to newest):"
+                f"\n{gui_event_stream}"
+            )
+        return ""
+
     def create_system_task_state(self):
         """Return formatted task/plan state for the current session."""
 
@@ -211,6 +222,7 @@ class ContextEngine:
             "agent_state": self.state_manager.is_running_task(),
             "conversation_history": True,
             "event_stream": True,
+            "gui_event_stream": False,
             "task_state": True,
             "policy": False,  # default off to save tokens
             "environment": True,
@@ -230,6 +242,7 @@ class ContextEngine:
             ("agent_state", self.create_system_agent_state),
             ("conversation_history", self.create_system_conversation_history),
             ("event_stream", self.create_system_event_stream_state),
+            ("gui_event_stream", self.create_system_gui_event_stream_state),
             ("task_state", self.create_system_task_state),
             ("policy", self.create_system_policy),
             ("environment", self.create_system_environmental_context),

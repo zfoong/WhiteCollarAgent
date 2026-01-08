@@ -1,0 +1,254 @@
+import json
+from typing import Optional
+from core.action.action import Action
+from core.state.agent_state import STATE
+from core.state.types import ReasoningResult
+from core.task.task import Step
+from core.gui.handler import GUIHandler
+from core.prompt import GUI_REASONING_PROMPT
+from core.vlm_interface import VLMInterface
+from core.action.action_manager import ActionManager
+from core.action.action_library import ActionLibrary
+from core.action.action_router import ActionRouter
+from core.context_engine import ContextEngine
+from core.event_stream.event_stream_manager import EventStreamManager
+from core.llm_interface import LLMInterface
+from core.logger import logger
+
+class GUIModule:
+    def __init__(
+        self, 
+        provider: str = "byteplus", 
+        action_library: ActionLibrary = None,
+        action_router: ActionRouter = None,
+        context_engine: ContextEngine = None,
+        action_manager: ActionManager = None,
+    ):
+        self.llm: LLMInterface = LLMInterface(provider=provider)
+        self.vlm: VLMInterface = VLMInterface(provider=provider)
+        self.action_library: ActionLibrary = action_library
+        self.action_router: ActionRouter = action_router
+        self.context_engine: ContextEngine = context_engine
+        self.action_manager: ActionManager = action_manager
+        self.gui_event_stream_manager: EventStreamManager = EventStreamManager(self.llm)
+
+    def switch_to_gui_mode(self) -> None:
+        STATE.update_gui_mode(True)
+
+    def switch_to_cli_mode(self) -> None:
+        STATE.update_gui_mode(False)
+
+    def set_gui_event_stream(self, event: str) -> None:
+        self.gui_event_stream_manager.log(
+            "agent GUI event",
+            event,
+            severity="DEBUG",
+            display_message=None,
+        )
+
+    def get_gui_event_stream(self) -> str:
+        return self.gui_event_stream_manager.get_stream().to_prompt_snapshot(include_summary=True)
+
+    async def perform_gui_task_step(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
+        """
+        Perform a GUI task step. Keeps calling the action until the next action is not None. When the next action is not None, it returns the response.
+        If next action is None, it means the task is complete, and it returns the response.
+
+        Args:
+            step: The step to perform.
+            session_id: The session ID.
+            next_action_description: The next action description.
+            parent_action_id: The parent action ID.
+        """
+        try:
+            self.switch_to_gui_mode()
+            STATE.set_agent_property(
+                "current_task_id", session_id)
+
+            response: dict = {
+                "status": "ok",
+                "message": "Action completed successfully",
+                "next_action": None,
+            }
+
+            while response.get("next_action") is None:
+                response: dict = await self.perform_gui_task_step_action(step, session_id, next_action_description, parent_action_id)
+            
+            self.switch_to_cli_mode()
+            return response
+
+        except Exception as e:
+            logger.error(f"[GUI TASK ERROR] {e}", exc_info=True)
+            raise
+
+    async def perform_gui_task_step_action(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
+        """
+        Perform a GUI task step action.
+
+        Args:
+            step: The step to perform.
+            session_id: The session ID.
+            next_action_description: The next action description.
+            parent_action_id: The parent action ID.
+        """
+        try:
+            query: str = next_action_description
+            reasoning: str = ""
+            parent_id = parent_action_id
+
+            # ===================================
+            # 1. Start Session
+            # ===================================
+            # await self.state_manager.start_session(True)
+            # Assume session is already started from react
+
+            # ===================================
+            # 2. Check Limits
+            # ===================================
+            # TODO: Check Limits
+            # TODO: Update Limits
+
+            # ===================================
+            # 3. Select Action
+            # ===================================
+
+            # 1. Take screenshot
+            png_bytes = GUIHandler.get_screen_state(GUIHandler.TARGET_CONTAINER)
+            if png_bytes is None:
+                return {
+                    "status": "error",
+                    "message": "Failed to take screenshot"
+                }
+            
+            # 2. Perform reasoning
+            reasoning_result: ReasoningResult = await self._perform_reasoning_GUI(png_bytes, query=query)
+            reasoning: str = reasoning_result.reasoning
+            action_query: str = reasoning_result.action_query
+
+            # 3. Select action
+            action_decision = await self.action_router.select_action_in_GUI(png_bytes, query=action_query, reasoning=reasoning, GUI_mode=STATE.gui_mode)
+
+            if not action_decision:
+                raise ValueError("Action router returned no decision.")
+
+            # ===================================
+            # 4. Get Action
+            # ===================================
+            action_name = action_decision.get("action_name")
+            action_params = action_decision.get("parameters", {})
+
+            if not action_name:
+                raise ValueError("No valid action selected by the router.")
+
+            if action_name.lower() in ["start next step", "mark task complete", "mark task error", "mark task cancel"]:
+                return {
+                    "status": "ok",
+                    "message": "Action completed successfully",
+                    "next_action": action_decision,
+                }
+
+            # Retrieve action
+            action: Optional[Action] = self.action_library.retrieve_action(action_name)
+            if action is None:
+                raise ValueError(
+                    f"Action '{action_name}' not found in the library. "
+                    "Check DB connectivity or ensure the action is registered."
+                )
+            
+            # Determine parent action
+            if not parent_id:
+                parent_id = step.action_id
+
+            # ===================================
+            # 5. Execute Action
+            # ===================================
+            action_output = await self.action_manager.execute_action(
+                action=action,
+                context=reasoning if reasoning else query,
+                event_stream=self.get_gui_event_stream(),
+                parent_id=parent_id,
+                session_id=session_id,
+                is_running_task=True,
+                input_data=action_params,
+            )
+
+            return {
+                "status": "ok",
+                "message": "Action completed successfully",
+                "next_action": None,
+            }
+
+        except Exception as e:
+            logger.error(f"[GUI TASK STEP ERROR] {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": str(e),
+            }
+
+    async def _perform_reasoning_GUI(self, image_bytes, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
+        """
+        Perform LLM-based reasoning on a user query to guide action selection.
+
+        This function calls an asynchronous LLM API, validates its structured JSON
+        response, and retries if the output is malformed.
+
+        Args:
+            query (str): The raw user query from the user.
+            retries (int): Number of retry attempts if the LLM returns invalid JSON.
+
+        Returns:
+            ReasoningResult: A validated reasoning result containing:
+                - reasoning: The model's reasoning output
+                - action_query: A refined query used for action selection
+        """
+
+        # Build the system prompt using the current context configuration
+        system_prompt, _ = self.context_engine.make_prompt(
+            user_flags={"query": False, "expected_output": False},
+            system_flags={"policy": False, "gui_event_stream": True},
+        )
+
+        # Format the user prompt with the incoming query
+        prompt = GUI_REASONING_PROMPT
+
+        # Attempt the LLM call and parsing up to (retries + 1) times
+        for attempt in range(retries + 1):            
+            response = await self.vlm.generate_response_async(
+                image_bytes,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+            )
+
+            try:
+                # Parse and validate the structured JSON response
+                reasoning_result: ReasoningResult = self._parse_reasoning_response(response)
+
+                if self.gui_event_stream_manager and log_reasoning_event:
+                    self.set_gui_event_stream(reasoning_result.reasoning)
+
+                return reasoning_result
+            except ValueError as e:                
+                raise RuntimeError("Failed to obtain valid reasoning from VLM") from e
+
+    def _parse_reasoning_response(self, response: str) -> ReasoningResult:
+        """
+        Parse and validate the structured JSON response from the reasoning LLM call.
+        """
+        try:
+            parsed = json.loads(response)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"LLM returned invalid JSON: {response}") from e
+
+        if not isinstance(parsed, dict):
+            raise ValueError(f"LLM response is not a JSON object: {parsed}")
+
+        reasoning = parsed.get("reasoning")
+        action_query = parsed.get("action_query")
+
+        if not isinstance(reasoning, str) or not isinstance(action_query, str):
+            raise ValueError(f"Invalid reasoning schema: {parsed}")
+
+        return ReasoningResult(
+            reasoning=reasoning,
+            action_query=action_query,
+        )

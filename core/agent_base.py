@@ -29,8 +29,9 @@ import time
 import uuid
 import json
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Dict, NamedTuple, Optional
+from typing import Awaitable, Callable, Dict, Optional
 
+from core.task.task import Step
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
 from core.action.action_router import ActionRouter
@@ -43,14 +44,13 @@ from core.logger import logger
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
-from core.gui.handler import GUIHandler
 from core.trigger import Trigger, TriggerQueue
 from core.prompt import STEP_REASONING_PROMPT, GUI_REASONING_PROMPT
-from core.config import MAX_ACTIONS_PER_TASK
-
+from core.state.types import ReasoningResult
 from core.task.task_manager import TaskManager
 from core.task.task_planner import TaskPlanner
 from core.event_stream.event_stream_manager import EventStreamManager
+from core.gui.gui_module import GUIModule
 
 
 @dataclass
@@ -58,10 +58,6 @@ class AgentCommand:
     name: str
     description: str
     handler: Callable[[], Awaitable[str | None]]
-
-class ReasoningResult(NamedTuple):
-    reasoning: str
-    action_query: str
 
 class AgentBase:
     """
@@ -145,6 +141,13 @@ class AgentBase:
             vlm_interface=self.vlm,
         )
 
+        self.gui_module = GUIModule(
+            self.action_library,
+            self.action_router,
+            self.context_engine,
+            self.action_manager,
+        )
+
         # ── misc ──
         self.is_running: bool = True
         self._extra_system_prompt: str = self._load_extra_system_prompt()
@@ -226,14 +229,14 @@ class AgentBase:
             await self.state_manager.start_session(gui_mode)
 
             # ===================================
-            # 3. Check Limits
+            # 2. Check Limits
             # ===================================
             should_continue:bool = await self._check_agent_limits()
             if not should_continue:
                 return
 
             # ===================================
-            # 4. Select Action
+            # 3. Select Action
             # ===================================
             logger.debug("[REACT] selecting action")
             is_running_task: bool = self.state_manager.is_running_task()
@@ -242,26 +245,22 @@ class AgentBase:
                 # GUI-mode handling
                 if STATE.gui_mode:
                     logger.debug("[GUI MODE] Entered GUI mode.")
-                    png_bytes = GUIHandler.get_screen_state(GUIHandler.TARGET_CONTAINER)
-                    
-                    # Perform reasoning to guide action selection within the task
-                    reasoning_result: ReasoningResult = await self._perform_reasoning_GUI(png_bytes, query=query)
-                    reasoning: str = reasoning_result.reasoning
-                    action_query: str = reasoning_result.action_query
-                    
-                    if png_bytes is None:
-                        logger.warning("[GUI MODE] Error getting screenshot in GUI mode. Inform the user and switch back to CLI mode.")
-                        screen_md = "Error getting screenshot in GUI mode. Inform the user ans switch back to CLI mode."
-                        
-                        self.event_stream_manager.log(
-                            "screen",
-                            screen_md,
-                            display_message="Screen summary updated",
-                        )
+                    step: Optional[Step] = self.state_manager.get_current_step()
+
+                    if step is None:
+                        raise ValueError("No current step found in StateManager")
+
+                    gui_response: dict = await self.gui_module.perform_gui_task_step(
+                        step=step, 
+                        session_id=session_id, 
+                        next_action_description=query, 
+                        parent_action_id=parent_id
+                    )
+
+                    if gui_response.get("status") == "ok":
+                        action_decision = gui_response.get("next_action")
                     else:
-                        action_decision = await self.action_router.select_action_in_GUI(
-                            png_bytes, query=action_query, reasoning=reasoning, GUI_mode=STATE.gui_mode
-                        )
+                        raise ValueError(gui_response.get("message"))
                 else:
                     # Perform reasoning to guide action selection within the task
                     reasoning_result: ReasoningResult = await self._perform_reasoning(query=query)
@@ -282,7 +281,7 @@ class AgentBase:
                 raise ValueError("Action router returned no decision.")
 
             # ===================================
-            # 5. Get Action
+            # 4. Get Action
             # ===================================
             action_name = action_decision.get("action_name")
             action_params = action_decision.get("parameters", {})
@@ -307,7 +306,7 @@ class AgentBase:
             parent_id = parent_id or None  # enforce None at root
 
             # ===================================
-            # 6. Execute Action
+            # 5. Execute Action
             # ===================================
             logger.info(f"[GUI ACTION]: ready to run {action}")
             try:
@@ -325,7 +324,7 @@ class AgentBase:
                 raise
 
             # ===================================
-            # 7. Post-Action Handling
+            # 6. Post-Action Handling
             # ===================================
             new_session_id = action_output.get("task_id") or session_id
 
@@ -511,7 +510,7 @@ class AgentBase:
         # Build the system prompt using the current context configuration
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False},
+            system_flags={"policy": False, "gui_event_stream": True},
         )
 
         # Format the user prompt with the incoming query
