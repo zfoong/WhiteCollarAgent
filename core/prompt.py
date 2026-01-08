@@ -546,6 +546,7 @@ ENVIRONMENTAL_CONTEXT_PROMPT = """
 - User Location: {user_location}
 - Operating System: {operating_system} {os_version} ({os_platform})
 - VM Operating System: {vm_operating_system} {vm_os_version} ({vm_os_platform})
+- VM's screen resolution (GUI mode): {vm_resolution}
 - Your sandbox and working directory, please save and access your files and folder here: {working_directory}. All files MUST be saved INSIDE the working directory, not outside.
 </agent_environment>
 """

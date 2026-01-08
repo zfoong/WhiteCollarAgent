@@ -239,13 +239,6 @@ class AgentBase:
             is_running_task: bool = self.state_manager.is_running_task()
 
             if is_running_task:
-                
-                # ===================================
-                # 2. Handle GUI mode
-                # ===================================
-                logger.debug(f"[GUI MODE FLAG] {gui_mode}")
-                logger.debug(f"[GUI MODE FLAG - state] {STATE.gui_mode}")
-    
                 # GUI-mode handling
                 if STATE.gui_mode:
                     logger.debug("[GUI MODE] Entered GUI mode.")

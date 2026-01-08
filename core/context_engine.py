@@ -15,6 +15,7 @@ from core.prompt import (
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from typing import Optional, Dict, Any
+from core.task.task import Task
 
 """
 core.context_engine
@@ -157,6 +158,7 @@ class ContextEngine:
             vm_operating_system="Linux", # TODO hard coded value to match the current VM setting
             vm_os_version="6.12.13", # TODO hard coded value to match the current VM setting
             vm_os_platform="Linux a5e39e32118c 6.12.13 #1 SMP Thu Mar 13 11:34:50 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux", # TODO hard coded value to match the current VM setting
+            vm_resolution="1064 x 1064"
             )
         return prompt
     

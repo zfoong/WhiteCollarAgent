@@ -13,7 +13,7 @@ MODEL_REGISTRY = {
     },
     "byteplus": {
         InterfaceType.LLM: "kimi-k2-250711",
-        InterfaceType.VLM: "seed-1-6-flash-250715",
+        InterfaceType.VLM: "seed-1-6-250915",
         InterfaceType.EMBEDDING: "skylark-embedding-vision-250615",
     },
     "remote": {

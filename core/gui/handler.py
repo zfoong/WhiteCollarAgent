@@ -44,24 +44,6 @@ except Exception as e:
     sys.exit(1)
 """
 
-    # --- Windows Screenshot Payload (PowerShell) ---
-    _WINDOWS_SCREENSHOT_PAYLOAD = r"""
-try {
-    Add-Type -AssemblyName System.Windows.Forms | Out-Null
-    Add-Type -AssemblyName System.Drawing | Out-Null
-    $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-    $bitmap = New-Object System.Drawing.Bitmap $screen.Bounds.Width, $screen.Bounds.Height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $graphics.CopyFromScreen($screen.Bounds.Left, $screen.Bounds.Top, 0, 0, $bitmap.Size)
-    $ms = New-Object System.IO.MemoryStream
-    $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-    [Console]::OpenStandardOutput().Write($ms.ToArray(), 0, $ms.Length)
-} catch {
-    $host.ui.WriteErrorLine("AGENT_ERROR: " + $_.Exception.Message)
-    exit 1
-}
-"""
-
     # ==========================
     # Public API
     # ==========================
