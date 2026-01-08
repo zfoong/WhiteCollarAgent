@@ -28,7 +28,7 @@ class GUIHandler:
     # --- Linux Screenshot Payload (Python) ---
     _LINUX_SCREENSHOT_PAYLOAD = """
 import sys, io, os
-if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":0"
+if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":1"
 try:
     from PIL import ImageGrab
 except ImportError:
@@ -366,62 +366,22 @@ if __name__ == "__main__":
     
     # This is the raw code body from your example action
     sample_action_code = """
-def open_browser_linux(input_data: dict) -> dict:
-    import os
-    import subprocess
-    import shutil
-    import webbrowser
-
-    url = str(input_data.get('url', '')).strip()
-
-    candidates = [
-        shutil.which('google-chrome'),
-        shutil.which('google-chrome-stable'),
-        shutil.which('chromium'),
-        shutil.which('chromium-browser'),
-        shutil.which('brave-browser'),
-        shutil.which('firefox'),
-        shutil.which('microsoft-edge')
-    ]
-
+def mouse_double_click(input_data: dict) -> dict:
+    import json, sys, subprocess, importlib
+    pkg = 'pyautogui'
     try:
-        browser_path = next((p for p in candidates if p and os.path.isfile(p)), None)
-        if browser_path:
-            cmd = [browser_path, '--no-sandbox', '--temp-profile']
-            if url:
-                cmd.append(url)
-
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=os.environ.copy(),
-                close_fds=True
-            )
-
-            return {
-                'status': 'success',
-                'process_id': proc.pid,
-                'browser': os.path.basename(browser_path),
-                'executable_path': browser_path,
-                'message': f'Launched {os.path.basename(browser_path)} with temp profile.'
-            }
-        else:
-            if url:
-                webbrowser.open(url)
-            return {
-                'status': 'success',
-                'process_id': -1,
-                'browser': 'default system',
-                'executable_path': '',
-                'message': 'Attempted to open URL using system default mechanism.'
-            }
-
+        importlib.import_module(pkg)
+    except ImportError:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg, '--quiet'])
+    import pyautogui
+    x = input_data.get('x')
+    y = input_data.get('y')
+    try:
+        pos_x, pos_y = (x, y) if x is not None and y is not None else pyautogui.position()
+        pyautogui.doubleClick(x=pos_x, y=pos_y, button='left')
+        return {'status': 'success', 'message': ''}
     except Exception as e:
-        return {
-            'status': 'error', 'process_id': -1, 'browser': '', 'executable_path': '', 'message': str(e)
-        }
+        return {'status': 'error', 'message': str(e)}
 """
     
     sample_input = {"code": "print('Hello from inside the container action!')"}

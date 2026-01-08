@@ -154,7 +154,7 @@ class ActionManager:
             "started_at": started_at,
         }
 
-        logger.debug(f"Action {action.name} marked as in-flight.")
+        logger.info(f"Action {action.name} marked as in-flight.")
         
         if is_running_task and self.event_stream_manager:
             self.event_stream_manager.log(

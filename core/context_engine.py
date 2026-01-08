@@ -154,9 +154,9 @@ class ContextEngine:
             operating_system=platform.system(),
             os_version=platform.release(),
             os_platform=platform.platform(),
-            vm_operating_system=platform.system(),
-            vm_os_version=platform.release(),
-            vm_os_platform=platform.platform(),
+            vm_operating_system="Linux", # TODO hard coded value to match the current VM setting
+            vm_os_version="6.12.13", # TODO hard coded value to match the current VM setting
+            vm_os_platform="Linux a5e39e32118c 6.12.13 #1 SMP Thu Mar 13 11:34:50 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux", # TODO hard coded value to match the current VM setting
             )
         return prompt
     

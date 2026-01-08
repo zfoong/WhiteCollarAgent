@@ -11,7 +11,7 @@ from datetime import datetime
 from loguru import logger as _logger
 from core.config import PROJECT_ROOT
 
-_print_level = "DEBUG"
+_print_level = "INFO"
 
 def define_log_level(print_level="ERROR", logfile_level="DEBUG", name: str = None):
     """
