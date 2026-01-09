@@ -60,6 +60,7 @@ class GUIModule:
             next_action_description: The next action description.
             parent_action_id: The parent action ID.
         """
+        logger.info(f"[PERFORM GUI TASK STEP] {step} {session_id} {next_action_description} {parent_action_id}")
         try:
             self.switch_to_gui_mode()
             STATE.set_agent_property(
@@ -71,17 +72,21 @@ class GUIModule:
                 "next_action": None,
             }
 
-            while response.get("next_action") is None:
-                response: dict = await self.perform_gui_task_step_action(step, session_id, next_action_description, parent_action_id)
+            while STATE.gui_mode:
+                response: dict = await self._perform_gui_task_step_action(step, session_id, next_action_description, parent_action_id)
+                logger.info(f"[GUI TASK STEP ACTION RESPONSE] {response}")
             
-            self.switch_to_cli_mode()
             return response
 
         except Exception as e:
             logger.error(f"[GUI TASK ERROR] {e}", exc_info=True)
             raise
 
-    async def perform_gui_task_step_action(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
+    # ===================================
+    # Private Methods
+    # ===================================
+
+    async def _perform_gui_task_step_action(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
         """
         Perform a GUI task step action.
 
@@ -126,7 +131,7 @@ class GUIModule:
             action_query: str = reasoning_result.action_query
 
             # 3. Select action
-            action_decision = await self.action_router.select_action_in_GUI(png_bytes, query=action_query, reasoning=reasoning, GUI_mode=STATE.gui_mode)
+            action_decision = await self.action_router.select_action_in_GUI(png_bytes, query=action_query, reasoning=reasoning, GUI_mode=True)
 
             if not action_decision:
                 raise ValueError("Action router returned no decision.")
@@ -139,13 +144,6 @@ class GUIModule:
 
             if not action_name:
                 raise ValueError("No valid action selected by the router.")
-
-            if action_name.lower() in ["start next step", "mark task complete", "mark task error", "mark task cancel"]:
-                return {
-                    "status": "ok",
-                    "message": "Action completed successfully",
-                    "next_action": action_decision,
-                }
 
             # Retrieve action
             action: Optional[Action] = self.action_library.retrieve_action(action_name)
@@ -169,6 +167,7 @@ class GUIModule:
                 parent_id=parent_id,
                 session_id=session_id,
                 is_running_task=True,
+                is_gui_task=True,
                 input_data=action_params,
             )
 
@@ -201,13 +200,11 @@ class GUIModule:
                 - reasoning: The model's reasoning output
                 - action_query: A refined query used for action selection
         """
-
         # Build the system prompt using the current context configuration
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False, "gui_event_stream": True},
+            system_flags={"policy": False, "gui_event_stream": True, "event_stream": False},
         )
-
         # Format the user prompt with the incoming query
         prompt = GUI_REASONING_PROMPT
 

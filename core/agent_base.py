@@ -51,6 +51,7 @@ from core.task.task_manager import TaskManager
 from core.task.task_planner import TaskPlanner
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.gui.gui_module import GUIModule
+from core.gui.handler import GUIHandler
 
 
 @dataclass
@@ -141,11 +142,12 @@ class AgentBase:
             vlm_interface=self.vlm,
         )
 
-        self.gui_module = GUIModule(
-            self.action_library,
-            self.action_router,
-            self.context_engine,
-            self.action_manager,
+        GUIHandler.gui_module: GUIModule = GUIModule(
+            provider=llm_provider,
+            action_library=self.action_library,
+            action_router=self.action_router,
+            context_engine=self.context_engine,
+            action_manager=self.action_manager,
         )
 
         # ── misc ──
@@ -250,7 +252,7 @@ class AgentBase:
                     if step is None:
                         raise ValueError("No current step found in StateManager")
 
-                    gui_response: dict = await self.gui_module.perform_gui_task_step(
+                    gui_response: dict = await GUIHandler.gui_module.perform_gui_task_step(
                         step=step, 
                         session_id=session_id, 
                         next_action_description=query, 

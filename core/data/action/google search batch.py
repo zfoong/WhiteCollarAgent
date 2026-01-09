@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="google search batch",
     description="Performs searches for a list of queries. Uses Google Custom Search API when credentials exist, otherwise falls back to DuckDuckGo (ddgs). Returns a single JSON object containing a single PDF-ready string when pdf=true, with all queries as headings and combined content.",
     platforms=["linux", "windows", "darwin"],
+    mode="CLI",
     input_schema={
         "queries": {
             "type": "array",

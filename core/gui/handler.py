@@ -1,9 +1,12 @@
 import subprocess
-import sys
 import json
-import inspect
 import time
-from typing import Optional, Tuple, Dict, Any, Union
+from typing import Optional, Tuple, Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.gui.gui_module import GUIModule
+    
+from core.state.agent_state import STATE
 
 # Adjust import path as needed for your project structure
 try:
@@ -19,11 +22,20 @@ class GUIHandler:
     Supports retrieving screenshots (bytes) and executing actions (dict).
     """
 
-    # REPLACE with your container name
+    # Class attribute that can be set externally to avoid circular dependency
+    gui_module: Optional["GUIModule"] = None
+
+    # Default container name (can be overridden per instance)
     TARGET_CONTAINER = "simple-agent-desktop"
 
     # Name of the Python package required for Linux screen capture
     _LINUX_REQUIRED_PKG = "Pillow"
+    
+    # Magic exit code used by Linux screenshot payload to indicate missing package
+    _EXIT_CODE_MISSING_PACKAGE = 10
+    
+    # PNG file signature (first 4 bytes of a PNG file)
+    _PNG_SIGNATURE = b'\x89PNG'
 
     # --- Linux Screenshot Payload (Python) ---
     _LINUX_SCREENSHOT_PAYLOAD = """
@@ -32,7 +44,7 @@ if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":1"
 try:
     from PIL import ImageGrab
 except ImportError:
-    sys.exit(10) # Magic exit code for missing package
+    sys.exit(10)  # Exit code 10 indicates missing package (handled by handler)
 try:
     img = ImageGrab.grab()
     img_bytes = io.BytesIO()
@@ -42,6 +54,24 @@ try:
 except Exception as e:
     sys.stderr.write(f"AGENT_ERROR: {e}")
     sys.exit(1)
+"""
+
+    # --- Windows Screenshot Payload (PowerShell) ---
+    _WINDOWS_SCREENSHOT_PAYLOAD = r"""
+try {
+    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+    Add-Type -AssemblyName System.Drawing | Out-Null
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+    $bitmap = New-Object System.Drawing.Bitmap $screen.Bounds.Width, $screen.Bounds.Height
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($screen.Bounds.Left, $screen.Bounds.Top, 0, 0, $bitmap.Size)
+    $ms = New-Object System.IO.MemoryStream
+    $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    [Console]::OpenStandardOutput().Write($ms.ToArray(), 0, $ms.Length)
+} catch {
+    $host.ui.WriteErrorLine("AGENT_ERROR: " + $_.Exception.Message)
+    exit 1
+}
 """
 
     # ==========================
@@ -78,12 +108,18 @@ except Exception as e:
         return img_bytes
 
     @classmethod
-    def execute_action(cls, container_id: str, action_code: str, input_data: dict) -> Dict[str, Any]:
+    def execute_action(cls, container_id: str, action_code: str, input_data: dict, mode: str) -> Dict[str, Any]:
         """
         Executes an action inside the container.
         Returns a dictionary parsed from the action's JSON stdout.
         """
         logger.debug(f"[GUIHandler] Executing action on container '{container_id}'...")
+        if mode == "GUI" and not STATE.gui_mode:
+            return {
+                "status": "error",
+                "message": f"{mode} mode is not enabled",
+            }
+
         os_type = cls._detect_os(container_id)
         
         # We wrap the raw action code in a script that handles data injection,
@@ -123,7 +159,7 @@ except Exception as e:
             cls._LINUX_SCREENSHOT_PAYLOAD.encode()
         )
 
-        if code == 10:
+        if code == cls._EXIT_CODE_MISSING_PACKAGE:
             logger.debug(f"[GUIHandler] Missing package: '{cls._LINUX_REQUIRED_PKG}'. Installing...")
             cls._install_linux_package(container_id, cls._LINUX_REQUIRED_PKG)
             logger.debug("[GUIHandler] Retrying capture after installation...")
@@ -146,7 +182,6 @@ except Exception as e:
             cls._WINDOWS_SCREENSHOT_PAYLOAD.encode()
         )
         return cls._validate_screenshot_output(stdout, stderr, code)
-
 
     # ==========================
     # Internal Helpers & Validators
@@ -241,7 +276,7 @@ except Exception as e:
         if not stdout:
              raise RuntimeError("Agent finished successfully but returned zero data bytes.")
 
-        if not stdout.startswith(b'\x89PNG'):
+        if not stdout.startswith(cls._PNG_SIGNATURE):
              raise RuntimeError("Data returned by agent is not valid PNG format.")
 
         logger.debug(f"[GUIHandler] Successfully retrieved {len(stdout)} bytes of image data.")

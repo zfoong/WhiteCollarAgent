@@ -248,24 +248,8 @@ class ActionRouter:
         # List of filtered default actions when creating task
         ignore_actions = ["create and start task", "ignore"]
     
-        # Retrieve default actions (could be multiple)
-        default_actions = self.action_library.retrieve_default_action()
-    
-        for act in default_actions:
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
         # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=5)
+        candidate_names = self.action_library.search_action(query, top_k=10)
         logger.info(f"ActionRouter found candidate actions: {candidate_names}")
         for name in candidate_names:
             act = self.action_library.retrieve_action(name)
@@ -282,6 +266,8 @@ class ActionRouter:
                 "input_schema": act.input_schema,
                 "output_schema": act.output_schema
             })
+
+            logger.info(f"[TEST] ActionRouter found action candidates: {act.name} - {act.mode}")
     
         # Dedupe names while preserving insertion order
         action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
@@ -325,7 +311,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": True, "policy": False},
+                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": not is_task, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             decision, parse_error = self._parse_action_decision(raw_response)
@@ -353,7 +339,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": True, "policy": False},
+                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": False, "gui_event_stream": True, "task_state": not is_task, "policy": False},
             )
             raw_response = await self.vlm_interface.generate_response_async(
                 image_bytes,

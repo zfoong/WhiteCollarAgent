@@ -125,7 +125,7 @@ class ContextEngine:
 
     def create_system_gui_event_stream_state(self):
         """Return formatted GUI event stream context for the current session."""
-        gui_event_stream: str = GUIHandler.get_gui_event_stream()
+        gui_event_stream: str = GUIHandler.gui_module.get_gui_event_stream()
         if gui_event_stream:
             return (
                 "\nUse the GUI event stream to understand the current situation, past agent actions to craft the input parameters:\nGUI Event stream (oldest to newest):"

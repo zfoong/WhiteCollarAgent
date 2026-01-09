@@ -33,7 +33,7 @@ def _atomic_action_venv_process(
     Runs in a SEPARATE PROCESS.
     """
     try:
-        result = GUIHandler.execute_action(GUIHandler.TARGET_CONTAINER, action_code, input_data)
+        result = GUIHandler.execute_action(GUIHandler.TARGET_CONTAINER, action_code, input_data, mode)
         return result
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -49,7 +49,7 @@ def _atomic_action_internal(
     try:
         # Execute the function definition
         if mode == "GUI":
-            result = GUIHandler.execute_action(GUIHandler.TARGET_CONTAINER, action_code, input_data)
+            result = GUIHandler.execute_action(GUIHandler.TARGET_CONTAINER, action_code, input_data, mode)
             return result
         else:
             import json
