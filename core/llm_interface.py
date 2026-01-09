@@ -264,6 +264,7 @@ class LLMInterface:
     @profile("llm_byteplus_call")
     def _generate_byteplus(self, system_prompt: str | None, user_prompt: str) -> str:
         token_count_input = token_count_output = 0
+        total_tokens = 0
         status = "failed"
         content: Optional[str] = None
         exc_obj: Optional[Exception] = None
@@ -305,7 +306,7 @@ class LLMInterface:
                     or ""
                 ).strip()
 
-            total_tokens = result.get("usage", {}).get("total_tokens", 0)
+            total_tokens = int(result.get("usage", {}).get("total_tokens", 0))
 
             # Token usage (prompt/completion/total)
             usage = result.get("usage") or {}

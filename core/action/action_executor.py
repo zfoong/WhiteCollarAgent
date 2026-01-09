@@ -39,6 +39,7 @@ def _atomic_action_venv_process(
         return {"status": "error", "message": str(e)}
 
 def _atomic_action_internal(
+    action_name: str,
     action_code: str,
     input_data: dict,
     mode: str,
@@ -48,7 +49,7 @@ def _atomic_action_internal(
     """
     try:
         # Execute the function definition
-        if mode == "GUI":
+        if mode == "GUI" and action_name != "switch to CLI mode":
             result = GUIHandler.execute_action(GUIHandler.TARGET_CONTAINER, action_code, input_data, mode)
             return result
         else:
@@ -101,7 +102,7 @@ class ActionExecutor:
         logger.debug(f"[EXECTION CODE] {action.code}")
 
         if execution_mode == "internal":
-            result = _atomic_action_internal(action.code, input_data, mode)
+            result = _atomic_action_internal(action.name,action.code, input_data, mode)
 
         elif execution_mode == "sandboxed":
             loop = asyncio.get_running_loop()

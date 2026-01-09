@@ -239,6 +239,10 @@ Important instructions you must follow:
 - DO NOT execute an action with the EXACT same input and output repeated. You NEED to recognize that you are stuck in a loop. When this happen, you MUST select other actions.
 - DO NOT assume the task is completed and use 'send message' to report that you have completed the task. This happens frequently as LLM received a task and use 'send message' action to reply that the task is completed, despite not doing anything.
 - DO NOT use the screen shot action to analyze the screen. Use the event stream to analyze the screen.
+- If goal is to move to next step, you MUST use the 'start next step' action to move on.
+- If goal is to complete the task, you MUST use the 'mark task completed' action to complete the task.
+- If goal is to abort the task, you MUST use the 'mark task error' action to abort the task.
+- If goal is to cancel the task, you MUST use the 'mark task cancel' action to cancel the task.
 - DO NOT perform more than one UI interaction at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
 - You must provide concrete parameter values that satisfy the selected action's input_schema. Use an empty object {{}} only when the schema requires no parameters.
 - Sometimes when an event is too long, its content will be externalized and save in a tmp folder. To read the event result, agent MUST use the 'grep' action to extract the context with keywords or use 'stream read' to read the content line by line in file. Perform this step until you understand the content of the file enough to utilize the content."
@@ -297,6 +301,8 @@ Here are some general rules when selecting actions:
 - If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.
 - Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
 - use 'send message' when you want to communitcate or report to the user.
+- If goal is to move to next step, you MUST use the 'start next step' action to move on.
+- If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </rules>
 
 <allowed_action_names>
@@ -992,9 +998,7 @@ Follow these instructions carefully:
 10. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
 11. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
 12. Focus on the current and VM operating system when reasoning about the current step.
-13. When task is complete, if GUI mode is active, you should switch to CLI mode.
-14. If performing a GUI action, DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
-15. Play close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
+13. Pay close attention to the current mode of the agent - CLI or GUI.
 </reasoning_protocol>
 
 <quality_control>
@@ -1018,12 +1022,6 @@ Examples:
 {{
   "reasoning": "Step 0 requires acknowledging the task and prompting the user for their location. The message has not been sent yet, so the system needs to notify the user by sending a clear prompt asking for their location.",
   "action_query": "send a message to the user asking for their desired location for weather retrieval"
-}}
-
-- If is in GUI mode and requires interaction based actions to be performed:
-{{
-  "reasoning": "The current step requires interaction based actions to be performed. The system needs to perform the interaction based actions one by one, not performing multiple actions at the same time.",
-  "action_query": "Move mouse to drop down"
 }}
 
 - If the current step is complete:
@@ -1054,6 +1052,9 @@ Follow these instructions carefully:
 7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intented or not.
 7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
 8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
+9. Pay close attention to the current mode of the agent - CLI or GUI.
+10. If goal is to move to next step, you MUST use the 'start next step' action to move on.
+11. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </reasoning_protocol>
 
 <quality_control>
@@ -1069,6 +1070,12 @@ Return ONLY a JSON object with two fields:
 {{
   "reasoning": "<a description of the current screen detail needed for the task, natural-language chain-of-thought explaining understanding, validation, and decision>",
   "action_query": "<semantic query string describing the kind of action needed to execute the current step, or indicating the step is complete>"
+}}
+
+- If the current step is complete:
+{{
+  "reasoning": "The acknowledgment message has already been successfully sent, so step 0 is complete. The system should proceed to the next step.",
+  "action_query": "step complete, move to next step"
 }}
 </output_format>
 """

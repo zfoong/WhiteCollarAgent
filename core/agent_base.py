@@ -235,10 +235,18 @@ class AgentBase:
 
             # Handle GUI mode task execution (early return path)
             if self._should_handle_gui_task():
-                action_output, new_session_id = await self._handle_gui_task_execution(
+                gui_response = await self._handle_gui_task_execution(
                     trigger_data, session_id
                 )
-                await self._finalize_action_execution(new_session_id, action_output, session_id)
+                if self.event_stream_manager and gui_response.get("event_stream_summary"):
+                    self.event_stream_manager.log(
+                        "agent GUI event",
+                        gui_response.get("event_stream_summary"),
+                        severity="DEBUG",
+                        display_message=None,
+                    )
+                    self.state_manager.bump_event_stream()
+                await self._finalize_action_execution(gui_response.get("new_session_id"), gui_response.get("action_output"), session_id)
                 return
 
             # Select and execute action (standard path)
@@ -285,12 +293,12 @@ class AgentBase:
 
     async def _handle_gui_task_execution(
         self, trigger_data: TriggerData, session_id: str
-    ) -> tuple[dict, str]:
+    ) -> dict:
         """
         Handle GUI mode task step execution.
         
         Returns:
-            Tuple of (action_output, new_session_id)
+            Dictionary with action_output, new_session_id, and event_stream_summary
         """
         current_step = self.state_manager.get_current_step()
         if current_step is None:
@@ -310,7 +318,13 @@ class AgentBase:
 
         action_output = gui_response.get("action_output", {})
         new_session_id = action_output.get("task_id") or session_id
-        return action_output, new_session_id
+        event_stream_summary: str | None = gui_response.get("event_stream_summary")
+
+        return {
+            "action_output": action_output,
+            "new_session_id": new_session_id,
+            "event_stream_summary": event_stream_summary,
+        }
 
     async def _select_action(self, trigger_data: TriggerData) -> tuple[dict, str]:
         """
