@@ -3,11 +3,11 @@ from core.config import MAX_ACTIONS_PER_TASK, MAX_TOKEN_PER_TASK
 from core.logger import logger
 
 class AgentProperties:
-    def __init__(self, current_task_id: str, action_count: int):
+    def __init__(self, current_task_id: str, action_count: int, token_count: int = 0):
         self.current_task_id = current_task_id
         self.action_count = action_count
         self.max_actions_per_task = MAX_ACTIONS_PER_TASK        
-        self.token_count = 0
+        self.token_count = token_count
         self.max_tokens_per_task = MAX_TOKEN_PER_TASK        
         
         # Validate config value

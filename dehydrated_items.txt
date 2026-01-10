@@ -1,0 +1,20 @@
+Apples, Dried
+Apricots, Dried
+Peaches, Dried
+Pears, Dried
+Prunes, Dried
+Raisins
+Figs, Dried
+Dates, Dried
+Dehydrated Apples
+Dehydrated Apricots
+Dehydrated Peaches
+Dehydrated Pears
+Dehydrated Prunes
+Dehydrated Onions
+Dehydrated Potatoes
+Dehydrated Carrots
+Dehydrated Cabbage
+Dehydrated Beans
+Dehydrated Peas
+Dehydrated Corn
