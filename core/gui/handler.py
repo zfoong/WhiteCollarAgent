@@ -41,7 +41,7 @@ class GUIHandler:
     # --- Linux Screenshot Payload (Python) ---
     _LINUX_SCREENSHOT_PAYLOAD = """
 import sys, io, os
-if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":1"
+if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":0"
 try:
     import mss
     from PIL import Image
