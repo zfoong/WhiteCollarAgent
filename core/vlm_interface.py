@@ -6,7 +6,9 @@ Created on Fri Aug  1 14:17:29 2025
 """
 
 from __future__ import annotations
+import os
 import asyncio
+import time
 import base64, requests
 from typing import Any, Dict, Optional
 
@@ -93,9 +95,12 @@ class VLMInterface:
         """Async wrapper that defers the blocking call to a worker thread."""
         if debug:
             # Save image to file
-            with open("image.png", "wb") as f:
+            debug_dir = "debug_images"
+            file_name = f"{debug_dir}/image_{time.time()}.png"
+            os.makedirs(debug_dir, exist_ok=True)
+            with open(file_name, "wb") as f:
                 f.write(image_bytes)
-            logger.info(f"[DEBUG] Image saved to image.png")
+            logger.info(f"[DEBUG] Image saved to {file_name}")
 
         return await asyncio.to_thread(
             self.describe_image_bytes,

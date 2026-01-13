@@ -5,7 +5,7 @@ from core.state.agent_state import STATE
 from core.state.types import ReasoningResult
 from core.task.task import Step
 from core.gui.handler import GUIHandler
-from core.prompt import GUI_REASONING_PROMPT, GUI_IMAGE_DESCRIPTION_PROMPT, GUI_PIXEL_POSITION_PROMPT, GUI_ACTION_PARAMETERS_VALIDATION_PROMPT
+from core.prompt import GUI_REASONING_PROMPT, GUI_QUERY_FOCUSED_PROMPT, GUI_PIXEL_POSITION_PROMPT, GUI_ACTION_PARAMETERS_VALIDATION_PROMPT
 from core.vlm_interface import VLMInterface
 from core.action.action_manager import ActionManager
 from core.action.action_library import ActionLibrary
@@ -31,6 +31,7 @@ class GUIModule:
         self.context_engine: ContextEngine = context_engine
         self.action_manager: ActionManager = action_manager
         self.gui_event_stream_manager: EventStreamManager = EventStreamManager(self.llm)
+        self.previous_reason: str = ""
 
     def switch_to_gui_mode(self) -> None:
         STATE.update_gui_mode(True)
@@ -132,19 +133,21 @@ class GUIModule:
                 }
             
             # 1.5. Understand the image
-            image_description: str = await self._get_image_description(png_bytes)
+            image_description: str = await self._get_image_description(png_bytes, query=self.previous_reason)
             
             # 2. Perform reasoning
-            reasoning_result: ReasoningResult = await self._perform_reasoning_GUI(image_description, query=image_description)
+            reasoning_result: ReasoningResult = await self._perform_reasoning_GUI(query=image_description)
             reasoning: str = reasoning_result.reasoning
             action_query: str = reasoning_result.action_query
+
+            self.previous_reason = reasoning
 
             # 2.5. Get pixel position of the element
             pixel_position: List[Dict] = await self._get_pixel_position(png_bytes, action_query)
 
             # 3. Select action
             action_search_query: str = action_query + " " + json.dumps(pixel_position)
-            action_decision = await self.action_router.select_action_in_GUI(png_bytes, query=action_search_query, reasoning=reasoning, GUI_mode=True)
+            action_decision = await self.action_router.select_action_in_GUI(query=action_search_query, reasoning=reasoning, GUI_mode=True)
 
             if not action_decision:
                 raise ValueError("Action router returned no decision.")
@@ -204,7 +207,7 @@ class GUIModule:
                 "message": str(e),
             }
 
-    async def _perform_reasoning_GUI(self, image_bytes, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
+    async def _perform_reasoning_GUI(self, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
         """
         Perform LLM-based reasoning on a user query to guide action selection.
 
@@ -226,14 +229,13 @@ class GUIModule:
             system_flags={"policy": False, "gui_event_stream": True, "event_stream": False},
         )
         # Format the user prompt with the incoming query
-        prompt = GUI_REASONING_PROMPT
+        prompt = GUI_REASONING_PROMPT.format(gui_state=query)
 
         # Attempt the LLM call and parsing up to (retries + 1) times
         for attempt in range(retries + 1):            
             response = await self.llm.generate_response_async(
-                # image_bytes,
                 system_prompt=system_prompt,
-                user_prompt=prompt + "\n\n" + query,
+                user_prompt=prompt,
             )
 
             try:
@@ -288,7 +290,7 @@ class GUIModule:
         # No limits close or reached
         return True
 
-    async def _get_image_description(self, image_bytes: bytes) -> str:
+    async def _get_image_description(self, image_bytes: bytes, query: str) -> str:
         """
         Get the description of the image.
         """
@@ -308,7 +310,7 @@ class GUIModule:
             }
         )
 
-        user_prompt = GUI_IMAGE_DESCRIPTION_PROMPT
+        user_prompt = GUI_QUERY_FOCUSED_PROMPT.format(query=query)
 
         image_description: str = await self.vlm.generate_response_async(
             image_bytes=image_bytes,

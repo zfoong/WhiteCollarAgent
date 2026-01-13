@@ -1041,8 +1041,14 @@ Your goal is to describe the screen in your reasoning and perform reasoning for 
 Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.
 </objective>
 
+<gui_state>
+You are provided with a screenshot of the current screen.
+{gui_state}
+</gui_state>
+
 <validation>
-- Verify if the screenshot visually shows if the previous action has been performed successfully.
+- Verify if the screenshot visually shows if the previous action in the event stream has been performed successfully.
+- ONLY give response based on the GUI state information
 </validation>
 
 <reasoning_protocol>
@@ -1084,55 +1090,54 @@ Return ONLY a JSON object with two fields:
 </output_format>
 """
 
-GUI_IMAGE_DESCRIPTION_PROMPT = """
-You are an advanced UI Decomposition and Semantic Analysis Agent. Your sole purpose is to ingest a UI screenshot and generate a structured, systematic breakdown of its constituent parts, their spatial relationships, states, and functional intentions.
+GUI_QUERY_FOCUSED_PROMPT = """
+You are an advanced UI Decomposition and Semantic Analysis Agent. Your task is to analyze a UI screenshot specifically in the context of a provided previous step query.
 
-Do not provide a narrative description for a human user. Instead, produce a structured report that an LLM or a UI automation system could use to build a mental model of the screen.
+**Inputs:**
+1.  A screenshot of a graphical user interface (GUI).
+2.  A natural language previous step query regarding that interface (e.g., "Where is the checkout button?", "What is the error message saying?", "Identify the filters in the sidebar").
 
-Analyze the provided image and output your findings in the following strictly structured Markdown format.
+**Goal:**
+Do not generate an exhaustive analysis of the entire screen. Instead, interpret the user's intent based on the previous step query and extract *only* the UI elements, text, structure, and states relevant to answering or fulfilling that query. If the query asks about a specific component, focus on that component and its immediate context. If the query asks about a region, focus strictly on that region. Also, validate if based on the image - the previous step is complete or not.
 
-### 1. Screen Classification & Intent
-*   **Screen_Type:** Classify the immediate view (e.g., `Browser::NewTab`, `Modal::Confirmation`, `Form::Login`, `Dashboard::Analytics`, `VideoPlayer::Controls`).
-*   **Primary_Intent:** State the single most critical action the user is expected to perform here.
-*   **Secondary_Intents:** List alternative or interrupting actions.
+**Output Format:**
+Analyze the image based on the previous step query and output your findings in the following strictly structured Markdown format.
 
-### 2. Spatial Layout & Containers
-Identify the major bounding boxes and structural regions of the screen.
-*   **Macro_Containers:** List main structural areas (e.g., `Top Navigation Bar`, `Main Content Viewport`, `Side Panel`).
-*   **Overlays & Modals:** Identify any elements sitting on top of the main content (e.g., `Alert Dialog [Top-Right]`, `Bottom Sheet`, `Toast Notification`).
-*   **Layout_Structure:** Briefly describe how the main content is organized (e.g., `Single Column Centered`, `Two-Column [Left-Nav, Right-Content]`, `Grid`).
+### 1. Context & Query Interpretation
+*   **Screen_Context:** Briefly classify the overall view (e.g., `Site::LandingPage`, `Modal::Settings`, `App::Dashboard`).
+*   **Query_Intent:** Translate the user's natural language previous step query into a technical UI goal (e.g., "User seeks location and state of the 'Submit Order' button within the cart module").
+*   **Query_Status:** (Found / Not Found / Ambiguous). State if the elements requested in the query are actually visible in the screenshot.
 
-### 3. Static Content Inventory
-Extract text that serves as information, structure, or instruction, distinct from interactive controls.
-*   **Structural_Headings:** (H1, H2 equivalents indicating section topics).
-*   **Instructional_Text:** (Body text telling the user *how* or *why* to do something).
-*   **Data_Labels:** (Static text labeling adjacent data points).
+### 2. Relevant Spatial Layout
+Identify only the structural regions containing elements relevant to the previous step query. If the query is broad, define the bounds of the relevant area.
+*   **Target_Container:** The specific bounding box or structural area where the relevant elements are located (e.g., `Login Form Module [Center-Mid]`, `Top Global Navigation Bar`, `SearchResultsGrid`).
+*   **Parent_Context:** (Optional) If the target container is inside a transient element like a modal, dropdown, or overlay, note it here.
 
-### 4. Interactive Component Inventory
-Provide a detailed list of every interactable element. Use the following schema for each entry:
+### 3. Relevant Static Content
+Extract text distinct from interactive controls, *only if relevant to resolving the previous step query*.
+*   **Anchor_Text:** Headings, labels, or section titles that help define the area of interest relative to the query.
+*   **Targeted_Informational_Text:** Specific body text or error messages related to the query.
+
+### 4. Targeted Interactive Components
+Provide a detailed list *only* of interactable elements directly addressed by, or immediately necessary for context to, the query.
 *   **[Component Type] "Label/Identifier"**
-    *   **Location:** General vicinity (e.g., Top-Right, Center-Mid, Bottom-Left Floating).
-    *   **Function:** The action triggered on interaction (e.g., Submits form, Navigates to X, Dismisses modal, Opens menu).
-    *   **State:** Current status (e.g., Enabled, Disabled, Selected, Empty, Contains Text "xyz").
-    *   **Visual_Cue:** Dominant visual characteristic (e.g., Solid Blue Button, Outlined Icon, Underlined Link).
+    *   **Relevance:** State briefly why this component is included based on the query (e.g., "Direct match for 'checkout button' in query").
+    *   **Location:** General vicinity (e.g., Top-Right of Target Container).
+    *   **Function:** The action triggered on interaction.
+    *   **State:** Current status (e.g., Enabled, Disabled, Selected, Contains Text "xyz").
+    *   **Visual_Cue:** Dominant visual characteristic.
 
-*(Example entry format:)*
-*   *`[Button::Primary]` "Restore Pages"*
-    *   *Location: Top-Right Overlay Dialog*
-    *   *Function: Initiates session restoration process.*
-    *   *State: Enabled*
-    *   *Visual_Cue: Solid blue background, white text.*
-
-### 5. Visual & Functional Semantics
-Describe non-textual elements and global states.
-*   **Iconography_Semantics:** Map prominent icons to their functional meaning (e.g., `Magnifying Glass -> Search Action`, `Three Dots -> Contextual Menu`, `X -> Close/Dismiss`).
-*   **Global_Visual_State:** Describe the overall visual mode (e.g., `Dark Mode Enabled`, `High Contrast`, `Dense Information Display`).
+### 5. Relevant Visual Semantics
+Describe non-textual elements *only if referenced in or relevant to the query*.
+*   **Targeted_Iconography:** Map prominent icons related to the query to their meaning (e.g., If query is "find the search icon" -> `Magnifying Glass Icon -> Search Action`).
 
 ***
 **Constraints:**
-*   Maintain the strict Markdown heading structure provided above.
-*   Be precise and economical with language. Avoid conversational filler.
-*   Ensure every interactable element visible is listed in Section 4.
+*   Maintain strict focus on the query is paramount. Do not include extraneous elements just because they are visible in the screenshot.
+*   If the elements requested in the query are *not* present, set `Query_Status` to "Not Found" in Section 1 and leave Sections 2-5 empty.
+*   Ensure the output is machine-readable Markdown based on the headers above.
+
+Previous Step Query: {query}
 """
 
 GUI_PIXEL_POSITION_PROMPT = """
@@ -1144,8 +1149,8 @@ Guidelines:
 2.  **Bounding Boxes:** For every element, provide an inclusive bounding box as [x_min, y_min, x_max, y_max].
 3.  **Output Format:** Return ONLY a valid JSON list of objects. Do not provide any conversational text before or after the JSON.
 
-Scale x by 1.06 and y by 1.08
 Analyze the image and generate the JSON list.
+DO NOT hallucinate or make up any information.
 """
 
 GUI_ACTION_PARAMETERS_VALIDATION_PROMPT = """
@@ -1157,13 +1162,17 @@ You are given the following action decision:
 You are given the following query (ignore coordinates in the query):
 {query}
 
-You need to validate the action parameters and return True if they are valid, False otherwise.
-If action parameters are coordinates, then you need to validate if the coordinates are accurate based on what is being asked.
+You need to validate the action parameters against the query.
+
+Criteria for validation:
+1. An action is valid (True) if it accurately fulfills the entire request in the query.
+2. An action is ALSO valid (True) if it accurately performs a necessary partial step towards fulfilling the query. For example, if the query asks to "clear text and type new text", an action that only clears the text is valid because it is a correct initial step.
+3. If action parameters are coordinates, validate if the coordinates are accurate for the target element described in the query.
 
 Output Format:
 Return ONLY a valid JSON object with this structure and no extra commentary:
 {{
-  "valid": <True if the action parameters are valid, False otherwise>
+  "valid": <True if the criteria above are met, False otherwise>
 }}
 """
 
