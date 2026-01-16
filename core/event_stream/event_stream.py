@@ -68,6 +68,7 @@ class EventStream:
         message: str,
         severity: str = "INFO",
         *,
+        status: str | None = None,
         display_message: str | None = None,
         action_name: str | None = None,
     ) -> int:
@@ -94,7 +95,13 @@ class EventStream:
             severity = "INFO"
         msg = self._externalize_message(message.strip(), action_name=action_name)
         display = display_message.strip() if display_message is not None else None
-        ev = Event(message=msg, kind=kind.strip(), severity=severity, display_message=display)
+        ev = Event(
+            message=msg,
+            kind=kind.strip(),
+            severity=severity,
+            status=status,
+            display_message=display,
+        )
         rec = EventRecord(event=ev)
 
         self.tail_events.append(rec)
@@ -109,7 +116,7 @@ class EventStream:
         msg = f"{name} -> {status}"
         if extra:
             msg += f" ({extra})"
-        return self.log("action_end", msg)
+        return self.log("action_end", msg, status=status)
 
     # ───────────────────── summarization & pruning ───────────────────────
 

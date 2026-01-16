@@ -39,6 +39,7 @@ class EventStreamManager:
         message: str,
         severity: str = "INFO",
         *,
+        status: str | None = None,
         display_message: str | None = None,
         action_name: str | None = None,
     ) -> int:
@@ -68,6 +69,7 @@ class EventStreamManager:
             kind,
             message,
             severity,
+            status=status,
             display_message=display_message,
             action_name=action_name,
         )

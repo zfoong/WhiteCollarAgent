@@ -162,6 +162,7 @@ class ActionManager:
                 f"Running action {action.name} with input: {input_data}.",
                 display_message=f"Running {action.name}",
                 action_name=action.name,
+                status="running",
             )
         else:
             logger.warning(f"Action {action.name} no event stream manager to log to.")
@@ -238,11 +239,21 @@ class ActionManager:
         
         if is_running_task and self.event_stream_manager:
             display_status = "failed" if status == "error" else "completed"
+            display_message = f"{action.name} → {display_status}"
+            event_status = display_status
+            if (
+                action.name == "send message"
+                and isinstance(input_data, dict)
+                and input_data.get("wait_for_user_reply")
+            ):
+                display_message = f"{action.name} → wait for user response"
+                event_status = "waiting_for_user"
             self.event_stream_manager.log(
                 "action",
                 f"Action {action.name} completed with output: {outputs}.",
-                display_message=f"{action.name} → {display_status}",
+                display_message=display_message,
                 action_name=action.name,
+                status=event_status,
             )
 
 

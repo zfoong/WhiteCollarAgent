@@ -1032,6 +1032,7 @@ class TUIInterface:
                             event.kind,
                             display_text,
                             style=style,
+                            event_status=event.status,
                         )
                         continue
 
@@ -1046,17 +1047,30 @@ class TUIInterface:
         except asyncio.CancelledError:  # pragma: no cover
             raise
 
-    async def _handle_action_event(self, kind: str, message: str, *, style: str = "action") -> None:
+    async def _handle_action_event(
+        self,
+        kind: str,
+        message: str,
+        *,
+        style: str = "action",
+        event_status: str | None = None,
+    ) -> None:
         """Record an action update and refresh the status bar."""
         await self.action_updates.put(_ActionEntry(kind=kind, message=message, style=style))
         if style == "action":
-            status = self._derive_status(kind, message)
-            if status != self._status_message:
-                self._status_message = status
-                await self.status_updates.put(status)
+            status = self._derive_status(kind, message, event_status)
+        elif style == "task":
+            status = self._derive_task_status(event_status)
+        else:
+            status = ""
+        if status and status != self._status_message:
+            self._status_message = status
+            await self.status_updates.put(status)
 
-    def _derive_status(self, kind: str, message: str) -> str:
+    def _derive_status(self, kind: str, message: str, event_status: str | None) -> str:
         normalized = message.strip() or ""
+        if event_status == "waiting_for_user":
+            return "Wait for user response"
         if kind == "action_start":
             return f"Running: {normalized or 'action in progress'}"
         if kind == "action_end":
@@ -1064,6 +1078,11 @@ class TUIInterface:
         if kind == "action":
             return normalized or "Action in progress"
         return normalized or self._status_message or "Idle"
+
+    def _derive_task_status(self, event_status: str | None) -> str:
+        if event_status in {"completed", "failed", "error", "cancelled"}:
+            return "Idle"
+        return ""
 
     def _format_labelled_entry(
         self,

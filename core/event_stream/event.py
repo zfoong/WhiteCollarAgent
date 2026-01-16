@@ -38,6 +38,7 @@ class Event:
     message: str
     kind: str
     severity: str
+    status: Optional[str] = None
     display_message: Optional[str] = None
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 

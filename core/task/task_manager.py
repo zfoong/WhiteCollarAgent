@@ -371,6 +371,7 @@ class TaskManager:
             "task",
             f"Task ended with status '{status}'. {note or ''}",
             display_message=f"Task {wf.name} → {status}",
+            status=status,
         )
         STATE.set_agent_property("current_task_id", "")
         STATE.set_agent_property("action_count", 0)
