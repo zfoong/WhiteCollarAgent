@@ -115,7 +115,7 @@ class _CraftApp(App):
 
     #chat-panel, #action-panel {
         height: 100%;
-        border: solid #444444;
+        border: solid #fff;
         border-title-align: left;
         margin: 0 1;
         min-width: 0;  /* allow panels to shrink with the terminal */
@@ -212,7 +212,7 @@ class _CraftApp(App):
     #menu-options > ListItem.--highlight .menu-item,
     #provider-options > ListItem.--highlight .menu-item,
     #settings-actions-list > ListItem.--highlight .menu-item {
-        background: #222222;
+        background: #ff4ff18;
         color: #ffffff;
         text-style: bold;
     }
@@ -750,7 +750,7 @@ class TUIInterface:
 
     _STYLE_COLORS = {
         "user": "bold plum1",
-        "agent": "bold gold1",
+        "agent": "bold dark_orange",
         "action": "bold deep_sky_blue1",
         "task": "bold dark_orange",
         "error": "bold red",
