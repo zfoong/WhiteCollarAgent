@@ -70,6 +70,7 @@ async def run_agent_cycle(agent, task_id, question, file_path=None):
             status = "timeout"
             
     except Exception as e:
+        logger.error("Error in agent cycle.", exc_info=True)
         print(f"Error in agent cycle: {e}")
         traceback.print_exc()
         status = "exception"
@@ -84,6 +85,7 @@ async def run_benchmark(limit: int | None = None):
         ds = load_dataset("gaia-benchmark/GAIA", "2023_all", split="validation")
         print(f"Loaded {len(ds)} questions.")
     except Exception as e:
+        logger.error("Failed to load dataset.", exc_info=True)
         print(f"Failed to load dataset: {e}")
         return
 
@@ -98,6 +100,7 @@ async def run_benchmark(limit: int | None = None):
         agent = PersonalAssistantAgent(cfg, bundle_dir)
         agent.is_running = True
     except Exception as e:
+        logger.error("Failed to initialize agent.", exc_info=True)
         print(f"Failed to initialize agent: {e}")
         return
 
@@ -150,6 +153,12 @@ async def run_benchmark(limit: int | None = None):
                     f.write(r.content)
                 question += f"\n\n(Attachment downloaded to: {local_path})"
             except Exception as e:
+                logger.warning(
+                    "Failed to download attachment %s from %s.",
+                    file_name,
+                    file_url,
+                    exc_info=True,
+                )
                 print(f"Failed to download attachment {file_name}: {e}")
                 question += f"\n\n(Failed to download attachment {file_name})"
 
@@ -167,8 +176,8 @@ async def run_benchmark(limit: int | None = None):
         if local_path and os.path.exists(local_path):
              try:
                  os.remove(local_path)
-             except:
-                 pass
+             except Exception:
+                 logger.warning("Failed to remove attachment %s.", local_path, exc_info=True)
 
         result_entry = {
             "task_id": task_id,

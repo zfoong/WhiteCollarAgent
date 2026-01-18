@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import shutil
 
 from dataclasses import asdict
 from pathlib import Path
@@ -65,6 +66,17 @@ class DatabaseInterface:
             self.agent_info_path.write_text("{}", encoding="utf-8")
 
 
+        try:
+            self._initialize_chroma(chroma_path)
+        except Exception:
+            logger.error(
+                "Failed to initialize ChromaDB; attempting a clean rebuild.",
+                exc_info=True,
+            )
+            self._reset_chroma_storage(chroma_path)
+            self._initialize_chroma(chroma_path)
+
+    def _initialize_chroma(self, chroma_path: str) -> None:
         # ChromaDB (for vector search on actions and task documents)
         self.chroma = chromadb.PersistentClient(path=f"{chroma_path}_actions")
         self.chroma_actions = self.chroma.get_or_create_collection("agent_actions")
@@ -86,9 +98,15 @@ class DatabaseInterface:
             actions_list_str = ", ".join(sorted(stored_ids))
             logger.info(f"✅ ChromaDB sync successful. Collection now holds {count} actions: [{actions_list_str}]")
         else:
-                logger.warning("⚠️ ChromaDB sync completed, but the collection is empty.")
+            logger.warning("⚠️ ChromaDB sync completed, but the collection is empty.")
 
         self.sync_task_documents_to_chroma()
+
+    def _reset_chroma_storage(self, chroma_path: str) -> None:
+        for suffix in ("_actions", "_taskdocs"):
+            path = Path(f"{chroma_path}{suffix}")
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Log helpers
@@ -674,4 +692,3 @@ class DatabaseInterface:
                 break
         if updated:
             self._write_log_entries(entries)
-
