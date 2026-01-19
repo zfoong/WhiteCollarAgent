@@ -103,12 +103,14 @@ This executes the built-in **White Collar Agent**, that you can communicate to:
 ### Terminal Arguments
 | Argument | Description |
 | :--- | :--- |
-| `no-omniparse` | Disable the use of microsoft omniparser to analyse UI - will greatly reduce GUI action accuracy. It is highly encouraged to use omniparser |
-| `no-conda` | Installs all packages globally instead of inside a conda environment |
+| `--only-cpu` | Run the agent on CPU mode |
+| `--fast` | Skip unecessary update checks and launch agent faster. <br> <u><b>NOTE:</b></u> You have to run without `--fast` the first time you launch |
+| `--no-omniparse` | Disable the use of microsoft omniparser to analyse UI - will greatly reduce GUI action accuracy. It is highly encouraged to use omniparser |
+| `--no-conda` | Installs all packages globally instead of inside a conda environment |
 
 **EXAMPLE**
 ```bash
-python start.py no-omniparse no-conda
+python start.py --only-cpu --fast
 ```
 
 ---
