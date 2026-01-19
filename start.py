@@ -410,13 +410,21 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
 
     # === Windows Implementation ===
     if current_os == "win32":
-        if conda_env_name and os.getenv('USE_CONDA') == "True":
-             cmd_list = ["conda", "run", "-n", conda_env_name, "python", "-u", abs_main_script_path] + pass_through_args
-        else:
-             cmd_list = [sys.executable, "-u", abs_main_script_path] + pass_through_args
+        def _escape_for_cmd_k(s: str) -> str:
+            # We are embedding the command inside: cmd /k " ... "
+            # Any internal " must be escaped so they don't terminate the outer string.
+            return s.replace('"', '^"')
         
-        cmd_string = shlex.join(cmd_list)
-        launch_cmd = f'start /MAX cmd /k "set PYTHONUNBUFFERED=1 && {cmd_string}"'
+        if conda_env_name and os.getenv('USE_CONDA') == "True":
+            cmd_list = ["conda", "run", "-n", conda_env_name, "python", "-u", abs_main_script_path] + pass_through_args
+        else:
+            cmd_list = [sys.executable, "-u", abs_main_script_path] + pass_through_args
+
+        cmd_string = subprocess.list2cmdline(cmd_list)     # Windows-safe quoting
+        cmd_string = _escape_for_cmd_k(cmd_string)         # Safe inside cmd /k "..."
+
+        # Also add an explicit empty window title: start "" ...
+        launch_cmd = f'start "" /MAX cmd /k "set PYTHONUNBUFFERED=1 && {cmd_string}"'
         subprocess.Popen(launch_cmd, shell=True)
 
     # === Linux & macOS Implementation (The "Activate then Run" strategy) ===
