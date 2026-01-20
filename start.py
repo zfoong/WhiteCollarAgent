@@ -3,7 +3,6 @@ import os
 import sys
 import json
 import subprocess
-import platform
 import shutil
 import shlex
 import time
@@ -248,13 +247,17 @@ def setup_global_environment(requirements_file: str = REQUIREMENTS_FILE):
     print("✅ Pip install finished successfully.")
 
 # ==========================================
-# OPTIMIZED OMNIPARSER SETUP
+# OPTIMIZED OMNIPARSER SETUP (WITH GLOBAL FALLBACK)
 # ==========================================
 def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
-
     print("\n======================================")
     print(" Setting up OmniParser locally")
     print("======================================")
+
+    # Detect mode based on earlier checks
+    use_conda_omni = os.getenv('USE_CONDA') == "True"
+    mode_str = f"Conda Env '{OMNIPARSER_ENV_NAME}'" if use_conda_omni else "Global Python (Pip)"
+    print(f"ℹ️ OmniParser Installation Mode: {mode_str}")
 
     if not shutil.which("git"):
         print("❌ Error: 'git' is not installed or in the PATH. Cannot clone OmniParser.")
@@ -270,7 +273,40 @@ def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
     else:
         repo_path = os.path.abspath(repo_path)
 
-    # 1. Git Operations
+    # --------------------------------------------------------------------------
+    # NEW HELPER: Abstracted command execution for OmniParser context
+    # --------------------------------------------------------------------------
+    def run_omni_cmd(cmd_list: list[str], work_dir: str = repo_path, capture_output: bool = False, env_extras: Dict[str, str] = None):
+        """Runs a command either in the 'omni' conda env OR the global env based on mode."""
+        if use_conda_omni:
+            # Wraps command to run inside the 'omni' conda environment
+            full_cmd = ["conda", "run", "-n", OMNIPARSER_ENV_NAME] + cmd_list
+            run_command(full_cmd, cwd=work_dir, capture=capture_output, env_extras=env_extras)
+        else:
+            # Runs command globally, ensuring we use the current python interpreter
+            final_cmd = []
+            if cmd_list[0] == "python":
+                # Replace generic 'python' with the specific current interpreter path
+                final_cmd = [sys.executable] + cmd_list[1:]
+            elif cmd_list[0] == "pip":
+                 # Best practice for global pip installs: python -m pip
+                final_cmd = [sys.executable, "-m", "pip"] + cmd_list[1:]
+            else:
+                # Run other commands (like 'hf') directly
+                final_cmd = cmd_list
+            
+            # Ensure local bin paths (like where 'hf' might install) are in PATH for global mode
+            local_env = env_extras.copy() if env_extras else {}
+            if sys.platform != "win32":
+                 user_base = subprocess.run([sys.executable, "-m", "site", "--user-base"], capture_output=True, text=True).stdout.strip()
+                 local_bin = os.path.join(user_base, 'bin')
+                 local_env["PATH"] = f"{local_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+
+            run_command(final_cmd, cwd=work_dir, capture=capture_output, env_extras=local_env)
+    # --------------------------------------------------------------------------
+
+
+    # --- STEP 1: Git Operations ---
     print(f"\n--- STEP 1: Checking OmniParser Repository ({repo_path}) ---")
     if os.path.exists(repo_path):
         if not fast_mode:
@@ -295,48 +331,65 @@ def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
         print(f"\n⚠️ '--fast' specified but marker file not found. Forcing installation steps.")
 
     if installation_needed:
-        # 2. Conda Environment Creation ('omni')
-        print(f"\n--- STEP 2: Creating Conda Environment '{OMNIPARSER_ENV_NAME}' ---")
-        # Using 'create' will fail fast if it already exists, which is okay.
-        try:
-             run_command(["conda", "create", "-n", OMNIPARSER_ENV_NAME, "python=3.10", "-y"], capture=True)
-             print(f"✅ Environment created.")
-        except Exception:
-             print(f"ℹ️ Environment '{OMNIPARSER_ENV_NAME}' likely exists. Proceeding.")
-
-        # Helper for running commands in omni env
-        def run_in_omni(cmd: list[str], work_dir: str = repo_path):
-            full_cmd = ["conda", "run", "-n", OMNIPARSER_ENV_NAME] + cmd
-            run_command(full_cmd, cwd=work_dir, capture=False)
-
-        # 3. PyTorch Installation (SLOW)
-        print(f"\n--- STEP 3: Installing PyTorch and core dependencies (This takes time) ---")
-        if force_cpu:
-            print("MODE: CPU Only")
-            if sys.platform == "win32":
-                run_in_omni(["conda", "install", "pytorch", "torchvision", "torchaudio", "cpuonly", "-c", "pytorch", "-y"])
-            else: # Linux/Mac
-                run_in_omni(["conda", "install", "pytorch", "torchvision", "torchaudio", "cpuonly", "-c", "pytorch", "-y"])
+        # --- STEP 2: Environment Creation (Conda Only) ---
+        if use_conda_omni:
+            print(f"\n--- STEP 2: Creating Conda Environment '{OMNIPARSER_ENV_NAME}' ---")
+            # Using 'create' will fail fast if it already exists, which is okay.
+            try:
+                 run_command(["conda", "create", "-n", OMNIPARSER_ENV_NAME, "python=3.10", "-y"], capture=True)
+                 print(f"✅ Environment created.")
+            except Exception:
+                 print(f"ℹ️ Environment '{OMNIPARSER_ENV_NAME}' likely exists. Proceeding.")
         else:
-            print("MODE: GPU (Attempting CUDA 12.1 installation)")
-            run_in_omni(["conda", "install", "pytorch", "torchvision", "torchaudio", "pytorch-cuda=12.1", "-c", "pytorch", "-c", "nvidia", "-y"])
+             print(f"\n--- STEP 2: Skipping Conda Env creation (Using Global Pip) ---")
+             print(f"ℹ️ Installing packages directly into: {sys.executable}")
+             # Ensure pip is up to date globally first
+             run_omni_cmd(["pip", "install", "--upgrade", "pip"])
 
-        # 4. Pip Installations (SLOW)
-        print(f"\n--- STEP 4: Installing pip requirements ---")
-        run_in_omni(["pip", "install", "mkl==2024.0", "sympy==1.13.1", "transformers==4.51.0", "huggingface_hub[cli]", "hf_transfer"])
+
+        # --- STEP 3: PyTorch Installation (SLOW) ---
+        print(f"\n--- STEP 3: Installing PyTorch and core dependencies (This takes time) ---")
+        
+        if use_conda_omni:
+            # --- CONDA PYTORCH INSTALL ---
+            if force_cpu:
+                print("MODE: CPU Only (Conda)")
+                run_omni_cmd(["conda", "install", "pytorch", "torchvision", "torchaudio", "cpuonly", "-c", "pytorch", "-y"])
+            else:
+                print("MODE: GPU CUDA 12.1 (Conda)")
+                run_omni_cmd(["conda", "install", "pytorch", "torchvision", "torchaudio", "pytorch-cuda=12.1", "-c", "pytorch", "-c", "nvidia", "-y"])
+        else:
+            # --- PIP PYTORCH INSTALL (Global) ---
+            # Note: We use standard pip commands from pytorch.org URLs
+            if force_cpu:
+                print("MODE: CPU Only (Pip)")
+                # --extra-index-url is often safer than --index-url so standard packages aren't blocked
+                run_omni_cmd(["pip", "install", "torch", "torchvision", "torchaudio", "--extra-index-url", "https://download.pytorch.org/whl/cpu"])
+            else:
+                print("MODE: GPU CUDA 12.1 (Pip)")
+                # Using the cu121 index for CUDA 12.1 support matching the conda target
+                run_omni_cmd(["pip", "install", "torch", "torchvision", "torchaudio", "--extra-index-url", "https://download.pytorch.org/whl/cu121"])
+
+
+        # --- STEP 4: Pip Installations (SLOW) ---
+        print(f"\n--- STEP 4: Installing requirements ---")
+        # Note: mkl might not be strictly necessary for pip/global depending on how numpy/torch were built, but including for consistency.
+        deps_to_install = ["mkl==2024.0", "sympy==1.13.1", "transformers==4.51.0", "huggingface_hub[cli]", "hf_transfer"]
+        run_omni_cmd(["pip", "install"] + deps_to_install)
         
         req_txt_path = os.path.join(repo_path, "requirements.txt")
         if os.path.exists(req_txt_path):
-             run_in_omni(["pip", "install", "-r", "requirements.txt"])
+             print("Installing from requirements.txt...")
+             run_omni_cmd(["pip", "install", "-r", "requirements.txt"])
         else:
              print(f"⚠️ Warning: {req_txt_path} not found. Skipping.")
 
         # --- Create Marker File on Success ---
         print(f"✅ Installation steps complete. Creating marker file: {OMNIPARSER_MARKER_FILE}")
         with open(marker_path, 'w') as f:
-             f.write(f"Setup completed on {time.ctime()}\n")
+             f.write(f"Setup completed on {time.ctime()} using mode: {mode_str}\n")
 
-    # 5. Model Weights Download (Optimized by existence check)
+    # --- STEP 5: Model Weights Download (Optimized by existence check) ---
     print(f"\n--- STEP 5: Checking model weights ---")
     files_to_download = [
         {"file": "icon_detect/train_args.yaml", "local_path": "icon_detect/train_args.yaml"},
@@ -348,7 +401,6 @@ def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
     ]
     
     weights_dir = os.path.join(repo_path, "weights")
-    # Ensure destination dirs exist for the checks below
     os.makedirs(os.path.join(weights_dir, "icon_detect"), exist_ok=True)
     os.makedirs(os.path.join(weights_dir, "icon_caption_florence"), exist_ok=True)
 
@@ -356,17 +408,16 @@ def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
 
     for file_info in files_to_download:
         local_dest_path = os.path.join(weights_dir, file_info['local_path'])
-
-        # This check makes it fast on subsequent runs
         if os.path.exists(local_dest_path):
              continue
 
         print(f"Downloading missing file: {file_info['file']}")
-        # Download to base weights dir, then move later
-        full_download_cmd = ["conda", "run", "-n", OMNIPARSER_ENV_NAME, "hf", "download", "microsoft/OmniParser-v2.0", file_info['file'], "--local-dir", "weights"]
-        run_command(full_download_cmd, cwd=repo_path, env_extras=hf_env_extras, capture=True)
+        # Use the abstracted helper to run 'hf download'
+        # Note: In global mode, 'hf' must be in the PATH (installed by huggingface_hub[cli])
+        download_cmd = ["hf", "download", "microsoft/OmniParser-v2.0", file_info['file'], "--local-dir", "weights"]
+        run_omni_cmd(download_cmd, work_dir=repo_path, capture_output=True, env_extras=hf_env_extras)
 
-    # 6. File Rearrangement (Fast)
+    # --- STEP 6: File Rearrangement (Fast) ---
     print(f"\n--- STEP 6: Finalizing Setup ---")
     src_caption_dir = os.path.join(weights_dir, "icon_caption")
     dst_caption_dir = os.path.join(weights_dir, "icon_caption_florence")
@@ -377,11 +428,16 @@ def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
         shutil.move(src_caption_dir, dst_caption_dir)
         print(f"Moved weights/icon_caption to weights/icon_caption_florence")
 
-    # 7. Launch Server
+    # --- STEP 7: Launch Server ---
     print("\n-------------------------------------------------")
-    print("🚀 Launching Gradio Demo in background...")
-    # Add -u for unbuffered output so we see it start up
-    run_gradio_command = ["conda", "run", "-n", OMNIPARSER_ENV_NAME, "python", "-u", "-m", "gradio_demo"]
+    print(f"🚀 Launching Gradio Demo ({mode_str}) in background...")
+    
+    # Prepare the launch command based on the mode
+    if use_conda_omni:
+        run_gradio_command = ["conda", "run", "-n", OMNIPARSER_ENV_NAME, "python", "-u", "-m", "gradio_demo"]
+    else:
+        # Global mode: use the current executable directly
+        run_gradio_command = [sys.executable, "-u", "-m", "gradio_demo"]
     
     # Launch in background so we can check its health
     launch_background_command(run_gradio_command, cwd=repo_path, silence_output=False)
@@ -395,7 +451,6 @@ def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
     else:
          print("\n❌ CRITICAL ERROR: OmniParser server failed to start.")
          print("Please check the console output above for errors from the background process.")
-         # Exit the script because the critical dependency failed.
          sys.exit(1)
 
 # =========================================
