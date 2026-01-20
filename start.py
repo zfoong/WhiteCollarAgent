@@ -471,11 +471,13 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
     print(f"🚀 Setting up launch command for OS: {current_os}")
     print("-------------------------------------------------")
 
+    # Variable to hold the running subprocess handle
+    process: Optional[subprocess.Popen] = None
+
     # === Windows Implementation ===
     if current_os == "win32":
-        def _escape_for_cmd_k(s: str) -> str:
-            # We are embedding the command inside: cmd /k " ... "
-            # Any internal " must be escaped so they don't terminate the outer string.
+        def _escape_for_cmd(s: str) -> str:
+            # We are embedding the command inside: cmd /c " ... "
             return s.replace('"', '^"')
         
         if conda_env_name and os.getenv('USE_CONDA') == "True":
@@ -483,16 +485,20 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
         else:
             cmd_list = [sys.executable, "-u", abs_main_script_path] + pass_through_args
 
+
         cmd_string = subprocess.list2cmdline(cmd_list)     # Windows-safe quoting
         cmd_string = _escape_for_cmd_k(cmd_string)         # Safe inside cmd /k "..."
+
+        # CHANGED FOR BLOCKING:
+        # 1. Removed 'start "" /MAX'. Running 'cmd /c' directly makes it a child process we can wait on.
+        # 2. 'pause' ensures the window stays open until user input.
+        launch_cmd = f'cmd /c "set PYTHONUNBUFFERED=1 && {cmd_string} && echo. && pause"'
         
-        print({cmd_string})
+        print("ℹ️ Launching Windows command prompt...")
+        # Use shell=True so cmd /c interprets the string correctly.
+        process = subprocess.Popen(launch_cmd, shell=True)
 
-        # Also add an explicit empty window title: start "" ...
-        launch_cmd = f'start "" /MAX cmd /k "set PYTHONUNBUFFERED=1 && {cmd_string}"'
-        subprocess.Popen(launch_cmd, shell=True)
-
-    # === Linux & macOS Implementation (The "Activate then Run" strategy) ===
+    # === Linux & macOS Implementation ===
     else:
         python_cmd_string = shlex.join(["python", "-u", abs_main_script_path] + pass_through_args)
         shell_commands = []
@@ -505,43 +511,64 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
             conda_sh_path = os.path.join(conda_base_path, "etc", "profile.d", "conda.sh")
             if os.path.exists(conda_sh_path):
                 shell_commands.append(f". '{conda_sh_path}'")
-                shell_commands.append(f"conda activate '{conda_env_name}'")
-            else:
-                 print(f"⚠️ Warning: Could not find conda.sh at {conda_sh_path}. Trying fallback activation method.")
-                 shell_commands.append(f"conda activate '{conda_env_name}'")
+            shell_commands.append(f"conda activate '{conda_env_name}' || echo '⚠️ Conda activation failed, attempting to run in current env...'")
         else:
              print("ℹ️ Using global python environment.")
 
         shell_commands.append('echo "--- Launching main.py ---"')
-        shell_commands.append(f"{python_cmd_string} || echo '\n❌ Process exited with error code $?'")
+        shell_commands.append(python_cmd_string)
+        shell_commands.append('APP_EXIT_CODE=$?')
+        shell_commands.append('if [ $APP_EXIT_CODE -ne 0 ]; then echo -e "\n❌ Process exited with error code $APP_EXIT_CODE"; fi')
         shell_commands.append('echo "\n--- Session Finished ---"')
 
         full_shell_cmd_string = "; ".join(shell_commands)
 
         if current_os == "darwin":
+            # NOTE: macOS AppleScript launch is inherently asynchronous.
+            # It is very difficult to block this Python script until the macOS Terminal window closes.
+            # This part will launch the window and continue immediately.
+            print("ℹ️ Launching macOS Terminal...")
             applescript = f'tell application "Terminal" to do script "{full_shell_cmd_string}" activate'
-            subprocess.run(["osascript", "-e", applescript])
+            subprocess.run(["osascript", "-e", applescript], check=True)
+            print("⚠️ Note on macOS: This setup script will exit while the new Terminal window remains open.")
 
         elif current_os.startswith("linux"):
             terminals = [
-                ("gnome-terminal", "--", "--maximize"),
-                ("konsole", "-e", "--maximize"),
-                ("xfce4-terminal", "-x", "--maximize"),
-                ("terminator", "-x", "-m"),
+                # term_bin, exec_flag, list_of_extra_flags
+                ("gnome-terminal", "--", ["--wait", "--maximize"]),
+                ("konsole", "-e", ["--nofork", "--maximize"]),
+                ("xfce4-terminal", "-x", ["--disable-server", "--maximize"]),
+                ("terminator", "-x", ["-u", "-m"]),
+                ("xterm", "-e", []), 
             ]
             terminal_found = False
-            for term_bin, exec_flag, max_flag in terminals:
+            for term_bin, exec_flag, extra_flags in terminals:
                 if shutil.which(term_bin):
                     print(f"✅ Found terminal emulator: {term_bin}")
-                    launch_cmd = [term_bin, max_flag, exec_flag, "bash", "-l", "-i", "-c", full_shell_cmd_string]
-                    subprocess.Popen(launch_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    
+                    cmd_args = [term_bin]
+                    cmd_args.extend(extra_flags)
+                    cmd_args.extend([exec_flag, "bash", "-l", "-i", "-c", full_shell_cmd_string])
+                    
+                    # Redirect stdout/stderr to avoid cluttering this script's output.
+                    process = subprocess.Popen(cmd_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     terminal_found = True
                     break
             if not terminal_found:
                 print("\n❌ Error: Could not find a supported terminal emulator.")
                 sys.exit(1)
 
-    print("✅ New terminal launched. Setup script exiting.")
+    # === Final Wait Block ===
+    if process:
+        print("\n⏳ Waiting for the newly launched terminal window to close...")
+        print("(If the new window is stuck open, press Enter inside it first)")
+        try:
+            # This line blocks this script until the launched terminal process finishes.
+            process.wait()
+        except KeyboardInterrupt:
+            print("\n[!] Setup script interrupted by user. The external terminal may still be open.")
+    
+    print("✅ Setup script finished.")
     sys.exit(0)
 
 # --- Main Execution ---
