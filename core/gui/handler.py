@@ -1,9 +1,13 @@
 import subprocess
-import sys
 import json
-import inspect
 import time
-from typing import Optional, Tuple, Dict, Any, Union
+import io
+from typing import Optional, Tuple, Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.gui.gui_module import GUIModule
+    
+from core.state.agent_state import STATE
 
 # Adjust import path as needed for your project structure
 try:
@@ -19,29 +23,69 @@ class GUIHandler:
     Supports retrieving screenshots (bytes) and executing actions (dict).
     """
 
-    # REPLACE with your container name
+    # Class attribute that can be set externally to avoid circular dependency
+    gui_module: Optional["GUIModule"] = None
+
+    # Default container name (can be overridden per instance)
     TARGET_CONTAINER = "simple-agent-desktop"
 
-    # Name of the Python package required for Linux screen capture
-    _LINUX_REQUIRED_PKG = "Pillow"
+    # Name of the Python packages required for Linux screen capture
+    _LINUX_REQUIRED_PKG = "mss Pillow"
+    
+    # Magic exit code used by Linux screenshot payload to indicate missing package
+    _EXIT_CODE_MISSING_PACKAGE = 10
+    
+    # PNG file signature (first 4 bytes of a PNG file)
+    _PNG_SIGNATURE = b'\x89PNG'
 
     # --- Linux Screenshot Payload (Python) ---
     _LINUX_SCREENSHOT_PAYLOAD = """
 import sys, io, os
-if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":1"
+if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":0"
 try:
-    from PIL import ImageGrab
+    import mss
+    from PIL import Image
 except ImportError:
-    sys.exit(10) # Magic exit code for missing package
+    sys.exit(10)  # Exit code 10 indicates missing package (handled by handler)
 try:
-    img = ImageGrab.grab()
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format='PNG')
-    sys.stdout.buffer.write(img_bytes.getvalue())
-    sys.stdout.flush()
+    with mss.mss() as sct:
+        # Capture the full virtual desktop (monitor 0 is the entire virtual screen)
+        mon = sct.monitors[0]
+        shot = sct.grab(mon)
+        img = Image.frombytes('RGB', shot.size, shot.rgb)
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG')
+        sys.stdout.buffer.write(img_bytes.getvalue())
+        sys.stdout.flush()
 except Exception as e:
     sys.stderr.write(f"AGENT_ERROR: {e}")
     sys.exit(1)
+"""
+
+    # --- Windows Screenshot Payload (PowerShell) ---
+    _WINDOWS_SCREENSHOT_PAYLOAD = r"""
+try {
+    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+    Add-Type -AssemblyName System.Drawing | Out-Null
+    # Get all screens to calculate the full virtual desktop bounds
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    $left = ($screens | Measure-Object -Property Bounds.Left -Minimum).Minimum
+    $top = ($screens | Measure-Object -Property Bounds.Top -Minimum).Minimum
+    $right = ($screens | Measure-Object -Property Bounds.Right -Maximum).Maximum
+    $bottom = ($screens | Measure-Object -Property Bounds.Bottom -Maximum).Maximum
+    $width = $right - $left
+    $height = $bottom - $top
+    $bitmap = New-Object System.Drawing.Bitmap $width, $height
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    # Copy from the top-left of the virtual desktop
+    $graphics.CopyFromScreen($left, $top, 0, 0, $bitmap.Size)
+    $ms = New-Object System.IO.MemoryStream
+    $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    [Console]::OpenStandardOutput().Write($ms.ToArray(), 0, $ms.Length)
+} catch {
+    $host.ui.WriteErrorLine("AGENT_ERROR: " + $_.Exception.Message)
+    exit 1
+}
 """
 
     # ==========================
@@ -52,7 +96,7 @@ except Exception as e:
     def get_screen_state(cls, container_id: str, debug: bool = False) -> bytes:
         """
         Injects an agent script into the specified Docker container to take
-        a screenshot and streams the raw PNG bytes back.
+        a screenshot and streams the raw PNG bytes back with a 10x10 pixel grid overlay.
         """
         logger.debug(f"[GUIHandler] Initiating screen capture for '{container_id}' (debug={debug})...")
         os_type = cls._detect_os(container_id)
@@ -78,12 +122,18 @@ except Exception as e:
         return img_bytes
 
     @classmethod
-    def execute_action(cls, container_id: str, action_code: str, input_data: dict) -> Dict[str, Any]:
+    def execute_action(cls, container_id: str, action_code: str, input_data: dict, mode: str) -> Dict[str, Any]:
         """
         Executes an action inside the container.
         Returns a dictionary parsed from the action's JSON stdout.
         """
         logger.debug(f"[GUIHandler] Executing action on container '{container_id}'...")
+        if mode == "GUI" and not STATE.gui_mode:
+            return {
+                "status": "error",
+                "message": f"{mode} mode is not enabled",
+            }
+
         os_type = cls._detect_os(container_id)
         
         # We wrap the raw action code in a script that handles data injection,
@@ -123,8 +173,9 @@ except Exception as e:
             cls._LINUX_SCREENSHOT_PAYLOAD.encode()
         )
 
-        if code == 10:
-            logger.debug(f"[GUIHandler] Missing package: '{cls._LINUX_REQUIRED_PKG}'. Installing...")
+        if code == cls._EXIT_CODE_MISSING_PACKAGE:
+            logger.debug(f"[GUIHandler] Missing package(s): '{cls._LINUX_REQUIRED_PKG}'. Installing...")
+            # Install all required packages at once
             cls._install_linux_package(container_id, cls._LINUX_REQUIRED_PKG)
             logger.debug("[GUIHandler] Retrying capture after installation...")
             stdout, stderr, code = cls._run_docker_exec(
@@ -146,7 +197,6 @@ except Exception as e:
             cls._WINDOWS_SCREENSHOT_PAYLOAD.encode()
         )
         return cls._validate_screenshot_output(stdout, stderr, code)
-
 
     # ==========================
     # Internal Helpers & Validators
@@ -241,7 +291,7 @@ except Exception as e:
         if not stdout:
              raise RuntimeError("Agent finished successfully but returned zero data bytes.")
 
-        if not stdout.startswith(b'\x89PNG'):
+        if not stdout.startswith(cls._PNG_SIGNATURE):
              raise RuntimeError("Data returned by agent is not valid PNG format.")
 
         logger.debug(f"[GUIHandler] Successfully retrieved {len(stdout)} bytes of image data.")
@@ -288,9 +338,10 @@ except Exception as e:
 
     @classmethod
     def _install_linux_package(cls, container_id: str, pkg_name: str):
-        """Runs pip install inside the Linux container."""
+        """Runs pip install inside the Linux container. Can handle space-separated package names."""
+        packages = pkg_name.split()  # Split space-separated packages
         logger.debug(f"[GUIHandler] Installing '{pkg_name}' in container '{container_id}'...")
-        cmd = ["python3", "-m", "pip", "install", "--quiet", pkg_name]
+        cmd = ["python3", "-m", "pip", "install", "--quiet"] + packages
         # Note: Using _run_docker_exec without stdin_data
         stdout, stderr, code = cls._run_docker_exec(container_id, cmd, stdin_data=None)
         

@@ -330,6 +330,7 @@ class TaskManager:
         await self._ensure_and_log_current_step(wf)
         self.db_interface.log_task(wf)
         self._sync_state_manager(wf)
+        logger.info(f"[TASK MANAGER] Current step index: {new_current.step_index}")
         STATE.set_agent_property("current_step_index", new_current.step_index)
         return {"status": "queued", "step": new_current.step_name}
 

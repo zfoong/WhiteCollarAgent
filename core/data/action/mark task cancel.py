@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="mark task cancel",
         description="End the current task for this session as CANCELLED. Use this when the user aborts the task.",
         default=True,
+        mode="CLI",
         input_schema={
                 "reason": {
                         "type": "string",

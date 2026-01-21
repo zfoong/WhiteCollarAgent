@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="create and run python script",
     description="This action takes a single Python code snippet as input and executes it in a fresh environment. Missing packages are automatically detected and installed when ImportError occurs. This action is intended for cases when the AI agent needs to create a one-off solution dynamically.",
     execution_mode="sandboxed",
+    mode="CLI",
     default=True,
     input_schema={
         "code": {

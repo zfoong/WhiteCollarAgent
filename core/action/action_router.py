@@ -213,8 +213,7 @@ class ActionRouter:
         raise ValueError("Invalid selected action returned by LLM after retries.")
 
     async def select_action_in_GUI(
-        self,
-        image_bytes, 
+        self, 
         query: str,
         action_type: Optional[str] = None,
         GUI_mode=False,
@@ -248,24 +247,8 @@ class ActionRouter:
         # List of filtered default actions when creating task
         ignore_actions = ["create and start task", "ignore"]
     
-        # Retrieve default actions (could be multiple)
-        default_actions = self.action_library.retrieve_default_action()
-    
-        for act in default_actions:
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
         # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=5)
+        candidate_names = self.action_library.search_action(query, top_k=50)
         logger.info(f"ActionRouter found candidate actions: {candidate_names}")
         for name in candidate_names:
             act = self.action_library.retrieve_action(name)
@@ -296,7 +279,7 @@ class ActionRouter:
 
         max_retries = 3
         for attempt in range(max_retries):
-            decision = await self._prompt_for_decision_gui(image_bytes, prompt, is_task=True)
+            decision = await self._prompt_for_decision_gui(prompt=prompt, is_task=True)
 
             selected_action_name = decision.get("action_name", "")
             if selected_action_name == "":
@@ -325,7 +308,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": True, "policy": False},
+                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": not is_task, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             decision, parse_error = self._parse_action_decision(raw_response)
@@ -346,20 +329,22 @@ class ActionRouter:
             raise last_error
         raise ValueError("Unable to parse LLM decision")
         
-    async def _prompt_for_decision_gui(self, image_bytes, prompt: str, is_task: bool = False) -> Dict[str, Any]:
+    async def _prompt_for_decision_gui(self, prompt: str = "", image_bytes: Optional[bytes] = None, is_task: bool = False) -> Dict[str, Any]:
         max_retries = 3
         last_error: Optional[Exception] = None
-        current_prompt = prompt
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": True, "policy": False},
+                system_flags={"role_info": not is_task, "agent_info": not is_task, "conversation_history": not is_task, "event_stream": False, "gui_event_stream": not is_task, "task_state": not is_task, "policy": False},
             )
-            raw_response = await self.vlm_interface.generate_response_async(
-                image_bytes,
-                system_prompt=system_prompt,
-                user_prompt=prompt,
-            ) 
+            if image_bytes:
+                raw_response = await self.vlm_interface.generate_response_async(
+                    image_bytes,
+                    system_prompt=system_prompt,
+                    user_prompt=prompt,
+                ) 
+            else:
+                raw_response = await self.llm_interface.generate_response_async(system_prompt, prompt)
             decision, parse_error = self._parse_action_decision(raw_response)
             if decision is not None:
                 decision.setdefault("parameters", {})

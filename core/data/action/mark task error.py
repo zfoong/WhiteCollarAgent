@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="mark task error",
         description="End the current task for this session as ERROR. Use this if the task is stuck, impossible to complete, or encountered a fatal error.",
         default=True,
+        mode="CLI",
         input_schema={
                 "message": {
                         "type": "string",

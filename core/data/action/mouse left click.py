@@ -52,7 +52,7 @@ from core.action.action_framework.registry import action
         }
 )
 def mouse_left_click(input_data: dict) -> dict:
-    import json, sys, subprocess, importlib
+    import json, sys, subprocess, importlib, time
 
     # Ensure dependency
     pkg = 'pyautogui'
@@ -68,7 +68,10 @@ def mouse_left_click(input_data: dict) -> dict:
 
     try:
         pos_x, pos_y = (x, y) if x is not None and y is not None else pyautogui.position()
-        pyautogui.click(x=pos_x, y=pos_y, button='left')
-        return {'status': 'success', 'position': {'x': pos_x, 'y': pos_y}, 'message': ''}
+        pyautogui.moveTo(int(pos_x), int(pos_y), duration=0.25)
+        time.sleep(0.25)
+        new_pos_x, new_pos_y = pyautogui.position()
+        pyautogui.click(x=new_pos_x, y=new_pos_y, button='left')
+        return {'status': 'success', 'position': {'x': new_pos_x, 'y': new_pos_y}, 'message': ''}
     except Exception as e:
         return {'status': 'error', 'position': {}, 'message': str(e)}

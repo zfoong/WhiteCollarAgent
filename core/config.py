@@ -4,7 +4,6 @@ Root config for base agent, should be overwrite by specialise agent
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional
 
 def get_project_root() -> Path:
     """Get the project root directory"""

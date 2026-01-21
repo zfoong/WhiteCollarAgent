@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="convert to pdf",
     description="Converts a .txt, .md, or .docx file into a PDF using Pandoc (xelatex backend) and saves it at the specified location. Validates dependencies first.",
     platforms=["linux"],
+    mode="CLI",
     input_schema={
         "input_file": {
             "type": "string",
@@ -126,6 +127,7 @@ def convert_to_pdf_linux(input_data: dict) -> dict:
     name="convert to pdf",
     description="Converts a .txt, .md, or .docx file into a PDF using Pandoc (xelatex backend) and saves it at the specified location. Validates dependencies first.",
     platforms=["windows"],
+    mode="CLI",
     input_schema={
         "input_file": {
             "type": "string",
@@ -239,6 +241,7 @@ def convert_to_pdf_windows(input_data: dict) -> dict:
     name="convert to pdf",
     description="Converts a .txt, .md, or .docx file into a PDF using Pandoc (xelatex backend) and saves it at the specified location. Validates dependencies first.",
     platforms=["darwin"],
+    mode="CLI",
     input_schema={
         "input_file": {
             "type": "string",

@@ -12,6 +12,7 @@ white_collar_agent/generated_task_document/
 **/rag_docs_actions/
 **/rag_docs_taskdocs/
 ollama_data/
+config.json
 node_modules
 .env
 **/agent_logs.txt

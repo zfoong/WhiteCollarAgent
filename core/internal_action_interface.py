@@ -9,18 +9,14 @@ from typing import Dict, Any, Optional
 from core.llm_interface import LLMInterface
 from core.vlm_interface import VLMInterface
 from core.task.task_manager import TaskManager
+from core.task.task import Task
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from datetime import datetime
 from core.logger import logger
 from pathlib import Path
 from core.config import AGENT_WORKSPACE_ROOT
-import asyncio
 import mss, mss.tools, os
-import shutil
-import urllib.request
-from urllib.parse import urlparse
-from uuid import uuid4
 
 class InternalActionInterface:
     """
