@@ -40,7 +40,10 @@ class GUIModule:
         #  CONFIG
         # ==================================
         omniparser_base_url: str = os.getenv("OMNIPARSER_BASE_URL", "http://127.0.0.1:7861")
-        self.can_use_omniparser: bool = os.getenv("USE_OMNIPARSER", "False") == "True" and omniparser_base_url
+        
+        self.can_use_omniparser: bool = (os.getenv("USE_OMNIPARSER", "False") == "True") and (omniparser_base_url is not None)
+        logger.info(f"[can_use_omniparser]: {self.can_use_omniparser}")
+        
         if self.can_use_omniparser:
             self.gradio_client: Client | None = Client(omniparser_base_url)
         else:
