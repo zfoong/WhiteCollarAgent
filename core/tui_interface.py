@@ -106,6 +106,8 @@ class _ConversationLog(_BaseLog):
         self._entry_keys: dict[str, int] = {}
         # Store plain text for each entry for copy functionality
         self._text_content: list[str] = []
+        # Track line ranges for each message entry (start_line, end_line)
+        self._line_ranges: list[Tuple[int, int]] = []
 
     def append_text(self, content) -> None:
         # Normalize to Rich Text, enable folding of long tokens
@@ -128,7 +130,14 @@ class _ConversationLog(_BaseLog):
         text_content = self._extract_text(renderable)
         self._text_content.append(text_content)
 
+        # Track the line range before writing
+        start_line = len(self.lines)
+
         self.write(renderable, expand=True, shrink=True)
+
+        # Track the line range after writing
+        end_line = len(self.lines) - 1
+        self._line_ranges.append((start_line, end_line))
 
     def update_renderable(self, entry_key: str, renderable: RenderableType) -> None:
         """Update an existing entry by key."""
@@ -146,6 +155,7 @@ class _ConversationLog(_BaseLog):
         self._history.clear()
         self._entry_keys.clear()
         self._text_content.clear()
+        self._line_ranges.clear()
         super().clear()
 
     def _reflow_history(self) -> None:
@@ -156,8 +166,14 @@ class _ConversationLog(_BaseLog):
 
         history = list(self._history)
         super().clear()
+
+        # Rebuild line ranges as we reflow
+        self._line_ranges.clear()
         for renderable in history:
+            start_line = len(self.lines)
             self.write(renderable, expand=True, shrink=True)
+            end_line = len(self.lines) - 1
+            self._line_ranges.append((start_line, end_line))
 
     def _extract_text(self, renderable: RenderableType) -> str:
         """Extract plain text from a renderable object, excluding labels."""
@@ -202,24 +218,16 @@ class _ConversationLog(_BaseLog):
             # Fallback: try to convert to string
             return str(renderable)
 
-    def _get_line_at_y(self, y: int) -> Optional[int]:
-        """Get the line index at the given y coordinate."""
-        # RichLog doesn't expose line mapping directly, so we approximate
-        # based on the number of lines rendered
-        if not self._text_content:
+    def _get_message_at_line(self, line_number: int) -> Optional[int]:
+        """Get the message index for a given line number."""
+        if not self._line_ranges:
             return None
 
-        # Estimate which entry was clicked based on y position
-        # This is approximate since we don't have exact line-to-entry mapping
-        lines = self.lines
-        if lines and 0 <= y < len(lines):
-            # Map y coordinate to entry index
-            # Each entry might span multiple lines, so we need to be approximate
-            entries_count = len(self._text_content)
-            if entries_count > 0:
-                # Simple heuristic: divide the visible area by number of entries
-                entry_index = min(y * entries_count // max(len(lines), 1), entries_count - 1)
-                return entry_index
+        # Find which message contains this line number
+        for msg_index, (start_line, end_line) in enumerate(self._line_ranges):
+            if start_line <= line_number <= end_line:
+                return msg_index
+
         return None
 
     def on_click(self, event: events.Click) -> None:
@@ -228,17 +236,18 @@ class _ConversationLog(_BaseLog):
         for menu in self.app.query("_ContextMenu"):
             menu.remove()
 
-        # Try to find which entry was clicked
-        clicked_index = self._get_line_at_y(event.y)
+        # Calculate the actual line number accounting for scroll offset
+        # event.y is relative to the widget, we need to add scroll offset
+        clicked_y = event.y + self.scroll_offset.y
+
+        # Find which message was clicked using line ranges
+        clicked_index = self._get_message_at_line(clicked_y)
 
         if clicked_index is not None and 0 <= clicked_index < len(self._text_content):
             text_to_copy = self._text_content[clicked_index]
         else:
-            # Fallback: use the most recent entry
-            if self._text_content:
-                text_to_copy = self._text_content[-1]
-            else:
-                return
+            # No valid message found at this position
+            return
 
         if text_to_copy.strip():
             # Create context menu at click position
