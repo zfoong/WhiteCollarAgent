@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from asyncio import Queue, QueueEmpty
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional, Tuple
@@ -171,7 +172,7 @@ class _CraftApp(App):
     #bottom-region {
         height: auto;
         border-top: solid #333333;
-        padding: 1;
+        padding: 0;
     }
 
     #status-bar {
@@ -181,11 +182,13 @@ class _CraftApp(App):
         overflow: hidden;
         text-style: bold;
         color: #dddddd;
+        padding: 0 1;
     }
 
     #chat-input {
         border: solid #444444;
         background: #1a1a1a;
+        margin: 0 1;
     }
 
     /* Menu layer */
@@ -300,7 +303,7 @@ class _CraftApp(App):
     show_menu = var(True)
     show_settings = var(False)
 
-    _STATUS_PREFIX = "Status: "
+    _STATUS_PREFIX = " "
     _STATUS_GAP = 4
     _STATUS_INITIAL_PAUSE = 6
 
@@ -644,6 +647,26 @@ class _CraftApp(App):
                     renderable = self._interface.format_action_entry(entry)
                     action_log.update_renderable(entry_key, renderable)
 
+        # Update status bar if agent is working (to animate the loading icon)
+        if self._interface._agent_state == "working":
+            new_status = self._interface._generate_status_message()
+            if new_status != self._status_message:
+                self._status_message = new_status
+                self._render_status()
+
+        # Check if we need to reset task_completed state to idle
+        if (self._interface._agent_state == "task_completed" and
+            self._interface._task_completed_time is not None):
+            elapsed = time.time() - self._interface._task_completed_time
+            if elapsed >= self._interface._reset_to_idle_delay:
+                self._interface._agent_state = "idle"
+                self._interface._task_completed_time = None
+                # Update status message
+                new_status = self._interface._generate_status_message()
+                if new_status != self._interface._status_message:
+                    self._interface._status_message = new_status
+                    self._interface.status_updates.put_nowait(new_status)
+
     def _render_status(self) -> None:
         status_bar = self.query_one("#status-bar", Static)
         width = status_bar.size.width or self.size.width or (
@@ -827,7 +850,7 @@ class TUIInterface:
         self._running: bool = False
         self._tracked_sessions: set[str] = set()
         self._seen_events: set[Tuple[str, str, str, str]] = set()
-        self._status_message: str = "Idle"
+        self._status_message: str = "Agent is idle"
         self._app: _CraftApp | None = None
         self._event_task: asyncio.Task[None] | None = None
 
@@ -841,6 +864,11 @@ class TUIInterface:
         self._current_task_name: Optional[str] = None
         self._task_action_entries: dict[str, _ActionEntry] = {}  # task/action name -> entry
         self._loading_frame_index: int = 0  # Current frame of loading animation
+
+        # Agent state tracking
+        self._agent_state: str = "idle"  # idle, working, waiting_for_user, task_completed
+        self._task_completed_time: Optional[float] = None  # Track when task completed for auto-reset
+        self._reset_to_idle_delay: float = 3.0  # Seconds to show "task completed" before resetting
 
         self._default_provider = default_provider
         self._default_api_key = default_api_key
@@ -928,7 +956,12 @@ class TUIInterface:
             return
 
         await self.chat_updates.put(("You", message, "user"))
-        await self.status_updates.put("Awaiting agent response…")
+
+        # Set state to working when user submits a message
+        self._agent_state = "working"
+        status = self._generate_status_message()
+        self._status_message = status
+        await self.status_updates.put(status)
 
         payload = {
             "text": message,
@@ -971,9 +1004,10 @@ class TUIInterface:
 
     async def _handle_exit_command(self) -> None:
         await self.chat_updates.put(("System", "Session terminated by user.", "system"))
-        await self.status_updates.put("Idle")
+        self._agent_state = "idle"
+        await self.status_updates.put("Agent is idle")
         await self.request_shutdown()
-        
+
     async def _handle_menu_command(self) -> None:
         # Switch UI back to menu layer if the app is running
         if self._app:
@@ -981,7 +1015,8 @@ class TUIInterface:
             self._app.show_menu = True
 
         await self.chat_updates.put(("System", "Returned to menu.", "system"))
-        await self.status_updates.put("Idle")
+        self._agent_state = "idle"
+        await self.status_updates.put("Agent is idle")
         
     async def _handle_help_command(self) -> None:
         help_text = self._build_help_text()
@@ -1054,7 +1089,9 @@ class TUIInterface:
         self.chat_updates = Queue()
         self.action_updates = Queue()
         self.status_updates = Queue()
-        self._status_message = "Idle"
+        self._agent_state = "idle"
+        self._status_message = "Agent is idle"
+        self._task_completed_time = None
         self._clear_display_logs()
         await self.status_updates.put(self._status_message)
 
@@ -1105,6 +1142,16 @@ class TUIInterface:
                     if display_text is not None:
                         await self.chat_updates.put((label, display_text, style))
 
+                    # Set agent state to waiting_for_user when agent sends a response
+                    if style == "agent" and display_text:
+                        # Check if this is the final agent response (not during a task)
+                        if not self._current_task_name and self._agent_state == "working":
+                            self._agent_state = "waiting_for_user"
+                            status = self._generate_status_message()
+                            if status != self._status_message:
+                                self._status_message = status
+                                await self.status_updates.put(status)
+
                 await asyncio.sleep(0.05)
 
         except asyncio.CancelledError:  # pragma: no cover
@@ -1117,6 +1164,7 @@ class TUIInterface:
         # Handle task start
         if kind == "task_start":
             self._current_task_name = message
+            self._agent_state = "working"
             entry = _ActionEntry(
                 kind=kind,
                 message=message,
@@ -1133,9 +1181,12 @@ class TUIInterface:
                 self._task_action_entries[entry_key].is_completed = True
                 await self.action_updates.put(_ActionUpdate(operation="update", entry_key=entry_key))
             self._current_task_name = None
+            self._agent_state = "task_completed"
+            self._task_completed_time = time.time()
 
         # Handle action start
         elif kind == "action_start":
+            self._agent_state = "working"
             entry = _ActionEntry(
                 kind=kind,
                 message=message,
@@ -1152,21 +1203,32 @@ class TUIInterface:
                 self._task_action_entries[entry_key].is_completed = True
                 await self.action_updates.put(_ActionUpdate(operation="update", entry_key=entry_key))
 
-        if style == "action":
-            status = self._derive_status(kind, message)
-            if status != self._status_message:
-                self._status_message = status
-                await self.status_updates.put(status)
+        # Update status based on current agent state
+        status = self._generate_status_message()
+        if status != self._status_message:
+            self._status_message = status
+            await self.status_updates.put(status)
 
-    def _derive_status(self, kind: str, message: str) -> str:
-        normalized = message.strip() or ""
-        if kind == "action_start":
-            return f"Running: {normalized or 'action in progress'}"
-        if kind == "action_end":
-            return f"Completed: {normalized or 'last action'}"
-        if kind == "action":
-            return normalized or "Action in progress"
-        return normalized or self._status_message or "Idle"
+    def _generate_status_message(self) -> str:
+        """Generate personalized status message based on agent state."""
+        loading_icon = _CraftApp._ICON_LOADING_FRAMES[self._loading_frame_index % len(_CraftApp._ICON_LOADING_FRAMES)]
+
+        if self._agent_state == "idle":
+            return "Agent is idle"
+        elif self._agent_state == "working":
+            if self._current_task_name:
+                return f"{loading_icon} Working on: {self._current_task_name}"
+            else:
+                return f"{loading_icon} Agent is working..."
+        elif self._agent_state == "waiting_for_user":
+            return "⏸ Waiting for your response"
+        elif self._agent_state == "task_completed":
+            if self._current_task_name:
+                return f"✓ Task completed!"
+            else:
+                return "✓ Task completed!"
+        else:
+            return "Agent is idle"
 
     def _format_labelled_entry(
         self,
