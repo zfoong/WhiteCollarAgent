@@ -231,14 +231,78 @@ Here are some general rules when selecting actions:
 - DO NOT use 'create and run python script' to chat/send message/report to the user. Use 'send message' action instead.
 - DO NOT exploit and use 'create and run python script', it is only meant to perform a small piece of atomic action, DO NOT use it to handle the entire step or task in one go.
 - Sometimes when an event is too long, its content will be externalized and save in a tmp folder. To read the event result, agent MUST use the 'grep' action to extract the context with keywords or use 'stream read' to read the content line by line in file. Perform this step until you understand the content of the file enough to utilize the content."
+- Select an action to perform as atomic an action as possible. If part of the goal can be achieved with an existing action, you should select the existing action instead of creating a new one.
 
 Important instructions you must follow:
 - The selected action MUST be inside the candidate list below. If none are suitable, set the action name to "" (empty string) so a new action can be created.
 - DO NOT SPAM the user. DO NOT repeat an action again and again after RETRYING. If the user does not respond to your question after a maximum of 2 tries, JUST SKIP IT.
 - DO NOT execute an action with the EXACT same input and output repeated. You NEED to recognize that you are stuck in a loop. When this happen, you MUST select other actions.
 - DO NOT assume the task is completed and use 'send message' to report that you have completed the task. This happens frequently as LLM received a task and use 'send message' action to reply that the task is completed, despite not doing anything.
+- DO NOT use the screen shot action to analyze the screen. Use the event stream to analyze the screen.
+- If goal is to move to next step, you MUST use the 'start next step' action to move on.
+- If goal is to complete the task, you MUST use the 'mark task completed' action to complete the task.
+- If goal is to abort the task, you MUST use the 'mark task error' action to abort the task.
+- If goal is to cancel the task, you MUST use the 'mark task cancel' action to cancel the task.
+- DO NOT perform more than one UI interaction at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
 - You must provide concrete parameter values that satisfy the selected action's input_schema. Use an empty object {{}} only when the schema requires no parameters.
 - Sometimes when an event is too long, its content will be externalized and save in a tmp folder. To read the event result, agent MUST use the 'grep' action to extract the context with keywords or use 'stream read' to read the content line by line in file. Perform this step until you understand the content of the file enough to utilize the content."
+- If the last step is complete and the agent is in GUI mode, you MUST switch to CLI mode. This is important to ensure the agent is in the correct mode before the task is completed.
+</rules>
+
+<allowed_action_names>
+You may only choose from these action names:
+{action_name_candidates}
+</allowed_action_names>
+
+<output_format>
+Return ONLY a valid JSON object with this structure and no extra commentary:
+{{
+  "action_name": "<name of the chosen action, or empty string if none apply>",
+  "parameters": {{
+    "<parameter name>": <value>,
+    "...": <value>
+  }}
+}}
+</output_format>
+
+<notes>
+- Provide every required parameter for the chosen action, respecting each field's type, description, and example.
+- Keep parameter values concise and directly useful for execution.
+- Always use double quotes around strings so the JSON is valid.
+- DO NOT return empty response. When encounter issue (), return 'send message' to inform user.
+</notes>
+"""
+
+SELECT_ACTION_IN_GUI_PROMPT = """
+<objective>
+You are a GUI agent. You are given a goal and your event stream, with screenshots. You need to perform the next action to complete the task.
+Here is your goal:
+{query}
+
+Your job is to select the next GUI action and provide the input parameters so it can be executed immediately.
+</objective>
+
+<reasoning>
+Here is your reasoning of the current step:
+{reasoning}
+</reasoning>
+
+<actions>
+This is the list of action candidates, each including descriptions and input schema:
+{action_candidates}
+</actions>
+
+<rules>
+Here are some general rules when selecting actions:
+- Select the appropriate action according to the given task.
+- This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.
+- Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try wait and taking another screenshot.
+- Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.
+- If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.
+- Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
+- use 'send message' when you want to communitcate or report to the user.
+- If goal is to move to next step, you MUST use the 'start next step' action to move on.
+- If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </rules>
 
 <allowed_action_names>
@@ -486,212 +550,11 @@ ENVIRONMENTAL_CONTEXT_PROMPT = """
 <agent_environment>
 - Current Time: {current_time} ({timezone})
 - User Location: {user_location}
+- Operating System: {operating_system} {os_version} ({os_platform})
+- VM Operating System: {vm_operating_system} {vm_os_version} ({vm_os_platform})
+- VM's screen resolution (GUI mode): {vm_resolution}
 - Your sandbox and working directory, please save and access your files and folder here: {working_directory}. All files MUST be saved INSIDE the working directory, not outside.
 </agent_environment>
-"""
-
-# --- Self Initiative ---
-
-# --- Vlm Interface ---
-UI_ELEMS_SYS_PROMPT = """
-<objective>
-You are a precise, deterministic UI analyzer. Your ONLY job is to extract visible, actionable UI controls from a single desktop/app screenshot and output ONE strict JSON object that conforms exactly to the schema provided in the user message.
-</objective>
-
-<methods>
-Core principles
-- Actionable = a user can click/tap/focus it to cause an action, navigation, or state change.
-- Include ONLY what is clearly visible. Do not invent off-screen/hidden elements. Do not add fields not in the schema.
-- Prefer fewer, high-confidence elements over noisy lists. Deduplicate overlapping detections into a single primary hit target.
-- Confidence is in [0,1]: ≥0.90 unambiguous, 0.60–0.89 likely, <0.60 plausible but uncertain.
-
-Element taxonomy (role)
-button | link | textbox | icon | menuitem | tab | checkbox | radiobutton | dropdown | row | header | other
-- button: CTAs, icon buttons, chips that trigger actions.
-- link: navigational text/image links.
-- textbox: single-line inputs and search bars; multiline is still “textbox”.
-- icon: a standalone clickable icon (close, gear, info, bell).
-- menuitem: items inside menus/context/overflow.
-- tab: the clickable tab label.
-- checkbox/radiobutton: respective controls (selected reflects checked).
-- dropdown: collapsed select/combo; menu contents are “menuitem”.
-- row: list/table rows that navigate or act.
-- header: column headers with sort/interaction affordance.
-- other: only if none above apply.
-
-Bounding boxes & coordinates
-- Pixel coordinates relative to full screenshot: origin (0,0) top-left.
-- bbox = {{x,y,w,h}} are non-negative integers; w>0, h>0. Box the full clickable hit area (icon+label together if they share one target).
-
-States
-- state.enabled: true unless clearly disabled (reduced opacity + no press/hover affordance).
-- state.selected: true for active tab, checked box/radio, toggled button, selected row/header.
-
-CONTEXT-RICH LABELING (MANDATORY)
-Goal: Produce labels that remain unambiguous even when read out of context. Build each label ONLY from visible cues. Never invent semantics beyond what is on-screen.
-
-Anchor sources (use the nearest that are visible; prefer in this order):
-1) Immediate container title: dialog/drawer title, card/panel/section header.
-2) Page-level anchor: page title, breadcrumb, app area (e.g., “Settings”, “Analytics”).
-3) Local group title: toolbar name, form name, filter group, table title.
-4) Object instance identifiers near the element: key cell content (Name/ID), product title, user name, project/service name.
-5) Visible control state/value: selected tab/header, dropdown current value, toggle on/off, unread counts, filter chips, sort direction.
-
-Label construction rules
-- Start with the element’s role and visible text (if any). If no text, use a concise function name (e.g., “Close icon”, “Search icon”).
-- Add the nearest visible container/object context using prepositions to clarify relationships:
-  • “… in dialog ‘…’ / drawer ‘…’ / panel ‘…’ / section ‘…’ / toolbar ‘…’ / table ‘…’ / card ‘…’ / footer ‘…’ / sidebar ‘…’”
-  • For table/list rows, include the table/list title and the row’s key identifying cells.
-- Include object type/instance ONLY if literally visible (e.g., “table ‘Projects’”, “service ‘payments-api’”, “order ‘#100234’”).
-- Include salient visible state/value if helpful: “(sorted ascending)”, “(value: Staging)”, “(selected)”, “(unread: 3)”, “(filter: active)”.
-- Keep the label compact but fully informative. Aim ≤ 160 characters; prefer clarity over brevity if a conflict arises.
-- Examples of good structure:
-  • “Button ‘New’ in panel ‘Events’ on page ‘Calendar’”
-  • “Dropdown ‘Environment’ (value: Staging) in toolbar ‘Deployments’ for service ‘payments-api’”
-  • “Row ‘Order #100234’ (Customer: J. Rivera, Total: $129.00) in table ‘Recent orders’”
-</methods>
-
-<output_format>
-- Output EXACTLY one JSON object; no prose, comments, markdown, or extra fields.
-- Use unique, short, stable ids (e.g., “btn-new-events”, “tab-settings”, “hdr-status-builds”, “row-order-100234”).
-</output_format>
-"""
-
-UI_ELEMS_USER_PROMPT = """
-<objective>
-Extract all visible, actionable UI elements from the screenshot and return STRICT JSON ONLY in the exact schema below. No prose. No code fences. No extra fields.
-</objective>
-
-<methods>
-1) Identify actionable controls (see taxonomy in system prompt). Exclude decorative/non-interactive items (plain text, static images, backgrounds).
-2) Deduplicate overlapping candidates into one primary hit target (choose the most complete clickable container).
-3) Determine contextual anchors:
-   a) Immediate container title (dialog, drawer, panel, section, card).
-   b) Page-level anchor (page title, breadcrumb, app area).
-   c) Local group title (toolbar name, form name, filter group, table/list title).
-   d) Object instance identifiers (row key cells, product/user/project names, IDs).
-   e) Visible state/value (selected, sort direction, filter chips, current dropdown value, unread counts).
-4) Construct a context-rich label using ONLY what is visible:
-   - If element has text: "Role ‘<visible text>’ <relationship> ‘<nearest context>’ [additional anchors/state]".
-   - If no text: "<Role/function> <relationship> ‘<nearest context>’ [additional anchors/state]".
-   - For rows: "Row ‘<primary cell or id>’ (<key cells>) in table/list ‘<title>’".
-   - For headers: "Header ‘<name>’ in table ‘<title>’ (sorted ascending|descending)" when an arrow/affordance shows it.
-   - For dropdowns: include current value if visible: "(value: <value>)".
-   - For textboxes: include placeholder/label and higher-level context (form/dialog/page).
-   - Never infer invisible intent (e.g., “creates a new …”) unless the noun is explicitly present nearby.
-5) Populate required fields:
-   - role: one of button|link|textbox|icon|menuitem|tab|checkbox|radiobutton|dropdown|row|header|other
-   - label: the context-rich label built above (≤ 160 chars preferred).
-   - bbox: {{x,y,w,h}} in pixels (integers), relative to the full screenshot (0,0) top-left.
-   - state.enabled: true unless clearly disabled; state.selected: true for active tab/checked/toggled/selected row or header.
-   - confidence: float [0,1] calibrated to visual certainty.
-6) Set screen_size to the screenshot width/height in pixels.
-7) Return the JSON object. If nothing actionable is present, return an empty elements array.
-</methods>
-
-<output_format>
-{{
-  "screen_size": {{"w": <int>, "h": <int>}},
-  "elements": [
-    {{
-      "id": "<short-stable-id>",
-      "role": "<button|link|textbox|icon|menuitem|tab|checkbox|radiobutton|dropdown|row|header|other>",
-      "label": "<context-rich label derived ONLY from visible UI (with container/object/state as applicable)>",
-      "bbox": {{"x": <int>, "y": <int>, "w": <int>, "h": <int>}},
-      "state": {{"enabled": <bool>, "selected": <bool>}},
-      "confidence": <float>
-    }}
-  ]
-}}
-<output_format>
-
-<few_shot_examples>
-Few-shot examples (illustrative only; DO NOT copy into output)
-Example A: Projects page with toolbar and table (page title “Projects”; table “Projects”; filter chip “active”)
-{{
-  "screen_size": {{"w": 1280, "h": 800}},
-  "elements": [
-    {{
-      "id": "tb-search-projects",
-      "role": "textbox",
-      "label": "Textbox ‘Search projects’ in top toolbar on page ‘Projects’",
-      "bbox": {{"x": 980, "y": 120, "w": 240, "h": 36}},
-      "state": {{"enabled": true, "selected": false}},
-      "confidence": 0.90
-    }},
-    {{
-      "id": "btn-new-project",
-      "role": "button",
-      "label": "Button ‘New’ in toolbar under page ‘Projects’",
-      "bbox": {{"x": 40, "y": 120, "w": 96, "h": 36}},
-      "state": {{"enabled": true, "selected": false}},
-      "confidence": 0.92
-    }},
-    {{
-      "id": "hdr-name-projects",
-      "role": "header",
-      "label": "Header ‘Name’ in table ‘Projects’ (filter: active)",
-      "bbox": {{"x": 40, "y": 180, "w": 320, "h": 28}},
-      "state": {{"enabled": true, "selected": false}},
-      "confidence": 0.86
-    }},
-    {{
-      "id": "hdr-status-projects",
-      "role": "header",
-      "label": "Header ‘Status’ in table ‘Projects’ (sorted ascending)",
-      "bbox": {{"x": 360, "y": 180, "w": 160, "h": 28}},
-      "state": {{"enabled": true, "selected": true}},
-      "confidence": 0.88
-    }},
-    {{
-      "id": "row-payments-service",
-      "role": "row",
-      "label": "Row ‘Payments Service’ (Status: Active, Updated: 2h ago) in table ‘Projects’",
-      "bbox": {{"x": 40, "y": 212, "w": 1120, "h": 36}},
-      "state": {{"enabled": true, "selected": false}},
-      "confidence": 0.90
-    }}
-  ]
-}}
-
-Example B: Deployments dashboard (breadcrumb shows service “payments-api”; toolbar dropdown shows current value)
-{{
-  "screen_size": {{"w": 1440, "h": 900}},
-  "elements": [
-    {{
-      "id": "dd-env",
-      "role": "dropdown",
-      "label": "Dropdown ‘Environment’ (value: Staging) in toolbar ‘Deployments’ for service ‘payments-api’",
-      "bbox": {{"x": 340, "y": 120, "w": 220, "h": 36}},
-      "state": {{"enabled": true, "selected": false}},
-      "confidence": 0.92
-    }},
-    {{
-      "id": "btn-run-deploy",
-      "role": "button",
-      "label": "Button ‘Run deployment’ in section ‘Deployments’ for service ‘payments-api’",
-      "bbox": {{"x": 580, "y": 120, "w": 180, "h": 36}},
-      "state": {{"enabled": true, "selected": false}},
-      "confidence": 0.93
-    }},
-    {{
-      "id": "tab-errors",
-      "role": "tab",
-      "label": "Tab ‘Errors’ in service dashboard ‘payments-api’",
-      "bbox": {{"x": 80, "y": 170, "w": 120, "h": 32}},
-      "state": {{"enabled": true, "selected": false}},
-      "confidence": 0.88
-    }}
-  ]
-}}
-</few_shot_examples>
-
-<rules>
-- Return ONE JSON object only.
-- Use ONLY the fields/roles specified.
-- Labels MUST include visible local context (container/page/table/object/state). Do not invent unseen semantics.
-- Integer coordinates; confidence is a float [0,1].
-</rules>
 """
 
 # --- Task Planner ---
@@ -1134,6 +997,8 @@ Follow these instructions carefully:
 9. Base your reasoning and decisions ONLY on the current step and any relevant context from the task.
 10. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
 11. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
+12. Focus on the current and VM operating system when reasoning about the current step.
+13. Pay close attention to the current mode of the agent - CLI or GUI.
 </reasoning_protocol>
 
 <quality_control>
@@ -1165,4 +1030,179 @@ Examples:
   "action_query": "step complete, move to next step"
 }}
 </output_format>
+"""
+
+GUI_REASONING_PROMPT = """
+<objective>
+You are performing reasoning to control a desktop/web browser/application as GUI agent. 
+You are provided with a task description, a history of previous actions, and corresponding screenshots. 
+Your goal is to describe the screen in your reasoning and perform reasoning for the next action according to the previous actions. 
+Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.
+</objective>
+
+<gui_state>
+You are provided with a screenshot of the current screen.
+{gui_state}
+</gui_state>
+
+<validation>
+- Verify if the screenshot visually shows if the previous action in the event stream has been performed successfully.
+- ONLY give response based on the GUI state information
+</validation>
+
+<reasoning_protocol>
+Follow these instructions carefully:
+1. Base your reasoning and decisions ONLY on the current screen and any relevant context from the task.
+2. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
+3. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
+4. When task is complete, if GUI mode is active, you should switch to CLI mode.
+5. DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
+6. Play close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
+7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intented or not.
+7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
+8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
+9. Pay close attention to the current mode of the agent - CLI or GUI.
+10. If goal is to move to next step, you MUST use the 'start next step' action to move on.
+11. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
+</reasoning_protocol>
+
+<quality_control>
+- Describe the screen in detail corresponding to the task.
+- Verify that your reasoning fully supports the action_query.
+- Avoid assumptions about future screen or their execution.
+- Make sure the query is general and descriptive enough to retrieve relevant GUI actions from a vector database.
+</quality_control>
+
+<output_format>
+Return ONLY a JSON object with two fields:
+
+{{
+  "reasoning": "<a description of the current screen detail needed for the task, natural-language chain-of-thought explaining understanding, validation, and decision>",
+  "action_query": "<semantic query string describing the kind of action needed to execute the current step, or indicating the step is complete>"
+}}
+
+- If the current step is complete:
+{{
+  "reasoning": "The acknowledgment message has already been successfully sent, so step 0 is complete. The system should proceed to the next step.",
+  "action_query": "step complete, move to next step",
+}}
+</output_format>
+"""
+
+GUI_REASONING_PROMPT_OMNIPARSER = """
+<objective>
+You are performing reasoning to control a desktop/web browser/application as GUI agent. 
+You are provided with a task description, a history of previous actions, and corresponding screenshots. 
+Your goal is to describe the screen in your reasoning and perform reasoning for the next action according to the previous actions. 
+Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.
+</objective>
+
+<validation>
+- Verify if the screenshot visually shows if the previous action in the event stream has been performed successfully.
+- ONLY give response based on the GUI state information
+</validation>
+
+<reasoning_protocol>
+Follow these instructions carefully:
+1. Base your reasoning and decisions ONLY on the current screen and any relevant context from the task.
+2. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
+3. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
+4. When task is complete, if GUI mode is active, you should switch to CLI mode.
+5. DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
+6. Play close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
+7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intented or not.
+7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
+8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
+9. Pay close attention to the current mode of the agent - CLI or GUI.
+10. If goal is to move to next step, you MUST use the 'start next step' action to move on.
+11. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
+</reasoning_protocol>
+
+<quality_control>
+- Describe the screen in detail corresponding to the task.
+- Verify that your reasoning fully supports the action_query.
+- Avoid assumptions about future screen or their execution.
+- Make sure the query is general and descriptive enough to retrieve relevant GUI actions from a vector database.
+</quality_control>
+
+<output_format>
+Return ONLY a JSON object with two fields:
+
+{{
+  "reasoning": "<a description of the current screen detail needed for the task, natural-language chain-of-thought explaining understanding, validation, and decision>",
+  "action_query": "<semantic query string describing the kind of action needed to execute the current step, or indicating the step is complete>",
+  "item_index": <index of the item in the image>
+}}
+
+- If the current step is complete:
+{{
+  "reasoning": "The acknowledgment message has already been successfully sent, so step 0 is complete. The system should proceed to the next step.",
+  "action_query": "step complete, move to next step",
+  "item_index": 42
+}}
+</output_format>
+"""
+
+GUI_QUERY_FOCUSED_PROMPT = """
+You are an advanced UI Decomposition and Semantic Analysis Agent. Your task is to analyze a UI screenshot specifically in the context of a provided previous step query.
+
+**Inputs:**
+1.  A screenshot of a graphical user interface (GUI).
+2.  A natural language previous step query regarding that interface (e.g., "Where is the checkout button?", "What is the error message saying?", "Identify the filters in the sidebar").
+
+**Goal:**
+Do not generate an exhaustive analysis of the entire screen. Instead, interpret the user's intent based on the previous step query and extract *only* the UI elements, text, structure, and states relevant to answering or fulfilling that query. If the query asks about a specific component, focus on that component and its immediate context. If the query asks about a region, focus strictly on that region. Also, validate if based on the image - the previous step is complete or not.
+
+**Output Format:**
+Analyze the image based on the previous step query and output your findings in the following strictly structured Markdown format.
+
+### 1. Context & Query Interpretation
+*   **Screen_Context:** Briefly classify the overall view (e.g., `Site::LandingPage`, `Modal::Settings`, `App::Dashboard`).
+*   **Query_Intent:** Translate the user's natural language previous step query into a technical UI goal (e.g., "User seeks location and state of the 'Submit Order' button within the cart module").
+*   **Query_Status:** (Found / Not Found / Ambiguous). State if the elements requested in the query are actually visible in the screenshot.
+
+### 2. Relevant Spatial Layout
+Identify only the structural regions containing elements relevant to the previous step query. If the query is broad, define the bounds of the relevant area.
+*   **Target_Container:** The specific bounding box or structural area where the relevant elements are located (e.g., `Login Form Module [Center-Mid]`, `Top Global Navigation Bar`, `SearchResultsGrid`).
+*   **Parent_Context:** (Optional) If the target container is inside a transient element like a modal, dropdown, or overlay, note it here.
+
+### 3. Relevant Static Content
+Extract text distinct from interactive controls, *only if relevant to resolving the previous step query*.
+*   **Anchor_Text:** Headings, labels, or section titles that help define the area of interest relative to the query.
+*   **Targeted_Informational_Text:** Specific body text or error messages related to the query.
+
+### 4. Targeted Interactive Components
+Provide a detailed list *only* of interactable elements directly addressed by, or immediately necessary for context to, the query.
+*   **[Component Type] "Label/Identifier"**
+    *   **Relevance:** State briefly why this component is included based on the query (e.g., "Direct match for 'checkout button' in query").
+    *   **Location:** General vicinity (e.g., Top-Right of Target Container).
+    *   **Function:** The action triggered on interaction.
+    *   **State:** Current status (e.g., Enabled, Disabled, Selected, Contains Text "xyz").
+    *   **Visual_Cue:** Dominant visual characteristic.
+
+### 5. Relevant Visual Semantics
+Describe non-textual elements *only if referenced in or relevant to the query*.
+*   **Targeted_Iconography:** Map prominent icons related to the query to their meaning (e.g., If query is "find the search icon" -> `Magnifying Glass Icon -> Search Action`).
+
+***
+**Constraints:**
+*   Maintain strict focus on the query is paramount. Do not include extraneous elements just because they are visible in the screenshot.
+*   If the elements requested in the query are *not* present, set `Query_Status` to "Not Found" in Section 1 and leave Sections 2-5 empty.
+*   Ensure the output is machine-readable Markdown based on the headers above.
+
+Previous Step Query: {query}
+"""
+
+GUI_PIXEL_POSITION_PROMPT = """
+You are a UI element detection system. Your job is to extract a structured list of interactable elements from the provided 1064x1064 screenshot.
+Element to find: {element_to_find}
+
+Guidelines:
+1.  **Coordinate System:** Use a 0-indexed pixel grid where (0,0) is the top-left corner. The max X is 1063, max Y is 1063.
+2.  **Bounding Boxes:** For every element, provide an inclusive bounding box as [x_min, y_min, x_max, y_max].
+3.  **Output Format:** Return ONLY a valid JSON list of objects. Do not provide any conversational text before or after the JSON.
+
+Analyze the image and generate the JSON list.
+DO NOT hallucinate or make up any information.
+After getting the pixels, do an extra check to make sure the pixel location is visually accurate on the image. If not, try to adjust the pixel location to make it more accurate.
 """

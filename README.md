@@ -91,10 +91,9 @@ export OPENAI_API_KEY=<YOUR_KEY_HERE>
 or
 export GOOGLE_API_KEY=<YOUR_KEY_HERE>
 ```
-
-Run the CLI tool:
+Run:
 ```bash
-python -m core.main
+python start.py
 ```
 
 This executes the built-in **White Collar Agent**, that you can communicate to:
@@ -102,9 +101,22 @@ This executes the built-in **White Collar Agent**, that you can communicate to:
 2. Ask it to perform complex series of tasks  
 3. Run command /help to seek help
 4. Get along with the AI agent
+5. Do advanced computer-use tasks with a dedicated but lightweight WebRTC Linux VM
+
+### Terminal Arguments
+| Argument | Description |
+| :--- | :--- |
+| `--only-cpu` | Run the agent on CPU mode |
+| `--fast` | Skip unecessary update checks and launch agent faster. <br> <u><b>NOTE:</b></u> You have to run without `--fast` the first time you launch |
+| `--no-omniparser` | Disable the use of microsoft omniparser to analyse UI - will greatly reduce GUI action accuracy. It is highly encouraged to use omniparser |
+| `--no-conda` | Installs all packages globally instead of inside a conda environment |
+
+**EXAMPLE**
+```bash
+python start.py --only-cpu --fast
+```
 
 ---
-
 ## Run with container
 
 The repository root included a Docker configuration with Python 3.10, key system packages (including Tesseract for OCR), and all Python dependencies defined in `environment.yml`/`requirements.txt` so the agent can run consistently in isolated environments. 

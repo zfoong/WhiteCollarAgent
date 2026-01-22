@@ -17,6 +17,11 @@ from core.action.action_framework.registry import action
             "example": False,
             "description": "Target GUI mode after the switch (False means CLI mode)."
         },
+        "message": {
+            "type": "string",
+            "example": "Successfully switched to CLI mode.",
+            "description": "Status message indicating if the switch was successful or if already in CLI mode."
+        },
         "error": {
             "type": "string",
             "example": "StateSession not initialized",
@@ -30,12 +35,25 @@ from core.action.action_framework.registry import action
 def switch_to_cli_mode(input_data: dict) -> dict:
     import json
     import core.internal_action_interface as iai
+    from core.state.agent_state import STATE
     
     simulated_mode = input_data.get('simulated_mode', False)
     
     try:
+        # Check if already in CLI mode
+        if not STATE.gui_mode:
+            return {
+                "status": "ok", 
+                "gui_mode": False,
+                "message": "Already in CLI mode. No change needed."
+            }
+        
         if not simulated_mode:
             iai.InternalActionInterface.switch_to_CLI_mode()
-        return {"status": "ok", "gui_mode": False}
+        return {
+            "status": "ok", 
+            "gui_mode": False,
+            "message": "Successfully switched to CLI mode."
+        }
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": str(e), "gui_mode": STATE.gui_mode}

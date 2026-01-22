@@ -85,12 +85,14 @@ class LLMInterface:
         self,
         system_prompt: Optional[str] = None,
         user_prompt: Optional[str] = None,
+        log_response: bool = True,
     ) -> str:
         """Synchronous implementation shared by sync/async entry points."""
         if user_prompt is None:
             raise ValueError("`user_prompt` cannot be None.")
 
-        logger.info(f"[LLM SEND] system={system_prompt} | user={user_prompt}")
+        if log_response:
+            logger.info(f"[LLM SEND] system={system_prompt} | user={user_prompt}")
 
         if self.provider == "openai":
             response = self._generate_openai(system_prompt, user_prompt)
@@ -106,7 +108,8 @@ class LLMInterface:
         cleaned = re.sub(self._CODE_BLOCK_RE, "", response.get("content", "").strip())
 
         STATE.set_agent_property("token_count", STATE.get_agent_property("token_count", 0) + response.get("tokens_used", 0))
-        logger.info(f"[LLM RECV] {cleaned}")
+        if log_response:
+            logger.info(f"[LLM RECV] {cleaned}")
         return cleaned
 
     # @log_events(name="generate_response")
@@ -115,20 +118,23 @@ class LLMInterface:
         self,
         system_prompt: Optional[str] = None,
         user_prompt: Optional[str] = None,
+        log_response: bool = True,
     ) -> str:
         """Generate a single response from the configured provider."""
-        return self._generate_response_sync(system_prompt, user_prompt)
+        return self._generate_response_sync(system_prompt, user_prompt, log_response)
 
     async def generate_response_async(
         self,
         system_prompt: Optional[str] = None,
         user_prompt: Optional[str] = None,
+        log_response: bool = True,
     ) -> str:
         """Async wrapper that defers the blocking call to a worker thread."""
         return await asyncio.to_thread(
             self._generate_response_sync,
             system_prompt,
             user_prompt,
+            log_response,
         )
 
     # ───────────────────── Provider‑specific private helpers ─────────────────────
@@ -264,6 +270,7 @@ class LLMInterface:
     @profile("llm_byteplus_call")
     def _generate_byteplus(self, system_prompt: str | None, user_prompt: str) -> str:
         token_count_input = token_count_output = 0
+        total_tokens = 0
         status = "failed"
         content: Optional[str] = None
         exc_obj: Optional[Exception] = None
@@ -305,7 +312,7 @@ class LLMInterface:
                     or ""
                 ).strip()
 
-            total_tokens = result.get("usage", {}).get("total_tokens", 0)
+            total_tokens = int(result.get("usage", {}).get("total_tokens", 0))
 
             # Token usage (prompt/completion/total)
             usage = result.get("usage") or {}

@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from asyncio import Queue, QueueEmpty
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Tuple
+from typing import Awaitable, Callable, Optional, Tuple
 
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import var
+from textual.widgets import OptionList
+from textual.widgets.option_list import Option
 
 from rich.console import RenderableType
 from rich.table import Table
@@ -23,6 +26,65 @@ from core.logger import logger
 
 if False:  # pragma: no cover
     from core.agent_base import AgentBase  # type: ignore
+
+
+class _ContextMenu(OptionList):
+    """Simple context menu for copy operations."""
+
+    DEFAULT_CSS = """
+    _ContextMenu {
+        width: 20;
+        height: auto;
+        border: ascii #ff4f18;
+        background: #0a0a0a;
+        layer: overlay;
+    }
+
+    _ContextMenu > .option-list--option {
+        color: #e5e5e5;
+        padding: 0 1;
+    }
+
+    _ContextMenu > .option-list--option-highlighted {
+        background: #ff4f18;
+        color: #ffffff;
+    }
+    """
+
+    def __init__(self, text_to_copy: str, x: int, y: int) -> None:
+        super().__init__(Option("Copy text", id="copy"))
+        self.text_to_copy = text_to_copy
+        self.styles.offset = (x, y)
+        # Set border to use ASCII characters
+        self.border_title = None
+        self.styles.border = ("ascii", "#ff4f18")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Handle menu selection."""
+        if event.option_id == "copy":
+            try:
+                # Try using pyperclip first for better compatibility
+                import pyperclip
+                pyperclip.copy(self.text_to_copy)
+                self.app.notify("Text copied!", severity="information", timeout=2)
+            except ImportError:
+                # Fallback to Textual's method if pyperclip not available
+                try:
+                    self.app.copy_to_clipboard(self.text_to_copy)
+                    self.app.notify("Text copied!", severity="information", timeout=2)
+                except Exception as e:
+                    self.app.notify(f"Copy failed: {str(e)}", severity="error", timeout=3)
+        self.remove()
+
+    def on_blur(self) -> None:
+        """Close menu when focus is lost."""
+        self.remove()
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle escape key to close the menu."""
+        if event.key == "escape":
+            self.remove()
+            event.stop()
 
 
 class _ConversationLog(_BaseLog):
@@ -40,6 +102,12 @@ class _ConversationLog(_BaseLog):
 
         # Keep a copy of everything written so it can be reflowed on resize
         self._history: list[RenderableType] = []
+        # Track entry keys to their history index for updates
+        self._entry_keys: dict[str, int] = {}
+        # Store plain text for each entry for copy functionality
+        self._text_content: list[str] = []
+        # Track line ranges for each message entry (start_line, end_line)
+        self._line_ranges: list[Tuple[int, int]] = []
 
     def append_text(self, content) -> None:
         # Normalize to Rich Text, enable folding of long tokens
@@ -51,15 +119,43 @@ class _ConversationLog(_BaseLog):
     def append_markup(self, markup: str) -> None:
         self.append_text(Text.from_markup(markup))
 
-    def append_renderable(self, renderable: RenderableType) -> None:
+    def append_renderable(self, renderable: RenderableType, entry_key: Optional[str] = None) -> None:
         # Write using expand/shrink so width follows the widget on resize
+        index = len(self._history)
         self._history.append(renderable)
+        if entry_key:
+            self._entry_keys[entry_key] = index
+
+        # Extract and store plain text content
+        text_content = self._extract_text(renderable)
+        self._text_content.append(text_content)
+
+        # Track the line range before writing
+        start_line = len(self.lines)
+
         self.write(renderable, expand=True, shrink=True)
+
+        # Track the line range after writing
+        end_line = len(self.lines) - 1
+        self._line_ranges.append((start_line, end_line))
+
+    def update_renderable(self, entry_key: str, renderable: RenderableType) -> None:
+        """Update an existing entry by key."""
+        if entry_key not in self._entry_keys:
+            return
+        index = self._entry_keys[entry_key]
+        if 0 <= index < len(self._history):
+            self._history[index] = renderable
+            # Re-render the entire history
+            self._reflow_history()
 
     def clear(self) -> None:
         """Clear the log and the preserved history."""
 
         self._history.clear()
+        self._entry_keys.clear()
+        self._text_content.clear()
+        self._line_ranges.clear()
         super().clear()
 
     def _reflow_history(self) -> None:
@@ -70,8 +166,94 @@ class _ConversationLog(_BaseLog):
 
         history = list(self._history)
         super().clear()
+
+        # Rebuild line ranges as we reflow
+        self._line_ranges.clear()
         for renderable in history:
+            start_line = len(self.lines)
             self.write(renderable, expand=True, shrink=True)
+            end_line = len(self.lines) - 1
+            self._line_ranges.append((start_line, end_line))
+
+    def _extract_text(self, renderable: RenderableType) -> str:
+        """Extract plain text from a renderable object, excluding labels."""
+        if isinstance(renderable, Text):
+            return renderable.plain
+        elif isinstance(renderable, str):
+            return renderable
+        elif isinstance(renderable, Table):
+            # Extract only the message content (second column), skip the label (first column)
+            try:
+                # Access the table columns - we want the second column (index 1)
+                if len(renderable.columns) >= 2:
+                    message_column = renderable.columns[1]
+                    # Extract text from all cells in the message column
+                    text_parts = []
+                    if hasattr(message_column, '_cells'):
+                        for cell in message_column._cells:
+                            if isinstance(cell, Text):
+                                text_parts.append(cell.plain)
+                            elif isinstance(cell, str):
+                                text_parts.append(cell)
+                            else:
+                                text_parts.append(str(cell))
+                    return " ".join(text_parts)
+                else:
+                    # Fallback if table structure is unexpected
+                    from io import StringIO
+                    from rich.console import Console
+                    string_io = StringIO()
+                    console = Console(file=string_io, force_terminal=False, force_jupyter=False, width=200)
+                    console.print(renderable)
+                    return string_io.getvalue().strip()
+            except (AttributeError, IndexError, TypeError):
+                # Fallback: use Rich Console to render to plain text
+                from io import StringIO
+                from rich.console import Console
+                string_io = StringIO()
+                console = Console(file=string_io, force_terminal=False, force_jupyter=False, width=200)
+                console.print(renderable)
+                return string_io.getvalue().strip()
+        else:
+            # Fallback: try to convert to string
+            return str(renderable)
+
+    def _get_message_at_line(self, line_number: int) -> Optional[int]:
+        """Get the message index for a given line number."""
+        if not self._line_ranges:
+            return None
+
+        # Find which message contains this line number
+        for msg_index, (start_line, end_line) in enumerate(self._line_ranges):
+            if start_line <= line_number <= end_line:
+                return msg_index
+
+        return None
+
+    def on_click(self, event: events.Click) -> None:
+        """Handle click events to show copy menu for the clicked cell."""
+        # Remove any existing context menu
+        for menu in self.app.query("_ContextMenu"):
+            menu.remove()
+
+        # Calculate the actual line number accounting for scroll offset
+        # event.y is relative to the widget, we need to add scroll offset
+        clicked_y = event.y + self.scroll_offset.y
+
+        # Find which message was clicked using line ranges
+        clicked_index = self._get_message_at_line(clicked_y)
+
+        if clicked_index is not None and 0 <= clicked_index < len(self._text_content):
+            text_to_copy = self._text_content[clicked_index]
+        else:
+            # No valid message found at this position
+            return
+
+        if text_to_copy.strip():
+            # Create context menu at click position
+            menu = _ContextMenu(text_to_copy, event.screen_x, event.screen_y)
+            self.app.screen.mount(menu)
+            menu.focus()
 
     def on_resize(self, event: events.Resize) -> None:  # pragma: no cover - UI layout
         """Force a reflow when the widget width changes.
@@ -95,6 +277,16 @@ class _ActionEntry:
     kind: str
     message: str
     style: str = "action"
+    is_completed: bool = False
+    parent_task: Optional[str] = None  # Task name if this action belongs to a task
+
+
+@dataclass
+class _ActionUpdate:
+    """Container for action update operations."""
+    operation: str  # "add" or "update"
+    entry: Optional[_ActionEntry] = None
+    entry_key: Optional[str] = None
 
 
 class _CraftApp(App):
@@ -103,8 +295,8 @@ class _CraftApp(App):
     CSS = """
     Screen {
         layout: vertical;
-        background: #111111;
-        color: #f5f5f5;
+        background: #000000;
+        color: #e5e5e5;
     }
 
     /* Shared chrome */
@@ -115,8 +307,10 @@ class _CraftApp(App):
 
     #chat-panel, #action-panel {
         height: 100%;
-        border: solid #444444;
+        border: solid #2a2a2a;
         border-title-align: left;
+        border-title-color: #a0a0a0;
+        background: #000000;
         margin: 0 1;
         min-width: 0;  /* allow panels to shrink with the terminal */
     }
@@ -126,6 +320,7 @@ class _CraftApp(App):
         text-overflow: fold;
         overflow-x: hidden;
         min-width: 0;  /* enable reflow instead of clamped min-content width */
+        background: #000000;
     }
 
     #chat-panel {
@@ -140,12 +335,14 @@ class _CraftApp(App):
         height: 1fr;
         padding: 0 1;
         overflow-x: hidden;
+        background: #000000;
     }
 
     #bottom-region {
         height: auto;
-        border-top: solid #333333;
-        padding: 1;
+        border-top: solid #1a1a1a;
+        padding: 0;
+        background: #000000;
     }
 
     #status-bar {
@@ -154,26 +351,35 @@ class _CraftApp(App):
         text-wrap: nowrap;
         overflow: hidden;
         text-style: bold;
-        color: #dddddd;
+        color: #a0a0a0;
+        background: #000000;
+        padding: 0 1;
     }
 
     #chat-input {
-        border: solid #444444;
-        background: #1a1a1a;
+        border: solid #2a2a2a;
+        background: #0a0a0a;
+        color: #e5e5e5;
+        margin: 0 1;
+    }
+
+    #chat-input:focus {
+        border: solid #ff4f18;
     }
 
     /* Menu layer */
     #menu-layer {
         align: center middle;
         content-align: center middle;
+        background: #000000;
     }
 
     #menu-panel {
         width: 90;
         max-width: 100%;
         max-height: 95%;
-        border: solid #444444;
-        background: #0f0f0f;
+        border: solid #2a2a2a;
+        background: #000000;
         padding: 3 5;
         content-align: center middle;
         overflow: auto;
@@ -187,6 +393,20 @@ class _CraftApp(App):
         text-style: bold;
         margin-bottom: 1;
         content-align: center middle;
+    }
+
+    #menu-copy {
+        color: #a0a0a0;
+        margin-bottom: 1;
+    }
+
+    #provider-hint {
+        color: #a0a0a0;
+        text-style: bold;
+    }
+
+    #menu-hint {
+        color: #666666;
     }
 
     /* Command-prompt style options */
@@ -205,14 +425,14 @@ class _CraftApp(App):
 
     /* Default item text */
     .menu-item {
-        color: #cfcfcf;
+        color: #a0a0a0;
     }
 
     /* Highlight for list selections */
     #menu-options > ListItem.--highlight .menu-item,
     #provider-options > ListItem.--highlight .menu-item,
     #settings-actions-list > ListItem.--highlight .menu-item {
-        background: #222222;
+        background: #ff4f18;
         color: #ffffff;
         text-style: bold;
     }
@@ -235,15 +455,32 @@ class _CraftApp(App):
         width: 70;
         max-width: 100%;
         max-height: 90%;
-        border: solid #444444;
-        background: #101010;
+        border: solid #2a2a2a;
+        background: #000000;
         padding: 2 3 3 3;
         content-align: center top;
         overflow: auto;
     }
 
+    #settings-card Static {
+        color: #a0a0a0;
+    }
+
+    #settings-title {
+        text-style: bold;
+        color: #ffffff;
+        margin-bottom: 1;
+    }
+
     #settings-card Input {
         width: 100%;
+        border: solid #2a2a2a;
+        background: #0a0a0a;
+        color: #e5e5e5;
+    }
+
+    #settings-card Input:focus {
+        border: solid #ff4f18;
     }
 
     /* Settings actions styled like a prompt list */
@@ -274,9 +511,13 @@ class _CraftApp(App):
     show_menu = var(True)
     show_settings = var(False)
 
-    _STATUS_PREFIX = "Status: "
+    _STATUS_PREFIX = " "
     _STATUS_GAP = 4
     _STATUS_INITIAL_PAUSE = 6
+
+    # Icons for task/action status
+    _ICON_COMPLETED = "+"
+    _ICON_LOADING_FRAMES = ["●", "○"]  # Animated loading icons
 
     _MENU_ITEMS = [
         ("menu-start", "start"),
@@ -362,14 +603,20 @@ class _CraftApp(App):
     # ────────────────────────────── menu helpers ─────────────────────────────
 
     def _logo_text(self) -> Text:
-        return Text(
-            """
-░█░█░█░█░▀█▀░▀█▀░█▀▀░░░█▀▀░█▀█░█░░░█░░░█▀█░█▀▄░░░█▀█░█▀▀░█▀▀░█▀█░▀█▀
-░█▄█░█▀█░░█░░░█░░█▀▀░░░█░░░█░█░█░░░█░░░█▀█░█▀▄░░░█▀█░█░█░█▀▀░█░█░░█░
-░▀░▀░▀░▀░▀▀▀░░▀░░▀▀▀░░░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀░▀░░▀░
-            """.rstrip("\n"),
-            justify="center",
-        )
+        logo_lines = [
+            "░█░█░█░█░▀█▀░▀█▀░█▀▀░░░█▀▀░█▀█░█░░░█░░░█▀█░█▀▄░░░█▀█░█▀▀░█▀▀░█▀█░▀█▀",
+            "░█▄█░█▀█░░█░░░█░░█▀▀░░░█░░░█░█░█░░░█░░░█▀█░█▀▄░░░█▀█░█░█░█▀▀░█░█░░█░",
+            "░▀░▀░▀░▀░▀▀▀░░▀░░▀▀▀░░░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀░▀░░▀░",
+        ]
+        text = Text("\n".join(logo_lines), justify="center")
+        agent_len = len(logo_lines[0][-19:])
+        highlight_style = "#FF4F18"
+        offset = 0
+        for line in logo_lines:
+            start_col = len(line) - agent_len
+            text.stylize(highlight_style, offset + start_col, offset + start_col + agent_len)
+            offset += len(line) + 1
+        return text
 
     def _open_settings(self) -> None:
         if self.query("#settings-card"):
@@ -459,6 +706,7 @@ class _CraftApp(App):
 
         self.set_interval(0.1, self._flush_pending_updates)
         self.set_interval(0.2, self._tick_status_marquee)
+        self.set_interval(0.5, self._tick_loading_animation)  # Loading icon animation
         self._sync_layers()
 
         # Initialize menu selection visuals
@@ -536,11 +784,19 @@ class _CraftApp(App):
 
         while True:
             try:
-                action = self._interface.action_updates.get_nowait()
+                action_update = self._interface.action_updates.get_nowait()
             except QueueEmpty:
                 break
-            entry = self._interface.format_action_entry(action)
-            action_log.append_renderable(entry)
+
+            if action_update.operation == "add":
+                entry = self._interface.format_action_entry(action_update.entry)
+                action_log.append_renderable(entry, entry_key=action_update.entry_key)
+            elif action_update.operation == "update":
+                # Get the updated entry from the tracked entries
+                if action_update.entry_key in self._interface._task_action_entries:
+                    updated_entry = self._interface._task_action_entries[action_update.entry_key]
+                    renderable = self._interface.format_action_entry(updated_entry)
+                    action_log.update_renderable(action_update.entry_key, renderable)
 
         while True:
             try:
@@ -578,6 +834,46 @@ class _CraftApp(App):
                     self._status_pause = self._STATUS_INITIAL_PAUSE
 
         self._render_status()
+
+    def _tick_loading_animation(self) -> None:
+        """Update loading animation frame and refresh action panel."""
+        self._interface._loading_frame_index = (self._interface._loading_frame_index + 1) % len(self._ICON_LOADING_FRAMES)
+
+        # Re-render all incomplete action entries with the new animation frame
+        action_log = self.query_one("#action-log", _ConversationLog)
+
+        # Check if there are any incomplete entries to animate
+        has_incomplete = any(
+            not entry.is_completed
+            for entry in self._interface._task_action_entries.values()
+        )
+
+        if has_incomplete:
+            # Update all incomplete entries
+            for entry_key, entry in self._interface._task_action_entries.items():
+                if not entry.is_completed:
+                    renderable = self._interface.format_action_entry(entry)
+                    action_log.update_renderable(entry_key, renderable)
+
+        # Update status bar if agent is working (to animate the loading icon)
+        if self._interface._agent_state == "working":
+            new_status = self._interface._generate_status_message()
+            if new_status != self._status_message:
+                self._status_message = new_status
+                self._render_status()
+
+        # Check if we need to reset task_completed state to idle
+        if (self._interface._agent_state == "task_completed" and
+            self._interface._task_completed_time is not None):
+            elapsed = time.time() - self._interface._task_completed_time
+            if elapsed >= self._interface._reset_to_idle_delay:
+                self._interface._agent_state = "idle"
+                self._interface._task_completed_time = None
+                # Update status message
+                new_status = self._interface._generate_status_message()
+                if new_status != self._interface._status_message:
+                    self._interface._status_message = new_status
+                    self._interface.status_updates.put_nowait(new_status)
 
     def _render_status(self) -> None:
         status_bar = self.query_one("#status-bar", Static)
@@ -743,17 +1039,17 @@ class TUIInterface:
     """Asynchronous Textual TUI driver that feeds user prompts to the agent."""
 
     _STYLE_COLORS = {
-        "user": "bold plum1",
-        "agent": "bold gold1",
-        "action": "bold deep_sky_blue1",
-        "task": "bold dark_orange",
-        "error": "bold red",
-        "info": "bold grey70",
-        "system": "bold medium_orchid",
+        "user": "bold #ffffff",
+        "agent": "bold #ff4f18",
+        "action": "bold #a0a0a0",
+        "task": "bold #ff4f18",
+        "error": "bold #ff4f18",
+        "info": "bold #666666",
+        "system": "bold #a0a0a0",
     }
 
     _CHAT_LABEL_WIDTH = 7
-    _ACTION_LABEL_WIDTH = 7
+    _ACTION_LABEL_WIDTH = 5  # Adjusted for icon format [+] or [●]/[○]
 
     def __init__(
         self, agent: "AgentBase", *, default_provider: str, default_api_key: str
@@ -762,15 +1058,25 @@ class TUIInterface:
         self._running: bool = False
         self._tracked_sessions: set[str] = set()
         self._seen_events: set[Tuple[str, str, str, str]] = set()
-        self._status_message: str = "Idle"
+        self._status_message: str = "Agent is idle"
         self._app: _CraftApp | None = None
         self._event_task: asyncio.Task[None] | None = None
 
         self._command_handlers: dict[str, Callable[[], Awaitable[None]]] = {}
 
         self.chat_updates: Queue[TimelineEntry] = Queue()
-        self.action_updates: Queue[_ActionEntry] = Queue()
+        self.action_updates: Queue[_ActionUpdate] = Queue()
         self.status_updates: Queue[str] = Queue()
+
+        # Track current task and action states
+        self._current_task_name: Optional[str] = None
+        self._task_action_entries: dict[str, _ActionEntry] = {}  # task/action name -> entry
+        self._loading_frame_index: int = 0  # Current frame of loading animation
+
+        # Agent state tracking
+        self._agent_state: str = "idle"  # idle, working, waiting_for_user, task_completed
+        self._task_completed_time: Optional[float] = None  # Track when task completed for auto-reset
+        self._reset_to_idle_delay: float = 3.0  # Seconds to show "task completed" before resetting
 
         self._default_provider = default_provider
         self._default_api_key = default_api_key
@@ -858,7 +1164,12 @@ class TUIInterface:
             return
 
         await self.chat_updates.put(("You", message, "user"))
-        await self.status_updates.put("Awaiting agent response…")
+
+        # Set state to working when user submits a message
+        self._agent_state = "working"
+        status = self._generate_status_message()
+        self._status_message = status
+        await self.status_updates.put(status)
 
         payload = {
             "text": message,
@@ -901,9 +1212,10 @@ class TUIInterface:
 
     async def _handle_exit_command(self) -> None:
         await self.chat_updates.put(("System", "Session terminated by user.", "system"))
-        await self.status_updates.put("Idle")
+        self._agent_state = "idle"
+        await self.status_updates.put("Agent is idle")
         await self.request_shutdown()
-        
+
     async def _handle_menu_command(self) -> None:
         # Switch UI back to menu layer if the app is running
         if self._app:
@@ -911,7 +1223,8 @@ class TUIInterface:
             self._app.show_menu = True
 
         await self.chat_updates.put(("System", "Returned to menu.", "system"))
-        await self.status_updates.put("Idle")
+        self._agent_state = "idle"
+        await self.status_updates.put("Agent is idle")
         
     async def _handle_help_command(self) -> None:
         help_text = self._build_help_text()
@@ -984,7 +1297,9 @@ class TUIInterface:
         self.chat_updates = Queue()
         self.action_updates = Queue()
         self.status_updates = Queue()
-        self._status_message = "Idle"
+        self._agent_state = "idle"
+        self._status_message = "Agent is idle"
+        self._task_completed_time = None
         self._clear_display_logs()
         await self.status_updates.put(self._status_message)
 
@@ -1035,6 +1350,16 @@ class TUIInterface:
                     if display_text is not None:
                         await self.chat_updates.put((label, display_text, style))
 
+                    # Set agent state to waiting_for_user when agent sends a response
+                    if style == "agent" and display_text:
+                        # Check if this is the final agent response (not during a task)
+                        if not self._current_task_name and self._agent_state == "working":
+                            self._agent_state = "waiting_for_user"
+                            status = self._generate_status_message()
+                            if status != self._status_message:
+                                self._status_message = status
+                                await self.status_updates.put(status)
+
                 await asyncio.sleep(0.05)
 
         except asyncio.CancelledError:  # pragma: no cover
@@ -1042,22 +1367,76 @@ class TUIInterface:
 
     async def _handle_action_event(self, kind: str, message: str, *, style: str = "action") -> None:
         """Record an action update and refresh the status bar."""
-        await self.action_updates.put(_ActionEntry(kind=kind, message=message, style=style))
-        if style == "action":
-            status = self._derive_status(kind, message)
-            if status != self._status_message:
-                self._status_message = status
-                await self.status_updates.put(status)
+        entry_key = f"{style}:{message}"
 
-    def _derive_status(self, kind: str, message: str) -> str:
-        normalized = message.strip() or ""
-        if kind == "action_start":
-            return f"Running: {normalized or 'action in progress'}"
-        if kind == "action_end":
-            return f"Completed: {normalized or 'last action'}"
-        if kind == "action":
-            return normalized or "Action in progress"
-        return normalized or self._status_message or "Idle"
+        # Handle task start
+        if kind == "task_start":
+            self._current_task_name = message
+            self._agent_state = "working"
+            entry = _ActionEntry(
+                kind=kind,
+                message=message,
+                style=style,
+                is_completed=False,
+                parent_task=None
+            )
+            self._task_action_entries[entry_key] = entry
+            await self.action_updates.put(_ActionUpdate(operation="add", entry=entry, entry_key=entry_key))
+
+        # Handle task end - update existing entry
+        elif kind == "task_end":
+            if entry_key in self._task_action_entries:
+                self._task_action_entries[entry_key].is_completed = True
+                await self.action_updates.put(_ActionUpdate(operation="update", entry_key=entry_key))
+            self._current_task_name = None
+            self._agent_state = "task_completed"
+            self._task_completed_time = time.time()
+
+        # Handle action start
+        elif kind == "action_start":
+            self._agent_state = "working"
+            entry = _ActionEntry(
+                kind=kind,
+                message=message,
+                style=style,
+                is_completed=False,
+                parent_task=self._current_task_name
+            )
+            self._task_action_entries[entry_key] = entry
+            await self.action_updates.put(_ActionUpdate(operation="add", entry=entry, entry_key=entry_key))
+
+        # Handle action end - update existing entry
+        elif kind == "action_end":
+            if entry_key in self._task_action_entries:
+                self._task_action_entries[entry_key].is_completed = True
+                await self.action_updates.put(_ActionUpdate(operation="update", entry_key=entry_key))
+
+        # Update status based on current agent state
+        status = self._generate_status_message()
+        if status != self._status_message:
+            self._status_message = status
+            await self.status_updates.put(status)
+
+    def _generate_status_message(self) -> str:
+        """Generate personalized status message based on agent state."""
+        loading_icon = _CraftApp._ICON_LOADING_FRAMES[self._loading_frame_index % len(_CraftApp._ICON_LOADING_FRAMES)]
+
+        if self._agent_state == "idle":
+            return "Agent is idle"
+        elif self._agent_state == "working":
+            if self._current_task_name:
+                return f"{loading_icon} Working on: {self._current_task_name}"
+            else:
+                return f"{loading_icon} Agent is working..."
+        elif self._agent_state == "waiting_for_user":
+            return "⏸ Waiting for your response"
+        elif self._agent_state == "task_completed":
+            if self._current_task_name:
+                return f"✓ Task completed!"
+            else:
+                return "✓ Task completed!"
+        else:
+            return "Agent is idle"
 
     def _format_labelled_entry(
         self,
@@ -1099,12 +1478,31 @@ class TUIInterface:
         )
 
     def format_action_entry(self, entry: _ActionEntry) -> RenderableType:
-        kind = entry.kind.replace("_", " ").title()
-        colour = "bold deep_sky_blue1" if entry.style == "action" else "bold dark_orange"
-        label_text = f"{kind}:"
+        # Choose icon based on completion status
+        if entry.is_completed:
+            icon = _CraftApp._ICON_COMPLETED
+        else:
+            # Use current frame of loading animation
+            icon = _CraftApp._ICON_LOADING_FRAMES[self._loading_frame_index % len(_CraftApp._ICON_LOADING_FRAMES)]
+
+        # Determine color based on style and completion
+        if entry.style == "task":
+            colour = "bold #ff4f18"
+        else:  # action
+            colour = "bold #a0a0a0"
+
+        # Format: [icon]
+        label_text = f"[{icon}]"
+
+        # Add indentation to message for actions that belong to a task
+        if entry.parent_task and entry.style == "action":
+            message = f"    {entry.message}"
+        else:
+            message = entry.message
+
         return self._format_labelled_entry(
             label_text,
-            entry.message,
+            message,
             colour=colour,
             label_width=self._ACTION_LABEL_WIDTH,
         )

@@ -4,6 +4,7 @@ from tzlocal import get_localzone
 import json
 
 from core.config import AGENT_WORKSPACE_ROOT
+from core.gui.handler import GUIHandler
 from core.logger import logger
 from core.prompt import (
     AGENT_ROLE_PROMPT,
@@ -15,6 +16,7 @@ from core.prompt import (
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from typing import Optional, Dict, Any
+from core.task.task import Task
 
 """
 core.context_engine
@@ -85,11 +87,17 @@ class ContextEngine:
                 token_count=agent_properties.get("token_count", 0),
                 max_tokens_per_task=agent_properties.get("max_tokens_per_task"),
             )
+            # Add GUI mode status
+            gui_mode_status = "GUI mode" if STATE.gui_mode else "CLI mode"
             return (
                 "\nThe current agent state is as follows:"
                 f"\n{prompt}"
+                f"\n- Current Mode: {gui_mode_status}"
             )
-        return ""
+        else:
+            # Even if no task, show mode
+            gui_mode_status = "GUI mode" if STATE.gui_mode else "CLI mode"
+            return f"\nThe current agent state:\n- Current Mode: {gui_mode_status}"
 
     def create_system_conversation_history(self):
         """Return formatted conversation history for the current session."""
@@ -115,6 +123,16 @@ class ContextEngine:
             )
         return ""
 
+    def create_system_gui_event_stream_state(self):
+        """Return formatted GUI event stream context for the current session."""
+        gui_event_stream: str = GUIHandler.gui_module.get_gui_event_stream()
+        if gui_event_stream:
+            return (
+                "\nUse the GUI event stream to understand the current situation, past agent actions to craft the input parameters:\nGUI Event stream (oldest to newest):"
+                f"\n{gui_event_stream}"
+            )
+        return ""
+
     def create_system_task_state(self):
         """Return formatted task/plan state for the current session."""
 
@@ -136,6 +154,7 @@ class ContextEngine:
         """
         Create a system message block with environmental & temporal context
         """
+        import platform
         local_timezone = get_localzone()
         now = datetime.now(local_timezone)
         current_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace("+00:00","Z")
@@ -143,7 +162,14 @@ class ContextEngine:
             current_time=current_time, 
             timezone=now.strftime('%Z'),
             user_location=local_timezone, # TODO Not accurate! 
-            working_directory=AGENT_WORKSPACE_ROOT
+            working_directory=AGENT_WORKSPACE_ROOT,
+            operating_system=platform.system(),
+            os_version=platform.release(),
+            os_platform=platform.platform(),
+            vm_operating_system="Linux", # TODO hard coded value to match the current VM setting
+            vm_os_version="6.12.13", # TODO hard coded value to match the current VM setting
+            vm_os_platform="Linux a5e39e32118c 6.12.13 #1 SMP Thu Mar 13 11:34:50 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux", # TODO hard coded value to match the current VM setting
+            vm_resolution="1064 x 1064"
             )
         return prompt
     
@@ -196,6 +222,7 @@ class ContextEngine:
             "agent_state": self.state_manager.is_running_task(),
             "conversation_history": True,
             "event_stream": True,
+            "gui_event_stream": False,
             "task_state": True,
             "policy": False,  # default off to save tokens
             "environment": True,
@@ -215,6 +242,7 @@ class ContextEngine:
             ("agent_state", self.create_system_agent_state),
             ("conversation_history", self.create_system_conversation_history),
             ("event_stream", self.create_system_event_stream_state),
+            ("gui_event_stream", self.create_system_gui_event_stream_state),
             ("task_state", self.create_system_task_state),
             ("policy", self.create_system_policy),
             ("environment", self.create_system_environmental_context),

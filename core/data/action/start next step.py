@@ -3,7 +3,7 @@ from core.action.action_framework.registry import action
 @action(
         name="start next step",
         description="Advance the running workflow to the NEXT step for this session. If update_plan is true, first update the plan (e.g., when the old plan is outdated or new info is available) and then advance to the next step, which may be newly created by the updated plan.",
-        mode="CLI",
+        mode="ALL",
         default=True,
         input_schema={
                 "update_plan": {

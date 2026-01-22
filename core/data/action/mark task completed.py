@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="mark task completed",
         description="End the current task for this session as COMPLETED. Use this when the task is fully done and outputs are satisfactory.",
         default=True,
+        mode="CLI",
         input_schema={
                 "message": {
                         "type": "string",

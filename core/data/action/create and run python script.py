@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="create and run python script",
     description="This action takes a single Python code snippet as input and executes it in a fresh environment. Missing packages are automatically detected and installed when ImportError occurs. This action is intended for cases when the AI agent needs to create a one-off solution dynamically.",
     execution_mode="sandboxed",
+    mode="CLI",
     default=True,
     input_schema={
         "code": {
@@ -80,7 +81,6 @@ def create_and_run_python_script(input_data: dict) -> dict:
     stderr_capture = io.StringIO()
 
     def _install_package(pkg_name: str) -> bool:
-        """Install a package using pip in the current environment."""
         try:
             subprocess.check_call(
                 [sys.executable, '-m', 'pip', 'install', '--quiet', pkg_name],
@@ -93,7 +93,6 @@ def create_and_run_python_script(input_data: dict) -> dict:
             return False
 
     def _extract_imports(code: str) -> set:
-        """Extract module names from import statements."""
         imports = set()
         # Match: import module, import module as alias, from module import ...
         patterns = [

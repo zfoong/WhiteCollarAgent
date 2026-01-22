@@ -9,7 +9,6 @@ from datetime import datetime
 import platform
 import time
 import json
-import ast
 import asyncio
 import nest_asyncio
 from typing import Optional, List, Dict, Any
@@ -18,18 +17,17 @@ from core.action.action import Action
 from core.action.action_executor import ActionExecutor
 import io
 import sys
-import traceback
 import re
 
 import uuid
 from core.database_interface import DatabaseInterface
 from core.logger import logger
-from core.prompt import RESOLVE_ACTION_INPUT_PROMPT
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from core.task.task import Step
+from core.gui.handler import GUIHandler
 
 nest_asyncio.apply()
 
@@ -87,6 +85,7 @@ class ActionManager:
         parent_id: str | None = None,
         session_id: str | None = None,
         is_running_task: bool | None = False,
+        is_gui_task: bool = False,
         *,
         input_data: Optional[dict] = None,
     ) -> dict: 
@@ -154,17 +153,16 @@ class ActionManager:
             "started_at": started_at,
         }
 
-        logger.debug(f"Action {action.name} marked as in-flight.")
+        logger.info(f"Action {action.name} marked as in-flight.")
         
-        if is_running_task and self.event_stream_manager:
-            self.event_stream_manager.log(
-                "action",
-                f"Running action {action.name} with input: {input_data}.",
+        if is_running_task:
+            self._log_event_stream(
+                is_gui_task=is_gui_task,
+                event_type="action_start",
+                event=f"Running action {action.name} with input: {input_data}. {context if context else ''}",
                 display_message=f"Running {action.name}",
                 action_name=action.name,
             )
-        else:
-            logger.warning(f"Action {action.name} no event stream manager to log to.")
             
         logger.debug(f"Starting execution of action {action.name}...")
 
@@ -236,25 +234,27 @@ class ActionManager:
 
         logger.debug(f"Action {action.name} completed with status: {status}.")
         
-        if is_running_task and self.event_stream_manager:
+        if is_running_task:
             display_status = "failed" if status == "error" else "completed"
-            self.event_stream_manager.log(
-                "action",
-                f"Action {action.name} completed with output: {outputs}.",
+            self._log_event_stream(
+                is_gui_task=is_gui_task,
+                event_type="action_end",
+                event=f"Action {action.name} completed with output: {outputs}. {context if context else ''}",
                 display_message=f"{action.name} → {display_status}",
                 action_name=action.name,
             )
 
-
-            current_step: Optional[Step] = self.state_manager.get_current_step()
-            if current_step:
-                self.event_stream_manager.log(
-                    "task", 
-                    f"Running task step: '{current_step.step_name}' – {current_step.description}",
-                    display_message=f"Running task step: '{current_step.step_name}' – {current_step.description}"
-                )
-                logger.debug(f"[ActionManager] Step {current_step.step_name} queued ({session_id})")
-
+            # current_step: Optional[Step] = self.state_manager.get_current_step()
+            # if current_step:
+            #     self._log_event_stream(
+            #         is_gui_task=is_gui_task,
+            #         event_type="task",
+            #         event=f"Running task step: '{current_step.step_name}' – {current_step.description} {context if context else ''}",
+            #         display_message=f"Running task step: '{current_step.step_name}' – {current_step.description}",
+            #         action_name=action.name,
+            #     )
+            #     logger.debug(f"[ActionManager] Step {current_step.step_name} queued ({session_id})")
+                
         else:
             logger.warning(f"Action {action.name} completed with status: {status}. But no event stream manager to log to.")
         
@@ -310,6 +310,19 @@ class ActionManager:
             started_at=started_at,
             ended_at=ended_at,
         )
+
+    def _log_event_stream(self, is_gui_task: bool, event_type: str, event: str, display_message: str, action_name: str) -> None:
+        if is_gui_task:
+            GUIHandler.gui_module.set_gui_event_stream(event)
+        else:
+            if self.event_stream_manager:
+                self.event_stream_manager.log(
+                    event_type,
+                    event,
+                    display_message=display_message, action_name=action_name,
+                )
+            else:
+                logger.warning(f"No event stream manager to log to for event type: {event_type}")
     # ------------------------------------------------------------------
     # Action execution primitives (unchanged)
     # ------------------------------------------------------------------

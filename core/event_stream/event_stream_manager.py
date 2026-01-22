@@ -9,8 +9,6 @@ running under several active tasks.
 
 
 from __future__ import annotations
-from pathlib import Path
-from typing import Dict, Optional
 from core.event_stream.event_stream import EventStream
 from core.llm_interface import LLMInterface
 from core.logger import logger

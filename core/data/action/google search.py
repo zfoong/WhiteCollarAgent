@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="google search",
     description="Performs a Google search using Google Custom Search API if credentials exist, otherwise falls back to DuckDuckGo (ddgs). Automatically returns text, image, video, or news results based on the query.",
     default=True,
+    mode="CLI",
     input_schema={
         "query": {
             "type": "string",

@@ -130,9 +130,9 @@ class TaskManager:
 
         logger.debug("LOGGGING TO EVENT STREAM")
         self.event_stream_manager.log(
-            "task",
+            "task_start",
             f"Created task: '{task_name}' with instruction: '{task_instruction}'.",
-            display_message=f"Task created → {task_name}",
+            display_message=task_name,
         )
 
         return task_id
@@ -208,11 +208,6 @@ class TaskManager:
         if new_current_step:
             if not new_current_step.action_id:
                 new_current_step.action_id = str(uuid.uuid4())
-            self.event_stream_manager.log(
-                "task",
-                f"Running new step: '{new_current_step.step_name}' – {new_current_step.description}",
-                display_message=f"Running new step: '{new_current_step.step_name}' – {new_current_step.description}",
-            )
             self.db_interface.log_task(wf)
             self._sync_state_manager(wf)
 
@@ -240,11 +235,6 @@ class TaskManager:
             )
         )
 
-        self.event_stream_manager.log(
-            "task", 
-            f"Running task step: '{step.step_name}' – {step.description}",
-            display_message=f"Running task step: '{step.step_name}' – {step.description}"
-        )
         logger.debug(f"[TaskManager] Step {step.step_name} queued ({wf.id})")
         return {"status": "queued", "step": step.step_name}
 
@@ -330,6 +320,7 @@ class TaskManager:
         await self._ensure_and_log_current_step(wf)
         self.db_interface.log_task(wf)
         self._sync_state_manager(wf)
+        logger.info(f"[TASK MANAGER] Current step index: {new_current.step_index}")
         STATE.set_agent_property("current_step_index", new_current.step_index)
         return {"status": "queued", "step": new_current.step_name}
 
@@ -368,9 +359,9 @@ class TaskManager:
         self.db_interface.log_task(wf)
         self._sync_state_manager(wf)
         self.event_stream_manager.log(
-            "task",
+            "task_end",
             f"Task ended with status '{status}'. {note or ''}",
-            display_message=f"Task {wf.name} → {status}",
+            display_message=wf.name,
         )
         STATE.set_agent_property("current_task_id", "")
         STATE.set_agent_property("action_count", 0)
