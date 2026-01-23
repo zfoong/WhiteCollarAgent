@@ -2,8 +2,8 @@ from .types import InterfaceType
 
 MODEL_REGISTRY = {
     "openai": {
-        InterfaceType.LLM: "gpt-4o",
-        InterfaceType.VLM: "gpt-4o-2024-08-06",
+        InterfaceType.LLM: "gpt-5.2-2025-12-11",
+        InterfaceType.VLM: "gpt-5.2-2025-12-11",
         InterfaceType.EMBEDDING: "text-embedding-3-small",
     },
     "gemini": {

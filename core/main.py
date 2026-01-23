@@ -20,15 +20,35 @@ load_dotenv()
 
 
 def _initial_settings() -> tuple[str, str]:
-    provider = os.getenv("LLM_PROVIDER", "byteplus")
-    key_lookup = {
-        "openai": "OPENAI_API_KEY",
-        "gemini": "GOOGLE_API_KEY",
-        "byteplus": "BYTEPLUS_API_KEY",
-    }
-    key_name = key_lookup.get(provider, "")
-    api_key = os.getenv(key_name, "") if key_name else ""
-    return provider, api_key
+    # If LLM_PROVIDER is explicitly set, use it
+    explicit_provider = os.getenv("LLM_PROVIDER")
+    if explicit_provider:
+        key_lookup = {
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GOOGLE_API_KEY",
+            "byteplus": "BYTEPLUS_API_KEY",
+        }
+        key_name = key_lookup.get(explicit_provider, "")
+        api_key = os.getenv(key_name, "") if key_name else ""
+        return explicit_provider, api_key
+
+    # Default to BytePlus if its API key is available
+    byteplus_key = os.getenv("BYTEPLUS_API_KEY", "")
+    if byteplus_key:
+        return "byteplus", byteplus_key
+
+    # Auto-detect provider based on which API key is set
+    fallback_providers = [
+        ("openai", "OPENAI_API_KEY"),
+        ("gemini", "GOOGLE_API_KEY"),
+    ]
+    for provider, key_name in fallback_providers:
+        api_key = os.getenv(key_name, "")
+        if api_key:
+            return provider, api_key
+
+    # Fallback to byteplus if no keys found (will fail at runtime)
+    return "byteplus", ""
 
 
 def _apply_api_key(provider: str, api_key: str) -> None:
