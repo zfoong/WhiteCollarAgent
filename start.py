@@ -10,6 +10,11 @@ import urllib.request
 import urllib.error
 from typing import Tuple, Optional, Dict, Any
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env if present
+load_dotenv()
+
 # --- Configuration ---
 CONFIG_FILE = "config.json"
 MAIN_APP_SCRIPT = "main.py"
@@ -19,7 +24,10 @@ REQUIREMENTS_FILE = "requirements.txt"
 OMNIPARSER_REPO_URL = "https://github.com/zfoong/OmniParser_CraftOS.git"
 OMNIPARSER_BRANCH = "CraftOS"
 OMNIPARSER_ENV_NAME = "omni"
-OMNIPARSER_SERVER_URL = "http://localhost:7861"
+OMNIPARSER_SERVER_URL = os.getenv(
+    "OMNIPARSER_BASE_URL",
+    "http://localhost:7861",
+)
 # NEW: Marker file to indicate OmniParser env is fully set up
 OMNIPARSER_MARKER_FILE = ".omniparser_setup_complete_v1"
 
@@ -519,6 +527,7 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
         )
     # === Linux & macOS Implementation ===
     else:
+        import subprocess
         python_cmd_string = shlex.join(["python", "-u", abs_main_script_path] + pass_through_args)
         shell_commands = []
         shell_commands.append('echo "--- Terminal Started ---"')
