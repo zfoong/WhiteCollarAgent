@@ -1,0 +1,86 @@
+name: Build and Release with PyInstaller
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os_label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_label: linux
+            data_sep: ":"
+            ext: ""
+          - os: windows-latest
+            os_label: windows
+            data_sep: ";"
+            ext: ".exe"
+          - os: macos-latest
+            os_label: macos
+            data_sep: ":"
+            ext: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        shell: bash
+        run: |
+          pyinstaller \
+            --noconfirm \
+            --clean \
+            --onefile \
+            --name WhiteCollarAgent \
+            --add-data "assets${{ matrix.data_sep }}assets" \
+            --add-data "config.json${{ matrix.data_sep }}config.json" \
+            start.py
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          mv "dist/WhiteCollarAgent${{ matrix.ext }}" "dist/WhiteCollarAgent-${{ matrix.os_label }}${{ matrix.ext }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os_label }}
+          path: dist/WhiteCollarAgent-${{ matrix.os_label }}${{ matrix.ext }}
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/**
+          generate_release_notes: true
