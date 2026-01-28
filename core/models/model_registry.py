@@ -11,6 +11,11 @@ MODEL_REGISTRY = {
         InterfaceType.VLM: "gemini-2.5-pro",
         InterfaceType.EMBEDDING: "text-embedding-004",
     },
+    "anthropic": {
+        InterfaceType.LLM: "claude-sonnet-4-20250514",
+        InterfaceType.VLM: "claude-sonnet-4-20250514",
+        InterfaceType.EMBEDDING: None,  # Anthropic does not provide native embedding models
+    },
     "byteplus": {
         InterfaceType.LLM: "kimi-k2-250905",
         InterfaceType.VLM: "seed-1-6-250915",

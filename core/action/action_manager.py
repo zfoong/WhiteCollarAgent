@@ -159,7 +159,7 @@ class ActionManager:
             self._log_event_stream(
                 is_gui_task=is_gui_task,
                 event_type="action_start",
-                event=f"Running action {action.name} with input: {input_data}. {context if context else ''}",
+                event=f"Running action {action.name} with input: {input_data}.",
                 display_message=f"Running {action.name}",
                 action_name=action.name,
             )
@@ -239,7 +239,7 @@ class ActionManager:
             self._log_event_stream(
                 is_gui_task=is_gui_task,
                 event_type="action_end",
-                event=f"Action {action.name} completed with output: {outputs}. {context if context else ''}",
+                event=f"Action {action.name} completed with output: {outputs}.",
                 display_message=f"{action.name} → {display_status}",
                 action_name=action.name,
             )

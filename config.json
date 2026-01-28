@@ -1,5 +1,3 @@
 {
-    "conda_environment_name": "white-collar-agent",
-    "conda_environment_created": true,
-    "omniparser_repo_path": "/home/ahmad/Work/CraftOS/WhiteCollarAgent/OmniParser_CraftOS"
+    "omniparser_repo_path": "C:\\Users\\zfoong\\Desktop\\agent\\code\\git\\WhiteCollarAgent\\OmniParser_CraftOS"
 }

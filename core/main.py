@@ -19,7 +19,13 @@ from core.agent_base import AgentBase
 load_dotenv()
 
 
-def _initial_settings() -> tuple[str, str]:
+def _initial_settings() -> tuple[str, str, bool]:
+    """Determine initial provider and API key settings.
+
+    Returns:
+        Tuple of (provider, api_key, has_valid_key) where has_valid_key
+        indicates if a working API key was found.
+    """
     # If LLM_PROVIDER is explicitly set, use it
     explicit_provider = os.getenv("LLM_PROVIDER")
     if explicit_provider:
@@ -27,35 +33,42 @@ def _initial_settings() -> tuple[str, str]:
             "openai": "OPENAI_API_KEY",
             "gemini": "GOOGLE_API_KEY",
             "byteplus": "BYTEPLUS_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
         }
         key_name = key_lookup.get(explicit_provider, "")
         api_key = os.getenv(key_name, "") if key_name else ""
-        return explicit_provider, api_key
+        # Remote (Ollama) doesn't require API key
+        has_key = bool(api_key) or explicit_provider == "remote"
+        return explicit_provider, api_key, has_key
 
     # Default to BytePlus if its API key is available
     byteplus_key = os.getenv("BYTEPLUS_API_KEY", "")
     if byteplus_key:
-        return "byteplus", byteplus_key
+        return "byteplus", byteplus_key, True
 
     # Auto-detect provider based on which API key is set
     fallback_providers = [
         ("openai", "OPENAI_API_KEY"),
         ("gemini", "GOOGLE_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
     ]
     for provider, key_name in fallback_providers:
         api_key = os.getenv(key_name, "")
         if api_key:
-            return provider, api_key
+            return provider, api_key, True
 
-    # Fallback to byteplus if no keys found (will fail at runtime)
-    return "byteplus", ""
+    # No API keys found - default to openai but flag as not configured
+    # This allows the TUI to start so user can configure settings
+    return "openai", "", False
 
 
 def _apply_api_key(provider: str, api_key: str) -> None:
+    """Apply provider and API key to environment variables."""
     key_lookup = {
         "openai": "OPENAI_API_KEY",
         "gemini": "GOOGLE_API_KEY",
         "byteplus": "BYTEPLUS_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
     }
     key_name = key_lookup.get(provider)
     if key_name and api_key:
@@ -64,13 +77,16 @@ def _apply_api_key(provider: str, api_key: str) -> None:
 
 
 async def main_async() -> None:
-    provider, api_key = _initial_settings()
+    provider, api_key, has_valid_key = _initial_settings()
     _apply_api_key(provider, api_key)
 
+    # Use deferred initialization if no valid API key is configured yet
+    # This allows the TUI to start so first-time users can configure settings
     agent = AgentBase(
         data_dir=os.getenv("DATA_DIR", "core/data"),
         chroma_path=os.getenv("CHROMA_PATH", "./chroma_db"),
         llm_provider=provider,
+        deferred_init=not has_valid_key,
     )
     await agent.run(provider=provider, api_key=api_key)
 

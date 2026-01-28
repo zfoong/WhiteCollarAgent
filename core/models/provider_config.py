@@ -12,6 +12,7 @@ class ProviderConfig:
 PROVIDER_CONFIG = {
     "openai": ProviderConfig(api_key_env="OPENAI_API_KEY"),
     "gemini": ProviderConfig(api_key_env="GOOGLE_API_KEY"),
+    "anthropic": ProviderConfig(api_key_env="ANTHROPIC_API_KEY"),
     "byteplus": ProviderConfig(
         api_key_env="BYTEPLUS_API_KEY",
         base_url_env="BYTEPLUS_BASE_URL",

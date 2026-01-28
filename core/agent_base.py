@@ -86,7 +86,8 @@ class AgentBase:
         *,
         data_dir: str = "core/data",
         chroma_path: str = "./chroma_db",
-        llm_provider: str = "byteplus",
+        llm_provider: str = "anthropic",
+        deferred_init: bool = False,
     ) -> None:
         """
         This constructor that initializes all agent components.
@@ -98,16 +99,22 @@ class AgentBase:
                 RAG components.
             llm_provider: Provider name passed to :class:`LLMInterface` and
                 :class:`VLMInterface`.
-        """        
-        
+            deferred_init: If True, allow LLM/VLM initialization to be deferred
+                until API key is configured (useful for first-time setup).
+        """
+
         # persistence & memory
         self.db_interface = self._build_db_interface(
             data_dir = data_dir, chroma_path=chroma_path
         )
 
-        # LLM + prompt plumbing
-        self.llm = LLMInterface(provider=llm_provider, db_interface=self.db_interface)
-        self.vlm = VLMInterface(provider=llm_provider)
+        # LLM + prompt plumbing (may be deferred if API key not yet configured)
+        self.llm = LLMInterface(
+            provider=llm_provider,
+            db_interface=self.db_interface,
+            deferred=deferred_init,
+        )
+        self.vlm = VLMInterface(provider=llm_provider, deferred=deferred_init)
 
         self.event_stream_manager = EventStreamManager(self.llm)
         
@@ -743,6 +750,42 @@ class AgentBase:
             reasoning=reasoning,
             action_query=action_query,
         )
+
+    # =====================================
+    # Initialization
+    # =====================================
+
+    def reinitialize_llm(self, provider: str | None = None) -> bool:
+        """Reinitialize LLM and VLM interfaces with updated configuration.
+
+        Call this after updating environment variables with new API keys.
+
+        Args:
+            provider: Optional provider to switch to. If None, uses current provider.
+
+        Returns:
+            True if both LLM and VLM were initialized successfully.
+        """
+        llm_ok = self.llm.reinitialize(provider)
+        vlm_ok = self.vlm.reinitialize(provider)
+
+        if llm_ok and vlm_ok:
+            logger.info(f"[AGENT] LLM and VLM reinitialized with provider: {self.llm.provider}")
+            # Update GUI module provider if needed
+            if hasattr(self, 'action_library') and hasattr(GUIHandler, 'gui_module'):
+                GUIHandler.gui_module = GUIModule(
+                    provider=self.llm.provider,
+                    action_library=self.action_library,
+                    action_router=self.action_router,
+                    context_engine=self.context_engine,
+                    action_manager=self.action_manager,
+                )
+        return llm_ok and vlm_ok
+
+    @property
+    def is_llm_initialized(self) -> bool:
+        """Check if the LLM interface is properly initialized."""
+        return self.llm.is_initialized
 
     # =====================================
     # Lifecycle

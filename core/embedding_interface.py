@@ -80,6 +80,11 @@ class EmbeddingInterface:
             return self._get_ollama_embedding(text)
         elif self.provider == "byteplus":
             return self._get_byteplus_embedding(text)
+        elif self.provider == "anthropic":
+            raise NotImplementedError(
+                "Anthropic does not provide native embedding models. "
+                "Consider using OpenAI or another provider for embeddings."
+            )
         else:  # pragma: no cover
             raise RuntimeError(f"Unknown provider {self.provider!r}")
 

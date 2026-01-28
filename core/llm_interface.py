@@ -41,6 +41,7 @@ class LLMInterface:
     * ``remote``  – Local Ollama HTTP endpoint (``/api/generate``)
     * ``gemini``  – Google Generative AI (Gemini) API
     * ``byteplus`` – BytePlus ModelArk Chat Completions API
+    * ``anthropic`` – Anthropic Claude API
     """
 
     _CODE_BLOCK_RE = re.compile(r"^```(?:\w+)?\s*|\s*```$", re.MULTILINE)
@@ -52,33 +53,82 @@ class LLMInterface:
         model: Optional[str] = None,
         db_interface: Optional[Any] = None,
         temperature: float = 0.0,
-        max_tokens: int = 8000
+        max_tokens: int = 8000,
+        deferred: bool = False,
     ) -> None:
         self.db_interface = db_interface
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._gemini_client: GeminiClient | None = None
-
-        INFO_KEY = "singleton"
-        info = (db_interface.get_agent_info(INFO_KEY) if db_interface else {}) or {}
-
-        resolved_provider = provider or info.get("provider", "gemini")
+        self._anthropic_client = None
+        self._initialized = False
+        self._deferred = deferred
 
         ctx = ModelFactory.create(
-            provider=resolved_provider,
+            provider=provider,
             interface=InterfaceType.LLM,
-            model_override=model or info.get("model"),
+            model_override=model,
+            deferred=deferred,
         )
+
+        logger.info(f"[LLM FACTORY] {ctx}")
 
         self.provider = ctx["provider"]
         self.model = ctx["model"]
         self.client = ctx["client"]
         self._gemini_client = ctx["gemini_client"]
         self.remote_url = ctx["remote_url"]
+        self._anthropic_client = ctx["anthropic_client"]
+        self._initialized = ctx.get("initialized", False)
 
         if ctx["byteplus"]:
             self.api_key = ctx["byteplus"]["api_key"]
             self.byteplus_base_url = ctx["byteplus"]["base_url"]
+
+    @property
+    def is_initialized(self) -> bool:
+        """Check if the LLM client is properly initialized."""
+        return self._initialized
+
+    def reinitialize(self, provider: Optional[str] = None) -> bool:
+        """Reinitialize the LLM client with current environment variables.
+
+        Args:
+            provider: Optional provider override. If None, uses current provider.
+
+        Returns:
+            True if initialization was successful, False otherwise.
+        """
+        target_provider = provider or self.provider
+        try:
+            logger.info(f"[LLM] Reinitializing with provider: {target_provider}")
+            ctx = ModelFactory.create(
+                provider=target_provider,
+                interface=InterfaceType.LLM,
+                model_override=None,
+                deferred=False,
+            )
+
+            self.provider = ctx["provider"]
+            self.model = ctx["model"]
+            self.client = ctx["client"]
+            self._gemini_client = ctx["gemini_client"]
+            self.remote_url = ctx["remote_url"]
+            self._anthropic_client = ctx["anthropic_client"]
+            self._initialized = ctx.get("initialized", False)
+
+            if ctx["byteplus"]:
+                self.api_key = ctx["byteplus"]["api_key"]
+                self.byteplus_base_url = ctx["byteplus"]["base_url"]
+
+            logger.info(f"[LLM] Reinitialized successfully with provider: {self.provider}, model: {self.model}")
+            return self._initialized
+        except EnvironmentError as e:
+            logger.warning(f"[LLM] Failed to reinitialize - missing API key: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"[LLM] Failed to reinitialize - unexpected error: {e}", exc_info=True)
+            return False
 
     # ───────────────────────────  Public helpers  ────────────────────────────
     def _generate_response_sync(
@@ -102,6 +152,8 @@ class LLMInterface:
             response = self._generate_gemini(system_prompt, user_prompt)
         elif self.provider == "byteplus":
             response = self._generate_byteplus(system_prompt, user_prompt)
+        elif self.provider == "anthropic":
+            response = self._generate_anthropic(system_prompt, user_prompt)
         else:  # pragma: no cover
             raise RuntimeError(f"Unknown provider {self.provider!r}")
 
@@ -323,6 +375,65 @@ class LLMInterface:
         except Exception as exc:  # pragma: no cover
             exc_obj = exc
             logger.error(f"Error calling BytePlus API: {exc}")
+
+        self._log_to_db(
+            system_prompt,
+            user_prompt,
+            content if content is not None else str(exc_obj),
+            status,
+            token_count_input,
+            token_count_output,
+        )
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
+
+    @log_events(name="_generate_anthropic")
+    @profile("llm_anthropic_call")
+    def _generate_anthropic(self, system_prompt: str | None, user_prompt: str) -> str:
+        token_count_input = token_count_output = 0
+        total_tokens = 0
+        status = "failed"
+        content: Optional[str] = None
+        exc_obj: Optional[Exception] = None
+
+        try:
+            if not self._anthropic_client:
+                raise RuntimeError("Anthropic client was not initialised.")
+
+            # Build the message with optional system prompt
+            message_kwargs = {
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "messages": [{"role": "user", "content": user_prompt}],
+            }
+
+            if system_prompt:
+                message_kwargs["system"] = system_prompt
+
+            # Always pass temperature for Anthropic (their default is 1.0, not 0.0)
+            message_kwargs["temperature"] = self.temperature
+
+            response = self._anthropic_client.messages.create(**message_kwargs)
+
+            # Extract content from the response
+            content = ""
+            for block in response.content:
+                if block.type == "text":
+                    content += block.text
+
+            content = content.strip()
+
+            # Token usage from Anthropic response
+            token_count_input = response.usage.input_tokens
+            token_count_output = response.usage.output_tokens
+            total_tokens = token_count_input + token_count_output
+            status = "success"
+
+        except Exception as exc:  # pragma: no cover
+            exc_obj = exc
+            logger.error(f"Error calling Anthropic API: {exc}")
 
         self._log_to_db(
             system_prompt,

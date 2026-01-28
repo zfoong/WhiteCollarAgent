@@ -6,6 +6,7 @@ import os
 import time
 from asyncio import Queue, QueueEmpty
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Awaitable, Callable, Optional, Tuple
 
 from textual import events
@@ -25,6 +26,79 @@ from textual.widgets import ListView, ListItem, Label
 from core.logger import logger
 from core.models.model_registry import MODEL_REGISTRY
 from core.models.types import InterfaceType
+from core.models.provider_config import PROVIDER_CONFIG
+
+
+def _save_settings_to_env(provider: str, api_key: str) -> bool:
+    """Save provider and API key to .env file.
+
+    Args:
+        provider: The LLM provider name
+        api_key: The API key for the provider
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    try:
+        env_path = Path(".env")
+        env_lines: list[str] = []
+
+        # Read existing .env file if it exists
+        if env_path.exists():
+            with open(env_path, "r", encoding="utf-8") as f:
+                env_lines = f.readlines()
+
+        # Get the API key environment variable name for this provider
+        key_lookup = {
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GOOGLE_API_KEY",
+            "byteplus": "BYTEPLUS_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+        }
+        api_key_env = key_lookup.get(provider)
+
+        # Update or add the LLM_PROVIDER and API key
+        updated_provider = False
+        updated_api_key = False
+
+        new_lines = []
+        for line in env_lines:
+            stripped = line.strip()
+            if stripped.startswith("LLM_PROVIDER="):
+                new_lines.append(f"LLM_PROVIDER={provider}\n")
+                updated_provider = True
+            elif api_key_env and stripped.startswith(f"{api_key_env}="):
+                if api_key:
+                    new_lines.append(f"{api_key_env}={api_key}\n")
+                    updated_api_key = True
+                # Skip empty API key lines (don't write them)
+            else:
+                new_lines.append(line if line.endswith("\n") else line + "\n")
+
+        # Add new entries if not updated
+        if not updated_provider:
+            new_lines.append(f"LLM_PROVIDER={provider}\n")
+
+        if api_key_env and api_key and not updated_api_key:
+            new_lines.append(f"{api_key_env}={api_key}\n")
+
+        # Write back to .env file
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+
+        logger.info(f"[SETTINGS] Saved provider={provider} to .env file")
+        return True
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] Failed to save to .env file: {e}")
+        return False
+
+
+def _get_api_key_env_name(provider: str) -> Optional[str]:
+    """Get the environment variable name for a provider's API key."""
+    if provider not in PROVIDER_CONFIG:
+        return None
+    return PROVIDER_CONFIG[provider].api_key_env
 
 if False:  # pragma: no cover
     from core.agent_base import AgentBase  # type: ignore
@@ -435,6 +509,14 @@ class _CraftApp(App):
         color: #666666;
     }
 
+    #menu-hint.-warning {
+        color: #ff8c00;
+    }
+
+    #menu-hint.-ready {
+        color: #00cc00;
+    }
+
     /* Command-prompt style options */
     #menu-options {
         width: 24;
@@ -565,6 +647,7 @@ class _CraftApp(App):
         "OpenAI",
         "Google Gemini",
         "BytePlus",
+        "Anthropic",
         "Ollama (remote)",
     ]
 
@@ -572,6 +655,7 @@ class _CraftApp(App):
         "openai",
         "gemini",
         "byteplus",
+        "anthropic",
         "remote",
     ]
 
@@ -584,6 +668,7 @@ class _CraftApp(App):
         "openai": "OpenAI",
         "gemini": "Google Gemini",
         "byteplus": "BytePlus",
+        "anthropic": "Anthropic",
         "remote": "Ollama (remote)",
     }
 
@@ -612,6 +697,30 @@ class _CraftApp(App):
         # Track the provider selected in settings before saving
         self._settings_provider: str = provider
 
+    def _is_api_key_configured(self) -> bool:
+        """Check if an API key is configured for the current provider."""
+        # Remote (Ollama) doesn't need API key
+        if self._provider == "remote":
+            return True
+
+        # Check local setting first
+        if self._api_key:
+            return True
+
+        # Check environment variable
+        api_key_env = _get_api_key_env_name(self._provider)
+        if api_key_env and os.getenv(api_key_env):
+            return True
+
+        return False
+
+    def _get_menu_hint(self) -> str:
+        """Generate the menu hint text based on API key configuration status."""
+        if self._is_api_key_configured():
+            return "API key configured. Press Enter on 'start' to begin."
+        else:
+            return "No API key found. Please configure in Settings before starting."
+
     def compose(self) -> ComposeResult:  # pragma: no cover - declarative layout
         yield Container(
             Container(
@@ -619,7 +728,7 @@ class _CraftApp(App):
                 Vertical(
                     Static(f"Model Provider: {self._provider}", id="provider-hint"),
                     Static(
-                        "Configure provider & key under Settings before starting.",
+                        self._get_menu_hint(),
                         id="menu-hint",
                     ),
                     id="menu-copy",
@@ -696,6 +805,7 @@ class _CraftApp(App):
                 ListItem(Label("OpenAI", classes="menu-item")),
                 ListItem(Label("Google Gemini", classes="menu-item")),
                 ListItem(Label("BytePlus", classes="menu-item")),
+                ListItem(Label("Anthropic", classes="menu-item")),
                 ListItem(Label("Ollama (remote)", classes="menu-item")),
                 id="provider-options",
             ),
@@ -724,6 +834,9 @@ class _CraftApp(App):
 
         self.show_settings = False
 
+        # Update the menu hint to reflect current API key status
+        self._update_menu_hint()
+
         # Return focus to the main menu list
         if self.show_menu and self.query("#menu-options"):
             menu = self.query_one("#menu-options", ListView)
@@ -731,6 +844,19 @@ class _CraftApp(App):
                 menu.index = 0
             menu.focus()
             self._refresh_menu_prefixes()
+
+    def _update_menu_hint(self) -> None:
+        """Update the menu hint text and styling based on API key status."""
+        if not self.query("#menu-hint"):
+            return
+
+        hint = self.query_one("#menu-hint", Static)
+        hint.update(self._get_menu_hint())
+
+        # Update styling based on API key status
+        is_configured = self._is_api_key_configured()
+        hint.set_class(not is_configured, "-warning")
+        hint.set_class(is_configured, "-ready")
 
     def _save_settings(self) -> None:
         api_key_input = self.query_one("#api-key-input", _PasteableInput)
@@ -749,13 +875,65 @@ class _CraftApp(App):
         if self._api_key:
             self._saved_api_keys[self._provider] = self._api_key
 
+        # Persist settings to .env file and update environment variables
+        if self._api_key:
+            _save_settings_to_env(self._provider, self._api_key)
+
+            # Also update current process environment variables
+            api_key_env = _get_api_key_env_name(self._provider)
+            if api_key_env:
+                os.environ[api_key_env] = self._api_key
+            os.environ["LLM_PROVIDER"] = self._provider
+
+            self.notify("Settings saved!", severity="information", timeout=2)
+        else:
+            self.notify("API key is empty - settings not saved to file", severity="warning", timeout=3)
+
         self.query_one("#provider-hint", Static).update(
             f"Model Provider: {self._provider}"
         )
         self._close_settings()
 
     def _start_chat(self) -> None:
+        # Check if API key is required and configured
+        api_key_required = self._provider not in ("remote",)  # Ollama doesn't need API key
+
+        if api_key_required:
+            # Check environment variable first, then local setting
+            api_key_env = _get_api_key_env_name(self._provider)
+            env_api_key = os.getenv(api_key_env, "") if api_key_env else ""
+            effective_api_key = self._api_key or env_api_key
+
+            if not effective_api_key:
+                self.notify(
+                    f"API key required! Please configure your {self._PROVIDER_API_KEY_NAMES.get(self._provider, self._provider)} API key in Settings.",
+                    severity="error",
+                    timeout=5,
+                )
+                return
+
+        # Check if we need to reinitialize BEFORE updating the provider:
+        # 1. LLM not initialized yet, OR
+        # 2. Provider has changed from what's currently configured
+        current_provider = self._interface._agent.llm.provider
+        needs_reinit = (
+            not self._interface._agent.is_llm_initialized or
+            current_provider != self._provider
+        )
+
+        # Configure provider (updates environment variables)
         self._interface.configure_provider(self._provider, self._api_key)
+
+        if needs_reinit:
+            success = self._interface._agent.reinitialize_llm(self._provider)
+            if not success:
+                self.notify(
+                    f"Failed to initialize LLM. Please check your API key in Settings.",
+                    severity="error",
+                    timeout=5,
+                )
+                return
+
         self._close_settings()
         self.show_menu = False
         self._interface.notify_provider(self._provider)
@@ -778,12 +956,13 @@ class _CraftApp(App):
         self.set_interval(0.5, self._tick_loading_animation)  # Loading icon animation
         self._sync_layers()
 
-        # Initialize menu selection visuals
+        # Initialize menu selection visuals and API key status
         if self.show_menu:
             menu = self.query_one("#menu-options", ListView)
             menu.index = 0
             menu.focus()
             self._refresh_menu_prefixes()
+            self._update_menu_hint()
 
     def clear_logs(self) -> None:
         """Clear chat and action logs from the display."""
@@ -1282,16 +1461,23 @@ class TUIInterface:
         await self._agent._handle_chat_message(payload)
 
     def configure_provider(self, provider: str, api_key: str) -> None:
+        """Configure environment variables for the selected provider.
+
+        Note: This only sets environment variables. To actually switch providers,
+        call agent.reinitialize_llm() after this.
+        """
         key_lookup = {
             "openai": "OPENAI_API_KEY",
             "gemini": "GOOGLE_API_KEY",
             "byteplus": "BYTEPLUS_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
         }
         key_name = key_lookup.get(provider)
         if key_name and api_key:
             os.environ[key_name] = api_key
         os.environ["LLM_PROVIDER"] = provider
-        self._agent.llm.provider = provider
+        # Note: Don't set self._agent.llm.provider here as it creates inconsistent state.
+        # The provider will be properly set when reinitialize_llm() is called.
 
     def notify_provider(self, provider: str) -> None:
         self.chat_updates.put_nowait(

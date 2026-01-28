@@ -29,25 +29,77 @@ class VLMInterface:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.5,
+        deferred: bool = False,
     ) -> None:
         self.provider = provider
         self.temperature = temperature
         self._gemini_client: GeminiClient | None = None
+        self._anthropic_client = None
+        self._initialized = False
+        self._deferred = deferred
 
         ctx = ModelFactory.create(
             provider=provider,
             interface=InterfaceType.VLM,
             model_override=model,
+            deferred=deferred,
         )
 
         self.model = ctx["model"]
         self.client = ctx["client"]
         self._gemini_client = ctx["gemini_client"]
         self.remote_url = ctx["remote_url"]
+        self._anthropic_client = ctx.get("anthropic_client")
+        self._initialized = ctx.get("initialized", False)
 
         if ctx["byteplus"]:
             self.api_key = ctx["byteplus"]["api_key"]
             self.byteplus_base_url = ctx["byteplus"]["base_url"]
+
+    @property
+    def is_initialized(self) -> bool:
+        """Check if the VLM client is properly initialized."""
+        return self._initialized
+
+    def reinitialize(self, provider: Optional[str] = None) -> bool:
+        """Reinitialize the VLM client with current environment variables.
+
+        Args:
+            provider: Optional provider override. If None, uses current provider.
+
+        Returns:
+            True if initialization was successful, False otherwise.
+        """
+        target_provider = provider or self.provider
+        try:
+            logger.info(f"[VLM] Reinitializing with provider: {target_provider}")
+            ctx = ModelFactory.create(
+                provider=target_provider,
+                interface=InterfaceType.VLM,
+                model_override=None,
+                deferred=False,
+            )
+
+            self.provider = ctx["provider"]
+            self.model = ctx["model"]
+            self.client = ctx["client"]
+            self._gemini_client = ctx["gemini_client"]
+            self.remote_url = ctx["remote_url"]
+            self._anthropic_client = ctx.get("anthropic_client")
+            self._initialized = ctx.get("initialized", False)
+
+            if ctx["byteplus"]:
+                self.api_key = ctx["byteplus"]["api_key"]
+                self.byteplus_base_url = ctx["byteplus"]["base_url"]
+
+            logger.info(f"[VLM] Reinitialized successfully with provider: {self.provider}, model: {self.model}")
+            return self._initialized
+        except EnvironmentError as e:
+            logger.warning(f"[VLM] Failed to reinitialize - missing API key: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"[VLM] Failed to reinitialize - unexpected error: {e}", exc_info=True)
+            return False
 
     # ───────────────────────── Public ─────────────────────────
     # Should only be used when looking for specific attributes/items in
@@ -66,12 +118,16 @@ class VLMInterface:
             
             if self.provider == "openai":
                 response = self._openai_describe_bytes(image_bytes, system_prompt, user_prompt)
-            if self.provider == "remote":
+            elif self.provider == "remote":
                 response = self._ollama_describe_bytes(image_bytes, system_prompt, user_prompt)
-            if self.provider == "gemini":
+            elif self.provider == "gemini":
                 response = self._gemini_describe_bytes(image_bytes, system_prompt, user_prompt)
-            if self.provider == "byteplus":
+            elif self.provider == "byteplus":
                 response = self._byteplus_describe_bytes(image_bytes, system_prompt, user_prompt)
+            elif self.provider == "anthropic":
+                response = self._anthropic_describe_bytes(image_bytes, system_prompt, user_prompt)
+            else:
+                raise RuntimeError(f"Unknown provider {self.provider!r}")
             
             cleaned = re.sub(self._CODE_BLOCK_RE, "", response.get("content", "").strip())
             
@@ -214,11 +270,72 @@ class VLMInterface:
                 or ""
             ).strip()
             total_tokens = result.get("usage", {}).get("total_tokens", 0)
-            
+
             return {
                 "tokens_used": total_tokens or 0,
                 "content": content or ""
             }
 
         return ""
+
+    def _anthropic_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
+        if not self._anthropic_client:
+            raise RuntimeError("Anthropic client was not initialised.")
+
+        img_b64 = base64.b64encode(image_bytes).decode()
+
+        # Detect media type from image bytes (default to jpeg)
+        media_type = "image/jpeg"
+        if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+            media_type = "image/png"
+        elif image_bytes[:4] == b'GIF8':
+            media_type = "image/gif"
+        elif image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+            media_type = "image/webp"
+
+        # Build message content with image
+        message_content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": img_b64,
+                },
+            },
+            {
+                "type": "text",
+                "text": usr,
+            },
+        ]
+
+        message_kwargs = {
+            "model": self.model,
+            "max_tokens": 2048,
+            "messages": [{"role": "user", "content": message_content}],
+        }
+
+        if sys:
+            message_kwargs["system"] = sys
+
+        # Always pass temperature for Anthropic (their default is 1.0, not 0.0)
+        message_kwargs["temperature"] = self.temperature
+
+        response = self._anthropic_client.messages.create(**message_kwargs)
+
+        # Extract content from the response
+        content = ""
+        for block in response.content:
+            if block.type == "text":
+                content += block.text
+
+        content = content.strip()
+
+        # Token usage from Anthropic response
+        total_tokens = response.usage.input_tokens + response.usage.output_tokens
+
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
 

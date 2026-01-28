@@ -22,6 +22,7 @@ dependencies:
   - pip:
       - openai>=1.0.0
       - google-generativeai>=0.6.0
+      - anthropic>=0.25.0
       - chromadb
       - tiktoken
       - langgraph
