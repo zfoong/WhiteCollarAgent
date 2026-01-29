@@ -26,9 +26,26 @@ from core.prompt import EVENT_STREAM_SUMMARIZATION_PROMPT
 from sklearn.feature_extraction.text import TfidfVectorizer
 from core.logger import logger
 import threading
+import tiktoken
 
 SEVERITIES = ("DEBUG", "INFO", "WARN", "ERROR") # TODO duplicated declare in event and event stream
 MAX_EVENT_INLINE_CHARS = 8000
+
+# Token counting utility
+_tokenizer = None
+
+def _get_tokenizer():
+    """Get or create the tiktoken tokenizer (cached for performance)."""
+    global _tokenizer
+    if _tokenizer is None:
+        _tokenizer = tiktoken.get_encoding("cl100k_base")
+    return _tokenizer
+
+def count_tokens(text: str) -> int:
+    """Count the number of tokens in a text string using tiktoken."""
+    if not text:
+        return 0
+    return len(_get_tokenizer().encode(text))
 
 class EventStream:
     """
@@ -41,24 +58,29 @@ class EventStream:
         self,
         *,
         llm: LLMInterface,
-        summarize_at: int = 30,
-        tail_keep_after_summarize: int = 15,
+        summarize_at_tokens: int = 8000,
+        tail_keep_after_summarize_tokens: int = 4000,
         temp_dir: Path | None = None,
     ) -> None:
         self.head_summary: Optional[str] = None
         self.llm = llm
         self.tail_events: List[EventRecord] = []
-        self.summarize_at = summarize_at
-        self.tail_keep_after_summarize = tail_keep_after_summarize
+        self.summarize_at_tokens = summarize_at_tokens
+        self.tail_keep_after_summarize_tokens = tail_keep_after_summarize_tokens
         self.temp_dir = temp_dir
-        
-        MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION= 10
-        if tail_keep_after_summarize + MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION > summarize_at:
-            logger.warning(f"Value for tail_keep_after_summarize is larger than summarize_at. Resetting tail_keep_after_summarize to {summarize_at - MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION}")
-            tail_keep_after_summarize = summarize_at - MINIMUM_BUFFER_BEFORE_NEXT_SUMMARIZATION
-           
+
+        MINIMUM_BUFFER_TOKENS_BEFORE_NEXT_SUMMARIZATION = 2000
+        if tail_keep_after_summarize_tokens + MINIMUM_BUFFER_TOKENS_BEFORE_NEXT_SUMMARIZATION > summarize_at_tokens:
+            logger.warning(
+                f"[EventStream] Value for tail_keep_after_summarize_tokens ({tail_keep_after_summarize_tokens}) "
+                f"is too large relative to summarize_at_tokens ({summarize_at_tokens}). "
+                f"Resetting tail_keep_after_summarize_tokens to {summarize_at_tokens - MINIMUM_BUFFER_TOKENS_BEFORE_NEXT_SUMMARIZATION}"
+            )
+            self.tail_keep_after_summarize_tokens = summarize_at_tokens - MINIMUM_BUFFER_TOKENS_BEFORE_NEXT_SUMMARIZATION
+
         self._summarize_task: asyncio.Task | None = None
         self._lock = threading.RLock()
+        self._total_tokens: int = 0
 
     # ────────────────────────────── logging ──────────────────────────────
 
@@ -98,6 +120,7 @@ class EventStream:
         rec = EventRecord(event=ev)
 
         self.tail_events.append(rec)
+        self._total_tokens += count_tokens(rec.compact_line())
         self.summarize_if_needed()
         return len(self.tail_events) - 1
 
@@ -143,12 +166,12 @@ class EventStream:
 
     def summarize_if_needed(self) -> None:
         """
-        Trigger summarization when the tail exceeds the configured threshold.
+        Trigger summarization when the tail token count exceeds the configured threshold.
 
         Uses asyncio.create_task to schedule summarize_by_LLM() without requiring
         callers of log() to be async/await.
         """
-        if len(self.tail_events) < self.summarize_at:
+        if self._total_tokens < self.summarize_at_tokens:
             return
 
         if self._summarize_task is not None and not self._summarize_task.done():
@@ -160,6 +183,7 @@ class EventStream:
             logger.warning("[EventStream] No running event loop; cannot schedule summarization.")
             return
 
+        logger.debug(f"[EventStream] Triggering summarization: {self._total_tokens} tokens >= {self.summarize_at_tokens} threshold")
         self._summarize_task = loop.create_task(self.summarize_by_LLM(), name="eventstream_summarize")
         self._summarize_task.add_done_callback(self._on_summarize_done)
             
@@ -170,6 +194,27 @@ class EventStream:
             return
         except Exception:
             logger.exception("[EventStream] summarize_by_LLM task crashed unexpectedly")        
+
+    def _find_token_cutoff(self, events: List[EventRecord], keep_tokens: int) -> int:
+        """
+        Find the cutoff index such that events from cutoff to end have approximately keep_tokens.
+        Returns the number of events to summarize (from the beginning).
+        """
+        if not events:
+            return 0
+
+        # Calculate tokens from the end, accumulating until we reach keep_tokens
+        tokens_from_end = 0
+        keep_count = 0
+        for rec in reversed(events):
+            event_tokens = count_tokens(rec.compact_line())
+            if tokens_from_end + event_tokens > keep_tokens:
+                break
+            tokens_from_end += event_tokens
+            keep_count += 1
+
+        # Return how many events to summarize (from the beginning)
+        return len(events) - keep_count
 
     async def summarize_by_LLM(self) -> None:
         """
@@ -185,13 +230,14 @@ class EventStream:
             if not self.tail_events:
                 return
 
-            cutoff = max(0, len(self.tail_events) - self.tail_keep_after_summarize)
+            # Find cutoff based on tokens to keep
+            cutoff = self._find_token_cutoff(self.tail_events, self.tail_keep_after_summarize_tokens)
 
             if cutoff <= 0:
                 # Nothing old enough to summarize
                 return
 
-            chunk = list(self.tail_events[:cutoff]) 
+            chunk = list(self.tail_events[:cutoff])
             first_ts = chunk[0].ts if chunk else None
             last_ts = chunk[-1].ts if chunk else None
             window = ""
@@ -207,7 +253,7 @@ class EventStream:
             llm_output = await self.llm.generate_response_async(user_prompt=prompt)
             new_summary = (llm_output or "").strip()
             # timestamp can be added here. For example: (from 'start time' to 'end time')
-            
+
             logger.debug(f"[EVENT STREAM SUMMARIZATION] llm_output_len={len(llm_output or '')}")
 
             if not new_summary:
@@ -217,6 +263,9 @@ class EventStream:
             # Apply + prune under lock
             with self._lock:
                 self.head_summary = new_summary
+                # Calculate tokens being removed
+                removed_tokens = sum(count_tokens(r.compact_line()) for r in self.tail_events[:cutoff])
+                self._total_tokens -= removed_tokens
                 if cutoff >= len(self.tail_events):
                     self.tail_events = []
                 else:
@@ -296,3 +345,4 @@ class EventStream:
         """
         self.head_summary = None
         self.tail_events.clear()
+        self._total_tokens = 0
