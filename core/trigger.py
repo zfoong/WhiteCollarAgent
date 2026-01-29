@@ -73,16 +73,6 @@ class TriggerQueue:
             )
         logger.debug("=" * 70 + "\n")
 
-    def create_conversation_history_state(self):
-        """Return formatted conversation history for trigger comparison."""
-        conversation_state = STATE.conversation_state
-        if conversation_state:
-            return (
-                "This is the conversation history (from oldest to newest messages):"
-                f"\n{conversation_state}"
-            )
-        return "There is no stored conversation history for the current session yet."
-
     def create_event_stream_state(self):
         """Return formatted event stream content for trigger comparison."""
         event_stream = STATE.event_stream
@@ -105,7 +95,6 @@ class TriggerQueue:
         """Compose session context for trigger handling from component states."""
 
         sections = [
-            self.create_conversation_history_state(),
             self.create_event_stream_state(),
             self.create_task_state(),
         ]

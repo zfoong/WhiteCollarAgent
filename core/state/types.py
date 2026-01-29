@@ -1,4 +1,4 @@
-from typing import Any, Dict, Literal, NamedTuple, TypedDict
+from typing import Any, Dict, NamedTuple
 from core.config import MAX_ACTIONS_PER_TASK, MAX_TOKEN_PER_TASK
 from core.logger import logger
 
@@ -51,11 +51,6 @@ class AgentProperties:
             "token_count": self.token_count,
             "max_tokens_per_task": self.max_tokens_per_task,
         }
-
-class ConversationMessage(TypedDict):
-    role: Literal["user", "agent"]
-    content: str
-    timestamp: str
 
 class ReasoningResult(NamedTuple):
     reasoning: str

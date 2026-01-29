@@ -372,50 +372,6 @@ OLDEST_EVENTS_CHUNK (compact lines):
 <events>
 """
 
-CONVERSATION_SUMMARIZATION_PROMPT = """
-<objective>
-You are summarizing a conversation history between a user and an AI agent to reduce token usage while preserving
-ALL information that is contextually important for maintaining conversation continuity and understanding user intent.
-</objective>
-
-<context>
-Time window of messages to roll up: {window}
-
-You are given:
-1) The PREVIOUS_HEAD_SUMMARY (accumulated summary of older conversation messages).
-2) The OLDEST_MESSAGES_CHUNK (conversation messages now being rolled up).
-</context>
-
-<rules>
-- Produce a NEW_HEAD_SUMMARY that integrates the PREVIOUS_HEAD_SUMMARY with the OLDEST_MESSAGES_CHUNK.
-- Keep only contextually relevant information:
-  • user preferences, requirements, and explicit instructions
-  • key topics discussed and decisions made
-  • important context about tasks, files, or entities mentioned
-  • user feedback, corrections, or clarifications
-  • agent responses that establish important context or agreements
-  • unresolved questions or pending items
-- Remove redundant greetings, acknowledgments, or low-value conversational filler.
-- Preserve the conversational flow and context needed for the agent to respond appropriately.
-- Prefer concise narrative format; keep it readable and compact (aim ~250–350 words).
-- Do NOT include the recent (unsummarized) tail messages; we only rewrite the head summary.
-</rules>
-
-<output_format>
-Output ONLY the NEW_HEAD_SUMMARY as plain text in paragraph format (no JSON, no preface, no list).
-</output_format>
-
-<previous_head_summary>
-{previous_summary}
-</previous_head_summary>
-
-<messages>
-OLDEST_MESSAGES_CHUNK:
-
-{compact_lines}
-</messages>
-"""
-
 AGENT_ROLE_PROMPT = """
 <role>
 {role}

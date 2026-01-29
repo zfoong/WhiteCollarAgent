@@ -308,7 +308,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": not is_task, "policy": False},
+                system_flags={"agent_info": not is_task, "event_stream": True, "task_state": not is_task, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             decision, parse_error = self._parse_action_decision(raw_response)
@@ -335,7 +335,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"role_info": not is_task, "agent_info": not is_task, "conversation_history": not is_task, "event_stream": False, "gui_event_stream": not is_task, "task_state": not is_task, "policy": False},
+                system_flags={"role_info": not is_task, "agent_info": not is_task, "event_stream": False, "gui_event_stream": not is_task, "task_state": not is_task, "policy": False},
             )
             if image_bytes:
                 raw_response = await self.vlm_interface.generate_response_async(

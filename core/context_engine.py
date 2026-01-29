@@ -99,18 +99,6 @@ class ContextEngine:
             gui_mode_status = "GUI mode" if STATE.gui_mode else "CLI mode"
             return f"\nThe current agent state:\n- Current Mode: {gui_mode_status}"
 
-    def create_system_conversation_history(self):
-        """Return formatted conversation history for the current session."""
-
-        conversation_state = STATE.conversation_state
-
-        if conversation_state:
-            return (
-                "\nThis is the conversation history (from oldest to newest messages):"
-                f"\n{conversation_state}"
-            )
-        return "There is no stored conversation history for the current session yet."
-
     def create_system_event_stream_state(self):
         """Return formatted event stream context for the current session."""
 
@@ -208,8 +196,8 @@ class ContextEngine:
         Assembles the system and user messages for the LLM with configurable sections.
 
         :param system_flags: Optional dict of booleans to enable/disable system sections.
-            Supported keys: ``agent_info``, ``role_info``, ``conversation_history``,
-            ``event_stream``, ``task_state``, ``policy``, ``environment`` and
+            Supported keys: ``agent_info``, ``role_info``, ``event_stream``,
+            ``gui_event_stream``, ``task_state``, ``policy``, ``environment`` and
             ``base_instruction``. Defaults to all enabled except ``policy``.
         :param user_flags: Optional dict of booleans to enable/disable user sections.
             Supported keys: ``query`` and ``expected_output``. Defaults to ``query``
@@ -220,7 +208,6 @@ class ContextEngine:
             "role_info": True,
             "agent_info": True,
             "agent_state": self.state_manager.is_running_task(),
-            "conversation_history": True,
             "event_stream": True,
             "gui_event_stream": False,
             "task_state": True,
@@ -240,7 +227,6 @@ class ContextEngine:
             ("role_info", self.create_system_role_info),
             ("agent_info", self.create_system_agent_info),
             ("agent_state", self.create_system_agent_state),
-            ("conversation_history", self.create_system_conversation_history),
             ("event_stream", self.create_system_event_stream_state),
             ("gui_event_stream", self.create_system_gui_event_stream_state),
             ("task_state", self.create_system_task_state),

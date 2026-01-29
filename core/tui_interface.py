@@ -1433,8 +1433,7 @@ class TUIInterface:
         if await self._maybe_handle_command(message):
             return
 
-        await self.chat_updates.put(("You", message, "user"))
-
+        # Note: User message will be displayed via event stream when record_user_message is called
         # Set state to working when user submits a message
         self._agent_state = "working"
         status = self._generate_status_message()
@@ -1806,8 +1805,10 @@ class TUIInterface:
             return "action"
         if kind in {"screen", "info", "note"}:
             return "info"
-        if kind == "user":
+        if kind in {"user", "user message"}:
             return "user"
+        if kind in {"agent", "agent message"}:
+            return "agent"
         return "agent"
 
     @staticmethod

@@ -137,7 +137,7 @@ class InternalActionInterface:
         message: str,
     ) -> None:
         """
-        Record an agent-authored chat message and publish it to the event stream.
+        Record an agent-authored chat message to the event stream.
 
         Args:
             message: Text content the agent wants to send to the user or log.
@@ -148,15 +148,8 @@ class InternalActionInterface:
         if InternalActionInterface.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with StateManager.")
 
+        # record_agent_message logs to event stream and bumps state
         InternalActionInterface.state_manager.record_agent_message(message)
-
-        event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
-        event_stream_manager.log(
-            "agent",
-            message,
-            display_message=message
-        )
-        InternalActionInterface.state_manager.bump_event_stream()
 
     @staticmethod
     def do_ignore():

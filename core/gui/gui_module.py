@@ -273,14 +273,13 @@ class GUIModule:
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
             system_flags={
-                "policy": False, 
-                "gui_event_stream": False, 
-                "event_stream": False, 
-                "task_state": False, 
-                "conversation_history": False, 
-                "agent_info": False, 
-                "role_info": False, 
-                "agent_state": False, 
+                "policy": False,
+                "gui_event_stream": False,
+                "event_stream": False,
+                "task_state": False,
+                "agent_info": False,
+                "role_info": False,
+                "agent_state": False,
                 "base_instruction": False,
                 "environment": False,
             }
@@ -347,15 +346,14 @@ class GUIModule:
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
             system_flags={
-                "policy": False, 
-                "gui_event_stream": False, 
-                "event_stream": False, 
-                "task_state": False, 
-                "conversation_history": False, 
-                "agent_info": False, 
-                "role_info": False, 
-                "agent_state": False, 
-                "base_instruction": False, 
+                "policy": False,
+                "gui_event_stream": False,
+                "event_stream": False,
+                "task_state": False,
+                "agent_info": False,
+                "role_info": False,
+                "agent_state": False,
+                "base_instruction": False,
                 "environment": False,
             }
         )
