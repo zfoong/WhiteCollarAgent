@@ -82,7 +82,7 @@ class ActionRouter:
             Dict[str, Any]: Parsed decision containing ``action_name`` and
             ``parameters`` ready for execution or creation.
         """
-        conversation_mode_actions = ["send message", "ask question", "create and start task", "ignore"]
+        conversation_mode_actions = ["send message", "ask question", "start task", "update todos", "end task", "ignore"]
         action_candidates = []
         
         for action in conversation_mode_actions:
@@ -144,7 +144,7 @@ class ActionRouter:
         action_name_candidates = []
     
         # List of filtered default actions when creating task
-        ignore_actions = ["create and start task", "ignore"]
+        ignore_actions = ["ignore"]
     
         # Retrieve default actions (could be multiple)
         default_actions = self.action_library.retrieve_default_action()
@@ -245,7 +245,7 @@ class ActionRouter:
         action_name_candidates = []
     
         # List of filtered default actions when creating task
-        ignore_actions = ["create and start task", "ignore"]
+        ignore_actions = ["ignore"]
     
         # Additional candidate actions from search
         candidate_names = self.action_library.search_action(query, top_k=50)

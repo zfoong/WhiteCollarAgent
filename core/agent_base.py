@@ -3,22 +3,21 @@
 core.agent_base
 
 Generic, extensible agent that serves every role-specific AI worker.
-This is a vanilla “base agent”, can be launched by instantiating **AgentBase**
+This is a vanilla "base agent", can be launched by instantiating **AgentBase**
 with default arguments; specialised agents simply subclass and override
 or extend the protected hooks.
 
 White Collar Agent is an open-source, light version of AI agent developed by CraftOS.
 Here are the core features:
-- Planning
+- Todo-based task tracking
 - Can switch between CLI/GUI mode
-- Contain task document for few-shot examples
 
 Main agent cycle:
 - Receive query from user
 - Reply or create task
 - Task cycle:
-    - Planning
-    - Action
+    - Action selection and execution
+    - Update todos
     - Repeat until completion
 """
 
@@ -50,7 +49,6 @@ from core.trigger import Trigger, TriggerQueue
 from core.prompt import STEP_REASONING_PROMPT
 from core.state.types import ReasoningResult
 from core.task.task_manager import TaskManager
-from core.task.task_planner import TaskPlanner
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.gui.gui_module import GUIModule
 from core.gui.handler import GUIHandler
@@ -120,14 +118,6 @@ class AgentBase:
         
         # action & task layers
         self.action_library = ActionLibrary(self.llm, db_interface=self.db_interface)
-        
-        self.task_docs_path = "core/data/task_document"
-        if self.task_docs_path:
-            try:
-                stats = self.db_interface.ingest_task_documents_from_folder(self.task_docs_path)
-                logger.debug(f"[TASKDOC SYNC] folder={self.task_docs_path} → {stats}")
-            except Exception:
-                logger.error("[TASKDOC SYNC] Failed to ingest task documents", exc_info=True)
 
         self.triggers = TriggerQueue(llm=self.llm)
 
@@ -143,10 +133,7 @@ class AgentBase:
         )
         self.action_router = ActionRouter(self.action_library, self.llm, self.vlm, self.context_engine)
 
-        self.task_planner = TaskPlanner(llm_interface=self.llm, db_interface=self.db_interface, fewshot_top_k=1, context_engine=self.context_engine)
         self.task_manager = TaskManager(
-            self.task_planner,
-            self.triggers,
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
             state_manager=self.state_manager,
@@ -302,19 +289,17 @@ class AgentBase:
         self, trigger_data: TriggerData, session_id: str
     ) -> dict:
         """
-        Handle GUI mode task step execution.
-        
+        Handle GUI mode task execution.
+
         Returns:
             Dictionary with action_output, new_session_id, and event_stream_summary
         """
-        current_step = self.state_manager.get_current_step()
-        # if current_step is None:
-        #     raise ValueError("No current step found in StateManager")
+        current_todo = self.state_manager.get_current_todo()
 
         logger.debug("[GUI MODE] Entered GUI mode.")
-        
+
         gui_response = await GUIHandler.gui_module.perform_gui_task_step(
-            step=current_step,
+            step=current_todo,
             session_id=session_id,
             next_action_description=trigger_data.query,
             parent_action_id=trigger_data.parent_id,
@@ -359,7 +344,7 @@ class AgentBase:
         Returns:
             Tuple of (action_decision, reasoning)
         """
-        reasoning_result = await self._perform_reasoning(query=query)
+        reasoning_result = await self._perform_reasoning(query=query, log_reasoning_event=True)
         logger.debug(f"[AGENT QUERY] {reasoning_result.action_query}")
         
         action_decision = await self.action_router.select_action_in_task(
@@ -395,13 +380,9 @@ class AgentBase:
                 "Check DB connectivity or ensure the action is registered."
             )
         
-        # Determine parent action ID
+        # Use provided parent ID or None
         parent_id = initial_parent_id
-        if not parent_id and self.state_manager.is_running_task():
-            current_step = self.state_manager.get_current_step()
-            if current_step and current_step.action_id:
-                parent_id = current_step.action_id
-        
+
         return action, action_params, parent_id or None
 
     async def _execute_action(
@@ -533,7 +514,7 @@ class AgentBase:
         # No limits close or reached
         return True
 
-    async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
+    async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = True) -> ReasoningResult:
         """
         Perform LLM-based reasoning on a user query to guide action selection.
 
@@ -612,15 +593,6 @@ class AgentBase:
                 # Nothing to schedule if no task is running
                 return
 
-            # Resolve current step for parent action ID
-            parent_action_id = None
-            try:
-                current_step = self.state_manager.get_current_step()
-                if current_step:
-                    parent_action_id = current_step.action_id
-            except Exception as e:
-                logger.error(f"[TRIGGER] Failed to get current step for session {new_session_id}: {e}", exc_info=True)
-
             # Delay logic
             fire_at_delay = 0.0
             try:
@@ -638,10 +610,9 @@ class AgentBase:
                     Trigger(
                         fire_at=fire_at,
                         priority=5,
-                        next_action_description="Perform the next best action for the task based on the plan and event stream",
+                        next_action_description="Perform the next best action for the task based on the todos and event stream",
                         session_id=new_session_id,
                         payload={
-                            "parent_action_id": parent_action_id,
                             "gui_mode": STATE.gui_mode,
                         },
                     )

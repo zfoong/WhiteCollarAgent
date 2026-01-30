@@ -13,7 +13,7 @@ class AgentState:
     current_task: Optional[Task] = None
     event_stream: Optional[str] = None
     gui_mode: bool = False
-    agent_properties: AgentProperties = AgentProperties(current_task_id="", action_count=0, current_step_index=0)
+    agent_properties: AgentProperties = AgentProperties(current_task_id="", action_count=0)
 
     def update_current_task(self, new_task: Optional[Task]) -> None:
         self.current_task = new_task

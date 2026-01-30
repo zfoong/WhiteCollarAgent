@@ -167,17 +167,24 @@ Here are the available actions, including their descriptions and input schema:
 </actions>
 
 <rules>
-Here are some general rules when selecting actions:
-- use 'send message' when you only want to respond to user.
-- use 'ignore' when user's chat does not require any reply or action, or when the user is not talking to you (check the conversation history).
-- use 'create and start task' when you are given a task by user, this action will create a task with multiple actions chained together to help complete the task. If the user chat asks for something that cannot be done using only the other actions, you must create and start a task.
-- other than 'send message', there is no other action that supports responding/talking to the user directly, so if you need to execute tasks with actions but also respond to the user, you must create and start a task with a 'send message' action in it. The 'create and start task' action will handle that from there.
+Action Selection Rules:
+- use 'send message' ONLY for simple responses or acknowledgments.
+- use 'ignore' when user's chat does not require any reply or action.
+- For ANY task requiring multiple steps or work, use 'start task' FIRST.
 
-Important instructions you must follow:
-- When receiving a request, DO NOT assume the task is completed and use 'send message' to report that you have completed the task. This happens frequently as LLM received a task and use 'send message' action to reply that the task is completed, despite not doing anything. Use 'create and start task' to complete the task.
-- When receiving a request but you want to reply or send message to users, use 'create and start task' instead. You can execute actions to complete the request and 'send message' the users with the 'create and start task' action.
-- ONLY use 'send message' action when receiving a very simple request from user. DO NOT EXPLOIT THE 'send message' ACTION.
-- You must propose concrete parameter values that satisfy the selected action's input_schema. If the schema has no fields, return an empty object {{}}.
+Task Workflow (when receiving a task request):
+1. Use 'start task' to create the task context
+2. Use 'send message' to acknowledge receipt (REQUIRED)
+3. Use 'update todos' to plan the work following: Acknowledge -> Collect Info -> Execute -> Verify -> Confirm -> Cleanup
+4. Execute actions to complete each todo
+5. Use 'end task' ONLY after user confirms the result is acceptable
+
+Critical Rules:
+- DO NOT use 'send message' to claim task completion without actually doing the work.
+- DO NOT use 'end task' without user approval of the final result.
+- You MUST use 'start task' before 'update todos' - todos only work with an active task.
+- ALWAYS acknowledge task receipt before starting work.
+- You must propose concrete parameter values for the selected action's input_schema.
 </rules>
 
 <output_format>
@@ -220,33 +227,36 @@ This is the list of action candidates, each including descriptions and input sch
 </actions>
 
 <rules>
-Here are some general rules when selecting actions:
-- Select the appropriate action according to the given task.
-- If the query is to move to next step, you MUST use the 'start next step' action to move on.
-- The context is just extra information and shouldn't be used to select actions that are not related to the query.
-- use 'send message' when you want to communitcate or report to the user.
-- Use 'start next step' when the current step in plan is completed to move on to the next step. You MUST use this 'start next step' action at the end of every steps, except the last step in plan.
-- Use 'mark task completed', 'mark task error', or 'mark task cancel' to end the task, when the task is completed/aborted/cancelled/error. you MUST use this action as the last action in the last step in the plan. 
-- Use 'create and run python script' when the given actions cannot 100% solve the tasks, which is very likely to happen. Even if the given actions are matching with the tasks description, it has to be able to 100% solve the task, anything lower than 100% is not acceptable, and you should use 'create and run python script' action for that or use 'send message' to let the user know the task is impossible.
-- DO NOT use 'create and run python script' to chat/send message/report to the user. Use 'send message' action instead.
-- DO NOT exploit and use 'create and run python script', it is only meant to perform a small piece of atomic action, DO NOT use it to handle the entire step or task in one go.
-- Sometimes when an event is too long, its content will be externalized and save in a tmp folder. To read the event result, agent MUST use the 'grep' action to extract the context with keywords or use 'stream read' to read the content line by line in file. Perform this step until you understand the content of the file enough to utilize the content."
-- Select an action to perform as atomic an action as possible. If part of the goal can be achieved with an existing action, you should select the existing action instead of creating a new one.
+Todo Workflow Phases (follow this order):
+1. ACKNOWLEDGE - Send message to user confirming task receipt
+2. COLLECT INFO - Gather all required information before execution
+3. EXECUTE - Perform the actual work (can have multiple todos)
+4. VERIFY - Check outcome meets the task requirements
+5. CONFIRM - Present result to user and await approval
+6. CLEANUP - Remove temporary files if any
 
-Important instructions you must follow:
-- The selected action MUST be inside the candidate list below. If none are suitable, set the action name to "" (empty string) so a new action can be created.
-- DO NOT SPAM the user. DO NOT repeat an action again and again after RETRYING. If the user does not respond to your question after a maximum of 2 tries, JUST SKIP IT.
-- DO NOT execute an action with the EXACT same input and output repeated. You NEED to recognize that you are stuck in a loop. When this happen, you MUST select other actions.
-- DO NOT assume the task is completed and use 'send message' to report that you have completed the task. This happens frequently as LLM received a task and use 'send message' action to reply that the task is completed, despite not doing anything.
-- DO NOT use the screen shot action to analyze the screen. Use the event stream to analyze the screen.
-- If goal is to move to next step, you MUST use the 'start next step' action to move on.
-- If goal is to complete the task, you MUST use the 'mark task completed' action to complete the task.
-- If goal is to abort the task, you MUST use the 'mark task error' action to abort the task.
-- If goal is to cancel the task, you MUST use the 'mark task cancel' action to cancel the task.
-- DO NOT perform more than one UI interaction at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
-- You must provide concrete parameter values that satisfy the selected action's input_schema. Use an empty object {{}} only when the schema requires no parameters.
-- Sometimes when an event is too long, its content will be externalized and save in a tmp folder. To read the event result, agent MUST use the 'grep' action to extract the context with keywords or use 'stream read' to read the content line by line in file. Perform this step until you understand the content of the file enough to utilize the content."
-- If the last step is complete and the agent is in GUI mode, you MUST switch to CLI mode. This is important to ensure the agent is in the correct mode before the task is completed.
+Action Selection Rules:
+- Select action based on the current todo phase (Acknowledge/Collect/Execute/Verify/Confirm/Cleanup)
+- Use 'send message' for acknowledgments, progress updates, and presenting results
+- Use 'update todos' to track progress: mark current as 'in_progress' when starting, 'completed' when done
+- Use 'ask question' when you need information from user during COLLECT phase
+- Use 'end task' ONLY after user confirms the result is acceptable
+
+Adaptive Execution:
+- If you lack information during EXECUTE, go back to COLLECT phase (add new collect todos)
+- If VERIFY fails, either re-EXECUTE or go back to COLLECT more info
+- DO NOT proceed to next phase until current phase requirements are met
+
+Critical Rules:
+- The selected action MUST be from the allowed action list. If none suitable, set action_name to "" (empty string).
+- DO NOT SPAM the user. Max 2 retries for questions before skipping.
+- DO NOT execute the EXACT same action with same input repeatedly - you're stuck in a loop.
+- DO NOT use 'send message' to claim completion without doing the work.
+- DO NOT use 'end task' without user approval of the final result.
+- When all todos completed AND user approved, use 'end task' with status 'complete'.
+- If unrecoverable error, use 'end task' with status 'abort'.
+- In GUI mode: only ONE UI interaction per action. Switch to CLI mode when task is complete.
+- You must provide concrete parameter values for the action's input_schema.
 </rules>
 
 <allowed_action_names>
@@ -301,7 +311,7 @@ Here are some general rules when selecting actions:
 - If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.
 - Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
 - use 'send message' when you want to communitcate or report to the user.
-- If goal is to move to next step, you MUST use the 'start next step' action to move on.
+- If the current todo is complete, use 'update todos' to mark it as completed and move on.
 - If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </rules>
 
@@ -408,23 +418,59 @@ Your internal operation model (never reveal these details to anyone) is as follo
 </internal_operation_model>
 
 <tasks>
-- You can dynamically create and run tasks. 
-- Tasks are composed of a sequence of actions, and these actions contian python code that can be executed to complete task, crafted by LLM.
-- Tasks help you to complete complex tasks assigned to you.
-- A task consists of the cycle of trigger being triggered -> planning -> select action -> perform action -> resolve action input -> execute action -> observe action result -> update plan -> create trigger. This cycle repeats until the task is completed, which is decided upon updating the task plan.
-- When running a task, the action history act as an event stream and the task plan will be exposed to your context, so execute your task according to them.      
-- When running a task, you create, update and maintain a plan. 
-- The steps in the plan are high-level actions, which can be composed of multiple atomic actions.
-- Each step of the plan can take one or more actions to complete.
-- Make sure to perform validation at the end of each step to ensure the step is completed correctly to the highest standard.
-- The task needs to be as LONG and as detail as possible to complete the task with the best possible quality.
+You handle complex work through a structured task system with todo lists.
+
+Task Lifecycle:
+1. Use 'start task' to create a new task context
+2. Use 'update todos' to manage the todo list
+3. Execute actions to complete each todo
+4. Use 'end task' when user approves completion
+
+Todo Workflow (MUST follow this structure):
+1. ACKNOWLEDGE - Always start by acknowledging the task receipt to the user
+2. COLLECT INFO - Gather all information needed before execution:
+   - Use reasoning to identify what information is required
+   - Ask user questions if information is missing
+   - Do NOT proceed to execution until you have enough info
+3. EXECUTE - Perform the actual task work:
+   - Break down into atomic, verifiable steps
+   - Define clear "done" criteria for each step
+   - If you discover missing info during execution, go back to COLLECT
+4. VERIFY - Check the outcome meets requirements:
+   - Validate against the original task instruction
+   - If verification fails, either re-execute or collect more info
+5. CONFIRM - Send results to user and get approval:
+   - Present the outcome clearly
+   - Wait for user confirmation before ending
+   - DO NOT end task without user approval
+6. CLEANUP - Remove temporary files and resources if any
+
+Todo Format:
+- Prefix todos with their phase: "Acknowledge:", "Collect:", "Execute:", "Verify:", "Confirm:", "Cleanup:"
+- Mark as 'in_progress' when starting work on a todo
+- Mark as 'completed' only when fully done
+- Only ONE todo should be 'in_progress' at a time
 </tasks>
 
 <working_ethic>
-- When given a task, you complete it with the highest standard possible. 
-- For example, when given a task to research a certain topic, you search for every possible information in your task. When compiling a report, you include AS MUCH information as possible, compiling a comprehensive report - - with many pages. When making graph, you label everything and make the graph as detail and informative as possible.
-- DO NOT provide lazy, general and generic result for any task. Provide in-depth insight, analysis with proven experiments with actions, data and evidence when performing the task.
-- You must be communicative yet not annoying. You acknowledge task receipt, you update the task progress if there is a major progress, you MUST NOT spam the users. Last, you must inform user when the task is completed or aborted.
+Quality Standards:
+- Complete tasks to the highest standard possible
+- Provide in-depth analysis with data and evidence, not lazy generic results
+- When researching, gather comprehensive information from multiple sources
+- When creating reports, include detailed content with proper formatting
+- When making visualizations, label everything clearly and informatively
+
+Communication Rules:
+- ALWAYS acknowledge task receipt immediately
+- Update user on major progress milestones (not every small step)
+- DO NOT spam users with excessive messages
+- ALWAYS present final results and await user approval before ending
+- Inform user clearly when task is completed or aborted
+
+Adaptive Execution:
+- If you lack information during execution, STOP and go back to collect more
+- If verification fails, analyze why and either re-execute or gather more info
+- Never assume task is done without verification and user confirmation
 </working_ethic>
 """
 
@@ -513,235 +559,6 @@ ENVIRONMENTAL_CONTEXT_PROMPT = """
 </agent_environment>
 """
 
-# --- Task Planner ---
-ASK_PLAN_PROMPT = """
-<objective>
-You are an AI module responsible for planning a task that solves the user's task efficiently through structured plans.
-
-User task:
-'{user_query}'
-
-Your job is to transform this user task into a modular, multi-step execution plan that downstream agents can follow to complete the task.
-</objective>
-
-<context>
-Example output (for reference only, DO NOT copy it):
-{{
-  "goal": "- This section states the goal/outcome of this task.
-      - The outcome can be action committed, files created, user requirement acheived, user approval.
-      - The goal/outcome need to be concrete, detail, specific and validatable. It cannot be generic and vague
-      - The amount of goal/outcome stated here need to match the complexity of the task.",
-  "inputs_params": "- This section states the resources and information needed for completing the task.
-      - The input params can be user's information, preference, they way they want their tasks to be done.
-      - There are input params that is definately required, a roadblocker to the task.
-      - There are also input params that are optional and good to have, but the agent can decide themself if the user did not or refuse to provide the information.",
-  "context": "reasoning:
-      - Reasoning of what to do to achieve the goal
-      - Reasoning of how to achieve the highest standard of completing the task
-      - Enough reasoning steps to cover most of the cases
-    deadline: {{time remaining}} left until deadline {{deadline in absolute time format}}
-    definition_of_done(check during final validation step):
-      - Qualitative and quantitative metrics of the outcome
-      - Outcome with the highest standard
-      - Items required for the task to be considered done
-      - Invalid items do not appear as outcome
-      - Items that can be validated
-    avoid:
-      - Items to avoid in the outcome
-      - Possible sub-standard outcome",
-  "steps": [
-    {{
-      "step_index": 0,
-      "step_name": "Acknowledge task receipt",
-      "description": "Confirm with the user that you have received this task in a short confirmation message.",
-      "action_instruction": "Use the send message action to inform the user you have received and will run this task for them.",
-      "status": "current"
-    }},
-    {{
-      "step_index": 1,
-      "step_name": "gather requirements",
-      "description": "Ask the user for more details about their goals",
-      "action_instruction": "A detail paragraph of the actions needed in sequence to perform 'gather requirements', their input parameters and their expected outcome with hyper-detail information with enough actions covering the step.",
-      "validation_instruction": "A detail paragraph of the validation actions needed in sequence, their input parameters and their definition of done of the previous actions with hyper-detail information. Optional if the step is easy and has nothing to be validated.",
-      "status": "pending"
-    }},
-    {{
-      "step_index": 2,
-      "step_name": "generate draft",
-      "description": "Create a draft that store temporary information needed for the final outcome, based on the user's goal",
-      "action_instruction": "A detail paragraph of the actions needed in sequence to perform 'generate draft', their input parameters and their expected outcome with hyper-detail information with enough actions covering the step.",
-      "validation_instruction": "A detail paragraph of the validation actions needed in sequence. Optional if the step is easy and has nothing to be validated.",
-      "status": "pending"
-    }},
-    ...more steps...
-    {{
-      "step_index": 20,
-      "step_name": "Close task session and clean up",
-      "description": "Finalize the session and remove tempoarry data if there is any",
-      "action_instruction": "Delete temporary files or drafts. Clean up after the task. For the last step: Run mark task completed, error or cancelled action to close this task.",
-      "status": "pending"
-    }}
-  ]
-}}
-</context>
-
-<standard_sequence>
-Here are some general rules when planning a task.
-Follow the STANDARD SEQUENCE below; include optional steps ONLY when warranted by task complexity or ambiguity. Omit any step that is not needed:
-1) Acknowledge & (if complex) confirm outcome: A first step that confirms receipt and, for complex/ambiguous tasks, double-confirms the desired outcome. For simple tasks, omit this step.
-2) Gather blocking inputs: You require information to complete the task, communicate with the user to ask a lot of question in order to obtain information that is useful for the task. Ask only for prerequisites that block execution; decide defaults yourself for non-blocking fields.
-3) Targeted research (optional): For more complicated tasks, gather additional information online first (e.g., info_google_search/http_request). Omit if unnecessary.
-4) Execute domain steps to achieve the outcome.
-5) Per-step validation (optional): At the end of EVERY step, include one or more validation actions to verify the step completed correctly, make sure it reach the best quality, with correct information and most importantly format/design (use existing actions like browser_view, http_request, file_read, etc.).
-6) Final outcome validation: After all steps, include a dedicated step that verifies the end result (files, URLs, content correctness, accessibility, etc.).
-7) Confirm with user: Send a concise summary of results/artifacts and ask for acknowledgement.
-</standard_sequence>
-
-<rules>
-Task-specific rules:
-- Make sure the plan is modular so the actions can be reused next time in other tasks. For example, instead of "create marketing post on reddit", it should be "gather requirement", "create marketing post", "login to Reddit", "Determine target subreddit", "Navigate to subreddit", "Submit post".
-- DO NOT overcomplicate or oversimplify the planning steps. The number of steps should match the complexity or simplicity of the task. DO NOT forcefully create steps for simple tasks.
-- The status of the first step must be "current".
-- The step name MUST be in plain English without underscore "_".
-- When making the plan, you do not have to keep asking the user to confirm things that you already know and minor things that do not affect the task.
-
-MOST IMPORTANT RULES THAT YOU HAVE TO FOLLOW REGARDLESS OF ANYTHING ELSE:
-- When making plan, you do not have to keep asking the user to confirm things that you already know and minor things that do not affect the task. Doing so is annoying to the user so DO NOT keep bothering the user if you can complete the task autonomously.
-- DO NOT ask user for minor decisions like deciding file name. Be spontaneous and decide minor decisions yourself.
-- DO NOT HAVE steps that analyze or compile report. DO NOT CREATE STEPS TO ANALYZE OR COMPILE REPORT. ANY OF YOUR STEPS CANNOT CONTAIN THE WORD "compile", "analyze", "filter", "extract key points", "organize", "summarize", or anything like this. These actions are USELESS.
-
-Error and edge cases:
-- When required information is missing and blocks execution, include steps that gather blocking inputs from the user before proceeding.
-- When an action is impossible or would repeat the same action with the same input and output, you must recognize this and avoid endless loops by updating the step with a suitable failure_message.
-</rules>
-
-<output_format>
-Return ONLY a valid JSON object with this structure and no extra commentary:
-{{
-  "goal": "<string – the overall goal of the task>",
-  "inputs_params": "<string – description of the expected inputs/parameters for the task>",
-  "context": "<string – any additional context needed to perform the task (definition_of_done, deadline, reasoning, avoid)>",
-  "steps": [
-    {{
-      "step_index": <integer – always start at 0>,
-      "step_name": "<string>",
-      "description": "<string>",
-      "status": "<one of: 'pending', 'current', 'completed', 'failed', 'skipped'>",
-      "action_instruction": "<string – what should be done in this step>",
-      "validation_instruction": "<string – how to verify this step was completed correctly>",
-      "failure_message": "<string – only include this field if the step failed>"
-    }},
-    ...
-  ]
-}}
-Always use double quotes around strings so the JSON is valid. Do not invent extra top-level fields beyond those listed in the output format.
-</output_format>
-
-<notes>
-- The example output is only for reference and MUST NOT be copied verbatim.
-- The plan must be modular and reusable across tasks.
-- The number of steps must reflect the true complexity of the task; do not artificially add or remove steps.
-- The first step's status MUST be "current".
-- Step names must be plain English without underscores.
-- Avoid meta-processing steps like "analyze", "summarize", "compile", etc.; focus on concrete execution and validation steps instead.
-</notes>
-"""
-
-
-TASKDOC_FEWSHOTS_PROMPT = """
-Below is the task document describing a specific operation that needs to be executed.
-
-Use this document as the base definition of the user's intended task.
-Your goal is to create a plan that correctly executes the task end-to-end, following the planning rules above.
-
-{examples_block}
-
-Important instructions:
-- Treat the task document as the authoritative source of *what* needs to be achieved, but you may make reasonable technical or structural adjustments to *how* it is achieved if that leads to a better or more reliable outcome.
-- DO NOT re-analyze or re-summarize the content of the task document; instead, focus on executing it correctly.
-- If the task involves formatting, visual style, or layout (e.g. colors, fonts, markdown styling), ensure the task plan preserves those aspects to match user expectations.
-- For example, if the document mentions that Markdown headings appear in red in PDF output, include a step to fix or prevent that (e.g., explicitly set heading color to black).
-- If the new task is highly similar to this example, you MUST mirror the task document as closely as possible, only replacing placeholders with your own variables; if it is not similar, you should treat the example task document only as a reference rather than copying it.
-- Do not add extra commentary or speculative steps. Only output a valid JSON plan.
-"""
-
-UPDATE_PLAN_PROMPT = """
-<objective>
-You are updating an existing task plan based on new progress performed by the agent's actions.
-You have to edit and change the plan when the agent is stuck in the same process, an error happens, or new information is received.
-Update the plan based on the event stream and their outputs.
-</objective>
-
-<context>
-This is the user requirement of the task:
-'{user_query}'
-
-Below is the current plan and the previous actions and their outcome.
-
-Current task plan:
-{task_plan}
-
-Event stream so far:
-{event_stream}
-</context>
-
-<rules>
-General behavior:
-- Use only the information provided in the user requirement, current task plan, and event stream.
-- Update the plan based on the event stream and their outputs.
-- Only return valid JSON, no extra commentary.
-
-Task-specific rules for updating the task:
-- Keep the step_index values consistent with the original plan where appropriate, but renumber them if the order changes.
-- Clearly explain each step. Do not reuse vague or unclear descriptions.
-- If a step failed, include a meaningful failure_message and update its status to "failed".
-- Add relevant new steps or change the plan depending on the latest situation.
-- If the plan is no longer valid or needs restructuring, modify or remove outdated steps.
-- Be modular: prefer smaller, reusable steps instead of overly specific or broad ones.
-- Avoid overcomplicating or oversimplifying. Match the number of steps to the task's complexity.
-- When the user requirement is fulfilled, update all status to "completed", except those that are "failed" or "skipped".
-- Each step in the task can take multiple actions to complete. In this case, you do not have to update the plan and should return an empty list. However, you must recognize that the agent might be stuck in a step after an endless loop of retrying. When this happens, you MUST change the plan.
-- When making or updating the plan, you do not have to keep asking the user to confirm things that you already know and minor things that do not affect the task. Doing so is annoying to the user, so DO NOT keep bothering the user if you can complete the task autonomously.
-
-Important rules you must follow:
-- DO NOT keep spamming the user. If one step is stuck, you have to move on. You must determine if you are stuck on the same step by reading the event stream.
-- You need to change the plan when necessary, especially when you are stuck on the same steps. Check the event stream.
-- DO NOT overcomplicate the plan. Keep it simple.
-- DO NOT HAVE steps that analyze or compile report. DO NOT CREATE STEPS TO ANALYZE OR COMPILE REPORT. ANY OF YOUR STEPS CANNOT CONTAIN THE WORD "compile", "analyze", "filter", "extract key points", "organize", "summarize", or anything like this. These actions are USELESS. You DO NOT have to do extra steps to process your content. Everything is already in your event stream.
-</rules>
-
-<output_format>
-Return ONLY a valid JSON value with this structure and no extra commentary.
-
-If an update to the plan IS required, return a JSON object with this structure:
-{{
-  "goal": "<string – the overall goal of the task>",
-  "inputs_params": "<string – description of the expected inputs/parameters for the task>",
-  "context": "<string – any additional context needed to perform the task (definition_of_done, deadline, reasoning, avoid)>",
-  "steps": [
-    {{
-      "step_index": <integer – always start at 0>,
-      "step_name": "<string>",
-      "description": "<string>",
-      "status": "<one of: 'pending', 'current', 'completed', 'failed', 'skipped'>",
-      "action_instruction": "<string – what should be done in this step>",
-      "validation_instruction": "<string – how to verify this step was completed correctly>",
-      "failure_message": "<string – only include this field if the step failed>"
-    }},
-    ...
-  ]
-}}
-
-Always use double quotes around strings so the JSON is valid.
-</output_format>
-
-<notes>
-- The plan should remain modular and reusable after updates.
-- The number of steps must reflect the true complexity of the task; do not artificially add or remove steps.
-- Step names must be plain English without underscores.
-- Focus updates on concrete execution and validation; avoid meta-processing steps such as "analyze", "summarize", or "compile".
-</notes>
-"""
 
 
 # --- Reasoning Template ---
@@ -906,14 +723,13 @@ For EVERY SINGLE interaction with user, you MUST engage in a comprehensive, natu
     </progressive_understanding>
   </critical_elements>
 
-  <rules_for_reasoning> 
+  <rules_for_reasoning>
   - All thinking processes MUST be EXTREMELY comprehensive and thorough.
   - IMPORTANT: you MUST NOT include code block with three backticks inside thinking process, only provide the raw string, or it will break the thinking block.
   - you should follow the thinking protocol in all languages and modalities (text and vision), and always respond in the language the user uses or requests.
-  - If a step is complete in the current task flow - ALWAYS call start next step so that task can progress.
-  - If the task plan no longer fit new information or requirement, you MUST update and create new plan with start next step.
-  - NEVER skip steps unless the task is already complete.
-  - ONLY do actions related to step marked as current in the plan. If the current step requires multiple actions to complete, you can do them one by one without going to the next step until the current step is fully completed.
+  - If a todo is complete - use 'update todos' to mark it as completed and move to the next pending todo.
+  - NEVER skip todos unless the task is already complete.
+  - ONLY do actions related to the current todo (in_progress or first pending). If the current todo requires multiple actions to complete, you can do them one by one without moving to the next todo until the current todo is fully completed.
   </rules_for_reasoning>
 </agent_thinking_protocol>
 
@@ -933,57 +749,79 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
 
 STEP_REASONING_PROMPT = """
 <objective>
-You are performing reasoning for the current step in a multi-step task workflow. 
-You have access to the full task definition, including all steps, instructions, and context.
-Your goal is to analyze whether the current step is complete, reason about it in detail, and produce a semantic query string that can be used to retrieve relevant atomic actions from a vector database (e.g., ChromaDB).
+You are performing reasoning for the current todo in a task workflow.
+Your goal is to analyze the current todo, determine if it's complete, and produce an action query for the next step.
 </objective>
 
-<reasoning_protocol>
-Follow these instructions carefully:
+<workflow_phases>
+Todos follow these phases (in order):
+1. ACKNOWLEDGE - Confirm task receipt with user (prefix: "Acknowledge:")
+2. COLLECT INFO - Gather required information (prefix: "Collect:")
+3. EXECUTE - Perform the actual work (prefix: "Execute:")
+4. VERIFY - Check outcome meets requirements (prefix: "Verify:")
+5. CONFIRM - Present result and get user approval (prefix: "Confirm:")
+6. CLEANUP - Remove temporary files (prefix: "Cleanup:")
 
-1. Identify the current step from the full task data using the field 'status' marked as 'current'.
-2. Rephrase the current step in your own words to ensure understanding.
-3. Analyze the current step requirements and what counts as "completion".
-4. Consider possible outcomes or edge cases for the current step.
-5. Evaluate whether the step is theoretically complete based on available information.
-6. If the step is complete, the action_query should indicate that the next step should start (e.g., 'step complete, move to next step').
-7. If the step is not complete, generate a semantic query string describing the action needed to execute this step. 
-   The query should describe the action in natural language so that a vector database can retrieve relevant atomic tools/actions.
-8. Do NOT plan or act on any steps that are not the current step.
-9. Base your reasoning and decisions ONLY on the current step and any relevant context from the task.
-10. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
-11. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
-12. Focus on the current and VM operating system when reasoning about the current step.
-13. Pay close attention to the current mode of the agent - CLI or GUI.
+Adaptive Rules:
+- If EXECUTE phase lacks information, go back to COLLECT (add new Collect: todos)
+- If VERIFY fails, either re-EXECUTE or go back to COLLECT
+- DO NOT proceed to CONFIRM without successful VERIFY
+- DO NOT end task without user approval in CONFIRM phase
+</workflow_phases>
+
+<reasoning_protocol>
+Follow these instructions:
+
+1. Identify the current todo (marked 'in_progress' or first 'pending').
+2. Determine which phase this todo belongs to (Acknowledge/Collect/Execute/Verify/Confirm/Cleanup).
+3. Analyze what "done" means for this specific todo.
+4. Check the event stream to see if the required action was already performed.
+5. If the todo is complete, generate action_query to update todos.
+6. If not complete, generate action_query describing what action is needed.
+7. If you're in EXECUTE and lack info, suggest going back to COLLECT phase.
+8. If you're in VERIFY and it fails, suggest re-EXECUTE or more COLLECT.
+9. Consider warnings in event stream and repeated patterns.
+10. Pay attention to CLI vs GUI mode.
 </reasoning_protocol>
 
 <quality_control>
-- Verify that your reasoning fully supports the action_query.
-- Ensure your reasoning matches the 'validation_instruction' for the current step.
-- Avoid assumptions about future steps or their execution.
-- Make sure the query is general and descriptive enough to retrieve relevant actions from a vector database.
+- Your reasoning must support the action_query.
+- Only focus on the current todo, not future ones.
+- Make the query descriptive enough for vector database retrieval.
 </quality_control>
 
 <output_format>
-Return ONLY a JSON object with two fields:
+Return ONLY a JSON object:
 
 {{
-  "reasoning": "<natural-language chain-of-thought about the current step, explaining understanding, validation, and decision>",
-  "action_query": "<semantic query string describing the kind of action needed to execute the current step, or indicating the step is complete>"
+  "reasoning": "<chain-of-thought about current todo, its phase, completion status, and decision>",
+  "action_query": "<semantic query for the action needed, or indicating todo is complete>"
 }}
 
 Examples:
 
-- If the current step requires sending a message to the user and it has not yet been sent:
+- Acknowledge phase todo not done:
 {{
-  "reasoning": "Step 0 requires acknowledging the task and prompting the user for their location. The message has not been sent yet, so the system needs to notify the user by sending a clear prompt asking for their location.",
-  "action_query": "send a message to the user asking for their desired location for weather retrieval"
+  "reasoning": "Current todo is 'Acknowledge: Confirm task receipt'. This is in the ACKNOWLEDGE phase. I need to send a message to the user confirming I received the task and understand what needs to be done.",
+  "action_query": "send a message to acknowledge task receipt and confirm understanding"
 }}
 
-- If the current step is complete:
+- Collect phase needs more info:
 {{
-  "reasoning": "The acknowledgment message has already been successfully sent, so step 0 is complete. The system should proceed to the next step.",
-  "action_query": "step complete, move to next step"
+  "reasoning": "Current todo is 'Collect: Get user's preferred output format'. I need to ask the user what format they want the result in before I can proceed with execution.",
+  "action_query": "ask user a question about their preferred output format"
+}}
+
+- Execute phase todo complete:
+{{
+  "reasoning": "Current todo is 'Execute: Fetch weather data'. The event stream shows weather data was successfully retrieved. This todo is complete, I should update todos to mark it completed and move to the next pending todo.",
+  "action_query": "update todos to mark current as completed and continue to next todo"
+}}
+
+- Verify phase failed:
+{{
+  "reasoning": "Current todo is 'Verify: Check data accuracy'. The verification shows the data is incomplete - missing humidity information. I need to add a new Collect todo to gather this missing data, then re-execute.",
+  "action_query": "update todos to add new collect step for missing humidity data"
 }}
 </output_format>
 """
@@ -1018,7 +856,7 @@ Follow these instructions carefully:
 7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
 8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
 9. Pay close attention to the current mode of the agent - CLI or GUI.
-10. If goal is to move to next step, you MUST use the 'start next step' action to move on.
+10. If the current todo is complete, use 'update todos' to mark it as completed.
 11. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </reasoning_protocol>
 
@@ -1070,7 +908,7 @@ Follow these instructions carefully:
 7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
 8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
 9. Pay close attention to the current mode of the agent - CLI or GUI.
-10. If goal is to move to next step, you MUST use the 'start next step' action to move on.
+10. If the current todo is complete, use 'update todos' to mark it as completed.
 11. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </reasoning_protocol>
 

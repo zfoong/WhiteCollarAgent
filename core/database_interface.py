@@ -293,10 +293,9 @@ class DatabaseInterface:
             "task_id": task.id,
             "name": task.name,
             "instruction": task.instruction,
-            "steps": [asdict(step) for step in task.steps],
+            "todos": [asdict(todo) for todo in task.todos],
             "created_at": task.created_at,
             "status": task.status,
-            "results": task.results,
             "updated_at": datetime.datetime.utcnow().isoformat(),
         }
 

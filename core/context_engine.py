@@ -122,13 +122,34 @@ class ContextEngine:
         return ""
 
     def create_system_task_state(self):
-        """Return formatted task/plan state for the current session."""
+        """Return formatted task and todo list for the current session."""
 
         current_task: Optional[Task] = STATE.current_task
 
         if current_task:
-            current_task_dict: Dict[str, Any] = current_task.to_dict(fold=True, current_step_index=STATE.agent_properties.get_property("current_step_index"))
-            return "\nThe plan of the current on-going task:" + f"\n{json.dumps(current_task_dict, indent=4)}"
+            # Format task in LLM-friendly way
+            lines = [
+                "\n<current_task>",
+                f"Task: {current_task.name}",
+                f"Instruction: {current_task.instruction}",
+                "",
+                "Todos:",
+            ]
+
+            if current_task.todos:
+                for i, todo in enumerate(current_task.todos, 1):
+                    if todo.status == "completed":
+                        checkbox = "[x]"
+                    elif todo.status == "in_progress":
+                        checkbox = "[>]"  # In progress indicator
+                    else:
+                        checkbox = "[ ]"
+                    lines.append(f"{checkbox} {todo.content}")
+            else:
+                lines.append("(no todos yet - use 'update todos' to add items)")
+
+            lines.append("</current_task>")
+            return "\n".join(lines)
         return ""
 
     def create_system_policy(self):

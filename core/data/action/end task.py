@@ -19,7 +19,7 @@ from core.action.action_framework.registry import action
         },
         "reason": {
             "type": "string",
-            "example": "All steps executed successfully.",
+            "example": "All todos completed successfully.",
             "description": "Why the task is considered complete or why it should be aborted.",
         },
     },
@@ -37,7 +37,7 @@ from core.action.action_framework.registry import action
     },
     test_payload={
         "status": "complete",
-        "reason": "All steps executed successfully.",
+        "reason": "All todos completed successfully.",
         "simulated_mode": True,
     },
 )

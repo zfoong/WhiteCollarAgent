@@ -87,8 +87,29 @@ class TriggerQueue:
         """Return formatted task/plan context for trigger comparison."""
         current_task: Optional[Task] = STATE.current_task
         if current_task:
-            current_task_dict: Dict[str, Any] = current_task.to_dict(fold=False, current_step_index=STATE.agent_properties.get_property("current_step_index"))
-            return "The plan of the current on-going task:" + f"\n{json.dumps(current_task_dict, indent=4)}"
+            # Format task in LLM-friendly way (matching context_engine format)
+            lines = [
+                "<current_task>",
+                f"Task: {current_task.name}",
+                f"Instruction: {current_task.instruction}",
+                "",
+                "Todos:",
+            ]
+
+            if current_task.todos:
+                for todo in current_task.todos:
+                    if todo.status == "completed":
+                        checkbox = "[x]"
+                    elif todo.status == "in_progress":
+                        checkbox = "[>]"
+                    else:
+                        checkbox = "[ ]"
+                    lines.append(f"{checkbox} {todo.content}")
+            else:
+                lines.append("(no todos yet)")
+
+            lines.append("</current_task>")
+            return "\n".join(lines)
         return ""
 
     def create_system_agent_state(self):

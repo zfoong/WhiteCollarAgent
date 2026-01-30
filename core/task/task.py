@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Apr 30 15:22:43 2025
+Task dataclass for simple task management.
 
-@author: zfoong
+This simplified version removes the complex Step-based workflow
+and uses a simple todo list mechanism instead.
 """
 
 from __future__ import annotations
@@ -10,83 +11,61 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-@dataclass
-class Step:
-    step_index: int
-    step_name: str
-    description: str
-    # Allowed: pending | current | completed | failed | skipped | cancelled
-    action_instruction: str
-    validation_instruction: str    
-    status: str = "pending"
-    failure_message: Optional[str] = None
-    # Identifier used to correlate steps across logs and triggers
-    action_id: Optional[str] = None
+from core.todo.todo import TodoItem
 
-    def to_dict(self, fold: bool = False, current_step_index: int = 0) -> Dict[str, Any]:
-        """Return a dictionary representation of the step."""
-        item = {
-            "step_index": self.step_index,
-            "step_name": self.step_name,
-            "status": self.status,
-        }
-        if self.failure_message:
-            item["failure_message"] = self.failure_message
-
-        if fold and current_step_index == self.step_index:
-            item["description"] = self.description
-            item["action_instruction"] = self.action_instruction
-            item["validation_instruction"] = self.validation_instruction
-            
-        return item
 
 @dataclass
 class Task:
+    """
+    A task representing work to be done by the agent.
+
+    Attributes:
+        id: Unique identifier for the task
+        name: Human-readable name for the task
+        instruction: The original user instruction/request
+        todos: List of todo items for tracking progress
+        temp_dir: Temporary workspace directory for the task
+        created_at: ISO timestamp when the task was created
+        status: Current state - running, completed, error, paused, or cancelled
+    """
     id: str
     name: str
     instruction: str
-    steps: List[Step]
-    goal: str
-    inputs_params: str
-    context: str
-    temp_dir: str | None = None
+    todos: List[TodoItem] = field(default_factory=list)
+    temp_dir: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     # Allowed: running | completed | error | paused | cancelled
     status: str = "running"
-    results: Dict[str, Any] = field(default_factory=dict)
 
-    def get_current_step(self) -> Optional[Step]:
+    def get_current_todo(self) -> Optional[TodoItem]:
         """
-        Return the step that should be executed next for this task.
+        Return the todo item that should be worked on next.
 
-        The method first prefers any step explicitly marked as ``current`` to
-        preserve planner intent. If none is marked, it falls back to the first
-        ``pending`` step so execution can continue from the beginning of the
-        queue. If every step is terminal, ``None`` is returned to indicate that
-        the task has fully progressed.
-
-        Returns:
-            The :class:`Step` currently in progress or queued next, or ``None``
-            when no runnable steps remain.
+        First looks for any todo marked as in_progress, then falls back
+        to the first pending todo. Returns None if all todos are completed.
         """
-        # Prefer explicitly marked current
-        for step in self.steps:
-            if step.status == "current":
-                return step
-        # Fallback to first pending if no explicit current
-        for step in self.steps:
-            if step.status == "pending":
-                return step
+        # Prefer explicitly marked in_progress
+        for todo in self.todos:
+            if todo.status == "in_progress":
+                return todo
+        # Fallback to first pending
+        for todo in self.todos:
+            if todo.status == "pending":
+                return todo
         return None
 
-    def to_dict(self, fold: bool = False, current_step_index: int = 0) -> Dict[str, Any]:
+    def all_todos_completed(self) -> bool:
+        """Check if all todos are completed."""
+        if not self.todos:
+            return True
+        return all(t.status == "completed" for t in self.todos)
+
+    def to_dict(self) -> Dict[str, Any]:
         """Return a dictionary representation of the task."""
         return {
             "id": self.id,
             "name": self.name,
             "instruction": self.instruction,
-            "goal": self.goal,
-            "inputs_params": self.inputs_params,
-            "context": self.context,
-            "steps": [step.to_dict(fold=fold, current_step_index=current_step_index) for step in self.steps],
+            "status": self.status,
+            "todos": [todo.to_dict() for todo in self.todos],
         }

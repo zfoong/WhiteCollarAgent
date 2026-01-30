@@ -26,7 +26,6 @@ from core.event_stream.event_stream_manager import EventStreamManager
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
-from core.task.task import Step
 from core.gui.handler import GUIHandler
 
 nest_asyncio.apply()

@@ -7,7 +7,7 @@ from typing import Dict, Optional, List, Tuple
 from core.action.action import Action
 from core.state.agent_state import STATE
 from core.state.types import ReasoningResult
-from core.task.task import Step
+from core.todo.todo import TodoItem
 from core.gui.handler import GUIHandler
 from core.prompt import GUI_REASONING_PROMPT, GUI_QUERY_FOCUSED_PROMPT, GUI_PIXEL_POSITION_PROMPT, GUI_REASONING_PROMPT_OMNIPARSER
 from core.vlm_interface import VLMInterface
@@ -66,13 +66,13 @@ class GUIModule:
     def get_gui_event_stream(self) -> str:
         return self.gui_event_stream_manager.get_stream().to_prompt_snapshot(include_summary=True)
 
-    async def perform_gui_task_step(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
+    async def perform_gui_task_step(self, step: Optional[TodoItem], session_id: str, next_action_description: str, parent_action_id: str) -> dict:
         """
         Perform a GUI task step. Keeps calling the action until the next action is not None. When the next action is not None, it returns the response.
         If next action is None, it means the task is complete, and it returns the response.
 
         Args:
-            step: The step to perform.
+            step: The current todo item (optional).
             session_id: The session ID.
             next_action_description: The next action description.
             parent_action_id: The parent action ID.
@@ -105,12 +105,12 @@ class GUIModule:
     # Private Methods
     # ===================================
 
-    async def _perform_gui_task_step_action(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
+    async def _perform_gui_task_step_action(self, step: Optional[TodoItem], session_id: str, next_action_description: str, parent_action_id: str) -> dict:
         """
         Perform a GUI task step action.
 
         Args:
-            step: The step to perform.
+            step: The current todo item (optional).
             session_id: The session ID.
             next_action_description: The next action description.
             parent_action_id: The parent action ID.
@@ -172,9 +172,7 @@ class GUIModule:
                     "Check DB connectivity or ensure the action is registered."
                 )
             
-            # Determine parent action
-            if not parent_id:
-                parent_id = step.action_id
+            # Use provided parent action ID (step.action_id no longer exists)
 
             # ===================================
             # 5. Execute Action
