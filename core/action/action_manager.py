@@ -243,6 +243,16 @@ class ActionManager:
                 action_name=action.name,
             )
 
+            # Emit waiting_for_user event if action requested to wait for user reply
+            if outputs and outputs.get("wait_for_user_reply", False):
+                self._log_event_stream(
+                    is_gui_task=is_gui_task,
+                    event_type="waiting_for_user",
+                    event="Agent is waiting for user response.",
+                    display_message=None,  # No display message - handled by TUI status bar only
+                    action_name=action.name,
+                )
+
             # current_step: Optional[Step] = self.state_manager.get_current_step()
             # if current_step:
             #     self._log_event_stream(

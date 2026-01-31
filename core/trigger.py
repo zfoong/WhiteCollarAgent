@@ -112,16 +112,6 @@ class TriggerQueue:
             return "\n".join(lines)
         return ""
 
-    def create_system_agent_state(self):
-        """Compose session context for trigger handling from component states."""
-
-        sections = [
-            self.create_event_stream_state(),
-            self.create_task_state(),
-        ]
-
-        return "\n\n".join([section for section in sections if section])
-
     async def clear(self) -> None:
         """
         Remove all pending triggers from the queue.
@@ -156,14 +146,20 @@ class TriggerQueue:
 
         if len(existing_triggers) > 0:
 
-            sys_msg = f"Existing Context: {self.create_system_agent_state()}"
+            # KV CACHING: System prompt is now minimal/static
+            # Dynamic context moved to user prompt
+            sys_msg = "You are a trigger management system."
+
             # If heap empty → push directly
             if not existing_triggers:
                 existing_triggers.append(trig)
             else:
                 logger.debug("[TRIGGER QUEUE] Heap not empty → ignoring new trigger for LLM comparison")
 
+            # KV CACHING: Add dynamic context to user prompt
             usr_msg = CHECK_TRIGGERS_STATE_PROMPT.format(
+                event_stream=self.create_event_stream_state(),
+                task_state=self.create_task_state(),
                 context=trig,
                 existing_triggers=existing_triggers,
             )

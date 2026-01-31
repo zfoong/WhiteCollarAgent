@@ -97,12 +97,14 @@ class ActionRouter:
                 })
     
         # Build the instruction prompt for the LLM
+        # KV CACHING: Inject dynamic context into user prompt
         prompt = SELECT_ACTION_PROMPT.format(
+            event_stream=self.context_engine.get_event_stream(),
             query=query,
             action_candidates=self._format_candidates(action_candidates),
         )
 
-        decision = await self._prompt_for_decision(prompt)
+        decision = await self._prompt_for_decision(prompt, is_task=False)
 
         logger.debug(
             f"Action router selected action={decision.get('action_name')} "
@@ -183,9 +185,13 @@ class ActionRouter:
     
         # Dedupe names while preserving insertion order
         action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
-    
+
         # Build the instruction prompt for the LLM
+        # KV CACHING: Inject dynamic context into user prompt
         prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            event_stream=self.context_engine.get_event_stream(),
             query=query,
             reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
@@ -268,9 +274,13 @@ class ActionRouter:
     
         # Dedupe names while preserving insertion order
         action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
-    
+
         # Build the instruction prompt for the LLM
+        # KV CACHING: Inject dynamic context into user prompt (GUI mode uses gui_event_stream)
         prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            gui_event_stream=self.context_engine.get_gui_event_stream(),
             query=query,
             reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
@@ -306,9 +316,11 @@ class ActionRouter:
         last_error: Optional[Exception] = None
         current_prompt = prompt
         for attempt in range(max_retries):
+            # KV CACHING: System prompt is now STATIC only
+            # Dynamic content (event_stream, task_state) is already in the user prompt
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "event_stream": True, "task_state": not is_task, "policy": False},
+                system_flags={"agent_info": not is_task, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             decision, parse_error = self._parse_action_decision(raw_response)
@@ -333,9 +345,11 @@ class ActionRouter:
         max_retries = 3
         last_error: Optional[Exception] = None
         for attempt in range(max_retries):
+            # KV CACHING: System prompt is now STATIC only
+            # Dynamic content (gui_event_stream, task_state) is already in the user prompt
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"role_info": not is_task, "agent_info": not is_task, "event_stream": False, "gui_event_stream": not is_task, "task_state": not is_task, "policy": False},
+                system_flags={"role_info": not is_task, "agent_info": not is_task, "policy": False},
             )
             if image_bytes:
                 raw_response = await self.vlm_interface.generate_response_async(

@@ -531,14 +531,18 @@ class AgentBase:
                 - action_query: A refined query used for action selection
         """
 
-        # Build the system prompt using the current context configuration
+        # KV CACHING: System prompt is now STATIC only
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
             system_flags={"policy": False},
         )
 
-        # Format the user prompt with the incoming query
-        prompt = STEP_REASONING_PROMPT
+        # KV CACHING: Inject dynamic context into user prompt
+        prompt = STEP_REASONING_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            event_stream=self.context_engine.get_event_stream(),
+        )
 
         # Track the last parsing/validation error for meaningful failure reporting
         last_error: Exception | None = None

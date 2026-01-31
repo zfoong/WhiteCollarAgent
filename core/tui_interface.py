@@ -1698,6 +1698,10 @@ class TUIInterface:
                 self._task_action_entries[entry_key].is_completed = True
                 await self.action_updates.put(_ActionUpdate(operation="update", entry_key=entry_key))
 
+        # Handle waiting_for_user event - set agent state to waiting
+        elif kind == "waiting_for_user":
+            self._agent_state = "waiting_for_user"
+
         # Update status based on current agent state
         status = self._generate_status_message()
         if status != self._status_message:
@@ -1801,7 +1805,7 @@ class TUIInterface:
             return "system"
         if kind.startswith("task"):
             return "task"
-        if kind in {"action", "action_start", "action_end"}:
+        if kind in {"action", "action_start", "action_end", "waiting_for_user"}:
             return "action"
         if kind in {"screen", "info", "note"}:
             return "info"

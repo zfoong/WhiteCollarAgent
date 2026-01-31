@@ -13,7 +13,7 @@ from core.action.action_framework.registry import action
                 "wait_for_user_reply": {
                         "type": "boolean",
                         "example": True,
-                        "description": "True if this action require user's response to proceed. For example, true if you ask a question in the message."
+                        "description": "True if this action requires user's response to proceed. IMPORTANT: If set to true, you MUST (1) let the user know you are waiting for their reply, and (2) phrase the message as a question so the user has something to reply to. The agent will pause and wait for user input before continuing."
                 }
         },
         output_schema={
@@ -31,6 +31,11 @@ from core.action.action_framework.registry import action
                         "type": "number",
                         "example": 10800,
                         "description": "Delay in seconds before the next follow-up action should be scheduled. 10800 seconds (3 hours) if wait_for_user_reply is true, otherwise 0."
+                },
+                "wait_for_user_reply": {
+                        "type": "boolean",
+                        "example": True,
+                        "description": "Echoed back to indicate whether the agent is waiting for user reply."
                 }
         },
         test_payload={
@@ -55,4 +60,4 @@ def send_message(input_data: dict) -> dict:
     fire_at_delay = 10800 if wait_for_user_reply else 0
     # Return 'success' for test compatibility, but keep 'ok' in production if needed
     status = 'success' if simulated_mode else 'ok'
-    return {'status': status, 'message': message, 'fire_at_delay': fire_at_delay}
+    return {'status': status, 'message': message, 'fire_at_delay': fire_at_delay, 'wait_for_user_reply': wait_for_user_reply}

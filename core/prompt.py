@@ -116,10 +116,32 @@ This is the event stream of this task (from older to latest event):
 </objective>
 """
 
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
 CHECK_TRIGGERS_STATE_PROMPT = """
 <objective>
 You are an AI agent responsible for managing and scheduling triggers that prompt you to take actions. Your job is to evaluate the current state of triggers and determine if any new triggers need to be created based on the following context or if the new trigger is a continuation of an existing trigger.
 </objective>
+
+<rules>
+1. If the new trigger is a continuation of an existing trigger, return the session_id of that trigger.
+2. If the new trigger is NOT a continuation of an existing trigger, return "chat" to inform user.
+3. Always consider the context provided to determine if the new trigger aligns with any existing triggers.
+4. Also use the trigger IDs for context.
+</rules>
+
+<trigger_structure>
+Each trigger has the following structure:
+- session_id: str = "some session id"
+- next_action_description: str = "some description of the trigger"
+- priority: int = 1-5 (1 is highest)
+- fire_at: str = "timestamp when the trigger is set to fire"
+</trigger_structure>
+
+---
+
+{event_stream}
+
+{task_state}
 
 <context>
 Here is the new trigger you need to consider:
@@ -131,41 +153,15 @@ These are the existing triggers in your queue:
 {existing_triggers}
 </triggers>
 
-<rules>
-1. If the new trigger is a continuation of an existing trigger, return the session_id of that trigger.
-2. If the new trigger is NOT a continuation of an existing trigger, return "chat" to inform user.
-3. Always consider the context provided to determine if the new trigger aligns with any existing triggers.
-4. Also use the trigger IDs for context
-</rules>
-
 <output_format>
 - If the new trigger is a continuation of an existing trigger, output ONLY the session_id of that trigger as a string.
 - If the new trigger is NOT a continuation of an existing trigger, output ONLY the string "chat".
 </output_format>
-
-<trigger_structure>
-Each trigger has the following structure:
-- session_id: str = "some session id"
-- next_action_description: str = "some description of the trigger"
-- priority: int = 1-5 (1 is highest)
-- fire_at: str = "timestamp when the trigger is set to fire"
-</trigger_structure>
 """
 
 # --- Action Router ---
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
 SELECT_ACTION_PROMPT = """
-<objective>
-Here is your goal:
-{query}
-
-Your job is to choose the best action from the action library and prepare the input parameters needed to run it immediately.
-</objective>
-
-<actions>
-Here are the available actions, including their descriptions and input schema:
-{action_candidates}
-</actions>
-
 <rules>
 Action Selection Rules:
 - use 'send message' ONLY for simple responses or acknowledgments.
@@ -187,6 +183,29 @@ Critical Rules:
 - You must propose concrete parameter values for the selected action's input_schema.
 </rules>
 
+<notes>
+- The action_name MUST be one of the listed actions. If none are suitable, set it to "" (empty string).
+- Provide every required parameter for the chosen action, respecting the expected type, description, and example.
+- Keep parameter values concise and directly useful for execution.
+- Always use double quotes around strings so the JSON is valid.
+</notes>
+
+---
+
+{event_stream}
+
+<objective>
+Here is your goal:
+{query}
+
+Your job is to choose the best action from the action library and prepare the input parameters needed to run it immediately.
+</objective>
+
+<actions>
+Here are the available actions, including their descriptions and input schema:
+{action_candidates}
+</actions>
+
 <output_format>
 Return ONLY a valid JSON object with this structure and no extra commentary:
 {{
@@ -197,35 +216,12 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
   }}
 }}
 </output_format>
-
-<notes>
-- The action_name MUST be one of the listed actions. If none are suitable, set it to "" (empty string).
-- Provide every required parameter for the chosen action, respecting the expected type, description, and example.
-- Keep parameter values concise and directly useful for execution.
-- Always use double quotes around strings so the JSON is valid.
-</notes>
 """
 
 # Used in User Prompt when asking the model to select an action from the list of candidates
 # core.action.action_router.ActionRouter.select_action_in_task
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
 SELECT_ACTION_IN_TASK_PROMPT = """
-<objective>
-Here is your goal:
-{query}
-
-Your job is to select the next action that should run and provide the input parameters so it can be executed immediately.
-</objective>
-
-<reasoning>
-Here is your reasoning of the current step:
-{reasoning}
-</reasoning>
-
-<actions>
-This is the list of action candidates, each including descriptions and input schema:
-{action_candidates}
-</actions>
-
 <rules>
 Todo Workflow Phases (follow this order):
 1. ACKNOWLEDGE - Send message to user confirming task receipt
@@ -259,6 +255,38 @@ Critical Rules:
 - You must provide concrete parameter values for the action's input_schema.
 </rules>
 
+<notes>
+- Provide every required parameter for the chosen action, respecting each field's type, description, and example.
+- Keep parameter values concise and directly useful for execution.
+- Always use double quotes around strings so the JSON is valid.
+- DO NOT return empty response. When encounter issue, return 'send message' to inform user.
+</notes>
+
+---
+
+{agent_state}
+
+{task_state}
+
+{event_stream}
+
+<objective>
+Here is your goal:
+{query}
+
+Your job is to select the next action that should run and provide the input parameters so it can be executed immediately.
+</objective>
+
+<reasoning>
+Here is your reasoning of the current step:
+{reasoning}
+</reasoning>
+
+<actions>
+This is the list of action candidates, each including descriptions and input schema:
+{action_candidates}
+</actions>
+
 <allowed_action_names>
 You may only choose from these action names:
 {action_name_candidates}
@@ -274,16 +302,38 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
   }}
 }}
 </output_format>
+"""
+
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
+SELECT_ACTION_IN_GUI_PROMPT = """
+<rules>
+GUI Action Selection Rules:
+- Select the appropriate action according to the given task.
+- This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.
+- Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try wait and taking another screenshot.
+- Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.
+- If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.
+- Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
+- use 'send message' when you want to communicate or report to the user.
+- If the current todo is complete, use 'update todos' to mark it as completed and move on.
+- If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
+</rules>
 
 <notes>
 - Provide every required parameter for the chosen action, respecting each field's type, description, and example.
 - Keep parameter values concise and directly useful for execution.
 - Always use double quotes around strings so the JSON is valid.
-- DO NOT return empty response. When encounter issue (), return 'send message' to inform user.
+- DO NOT return empty response. When encounter issue, return 'send message' to inform user.
 </notes>
-"""
 
-SELECT_ACTION_IN_GUI_PROMPT = """
+---
+
+{agent_state}
+
+{task_state}
+
+{gui_event_stream}
+
 <objective>
 You are a GUI agent. You are given a goal and your event stream, with screenshots. You need to perform the next action to complete the task.
 Here is your goal:
@@ -302,19 +352,6 @@ This is the list of action candidates, each including descriptions and input sch
 {action_candidates}
 </actions>
 
-<rules>
-Here are some general rules when selecting actions:
-- Select the appropriate action according to the given task.
-- This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.
-- Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try wait and taking another screenshot.
-- Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.
-- If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.
-- Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
-- use 'send message' when you want to communitcate or report to the user.
-- If the current todo is complete, use 'update todos' to mark it as completed and move on.
-- If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
-</rules>
-
 <allowed_action_names>
 You may only choose from these action names:
 {action_name_candidates}
@@ -330,29 +367,15 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
   }}
 }}
 </output_format>
-
-<notes>
-- Provide every required parameter for the chosen action, respecting each field's type, description, and example.
-- Keep parameter values concise and directly useful for execution.
-- Always use double quotes around strings so the JSON is valid.
-- DO NOT return empty response. When encounter issue (), return 'send message' to inform user.
-</notes>
 """
 
 # --- Event Stream ---
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
 EVENT_STREAM_SUMMARIZATION_PROMPT = """
 <objective>
 You are summarizing an autonomous agent's per-session event log to reduce token usage while preserving
 ALL information that is operationally important for downstream decisions.
 </objective>
-
-<context>
-Time window of events to roll up: {window}
-
-You are given:
-1) The PREVIOUS_HEAD_SUMMARY (accumulated summary of older events).
-2) The OLDEST_EVENTS_CHUNK (events now being rolled up).
-</context>
 
 <rules>
 - Produce a NEW_HEAD_SUMMARY that integrates the PREVIOUS_HEAD_SUMMARY with the OLDEST_EVENTS_CHUNK.
@@ -367,9 +390,15 @@ You are given:
 - Do NOT include the recent (unsummarized) tail; we only rewrite the head summary.
 </rules>
 
-<output_format>
-Output ONLY the NEW_HEAD_SUMMARY as plain text in paragraph (no JSON, no preface, no list).
-</output_format>
+---
+
+<context>
+Time window of events to roll up: {window}
+
+You are given:
+1) The PREVIOUS_HEAD_SUMMARY (accumulated summary of older events).
+2) The OLDEST_EVENTS_CHUNK (events now being rolled up).
+</context>
 
 <previous_head_summary>
 {previous_summary}
@@ -379,7 +408,11 @@ Output ONLY the NEW_HEAD_SUMMARY as plain text in paragraph (no JSON, no preface
 OLDEST_EVENTS_CHUNK (compact lines):
 
 {compact_lines}
-<events>
+</events>
+
+<output_format>
+Output ONLY the NEW_HEAD_SUMMARY as plain text in paragraph (no JSON, no preface, no list).
+</output_format>
 """
 
 AGENT_ROLE_PROMPT = """
@@ -550,7 +583,6 @@ AGENT_STATE_PROMPT = """
 
 ENVIRONMENTAL_CONTEXT_PROMPT = """
 <agent_environment>
-- Current Time: {current_time} ({timezone})
 - User Location: {user_location}
 - Operating System: {operating_system} {os_version} ({os_platform})
 - VM Operating System: {vm_operating_system} {vm_os_version} ({vm_os_platform})
@@ -747,6 +779,7 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
 </output_format>
 """
 
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
 STEP_REASONING_PROMPT = """
 <objective>
 You are performing reasoning for the current todo in a task workflow.
@@ -790,6 +823,14 @@ Follow these instructions:
 - Make the query descriptive enough for vector database retrieval.
 </quality_control>
 
+---
+
+{agent_state}
+
+{task_state}
+
+{event_stream}
+
 <output_format>
 Return ONLY a JSON object:
 
@@ -826,18 +867,14 @@ Examples:
 </output_format>
 """
 
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
 GUI_REASONING_PROMPT = """
 <objective>
-You are performing reasoning to control a desktop/web browser/application as GUI agent. 
-You are provided with a task description, a history of previous actions, and corresponding screenshots. 
-Your goal is to describe the screen in your reasoning and perform reasoning for the next action according to the previous actions. 
+You are performing reasoning to control a desktop/web browser/application as GUI agent.
+You are provided with a task description, a history of previous actions, and corresponding screenshots.
+Your goal is to describe the screen in your reasoning and perform reasoning for the next action according to the previous actions.
 Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.
 </objective>
-
-<gui_state>
-You are provided with a screenshot of the current screen.
-{gui_state}
-</gui_state>
 
 <validation>
 - Verify if the screenshot visually shows if the previous action in the event stream has been performed successfully.
@@ -851,13 +888,13 @@ Follow these instructions carefully:
 3. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
 4. When task is complete, if GUI mode is active, you should switch to CLI mode.
 5. DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
-6. Play close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
-7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intented or not.
-7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
-8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
-9. Pay close attention to the current mode of the agent - CLI or GUI.
-10. If the current todo is complete, use 'update todos' to mark it as completed.
-11. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
+6. Pay close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
+7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intended or not.
+8. You MUST check if the previous reasoning and action works as intended or not and how it affects your current action.
+9. If an interaction based action is not working as intended, you should try to reason about the problem and adjust accordingly.
+10. Pay close attention to the current mode of the agent - CLI or GUI.
+11. If the current todo is complete, use 'update todos' to mark it as completed.
+12. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </reasoning_protocol>
 
 <quality_control>
@@ -866,6 +903,19 @@ Follow these instructions carefully:
 - Avoid assumptions about future screen or their execution.
 - Make sure the query is general and descriptive enough to retrieve relevant GUI actions from a vector database.
 </quality_control>
+
+---
+
+{agent_state}
+
+{task_state}
+
+{gui_event_stream}
+
+<gui_state>
+You are provided with a screenshot of the current screen.
+{gui_state}
+</gui_state>
 
 <output_format>
 Return ONLY a JSON object with two fields:
@@ -878,16 +928,17 @@ Return ONLY a JSON object with two fields:
 - If the current step is complete:
 {{
   "reasoning": "The acknowledgment message has already been successfully sent, so step 0 is complete. The system should proceed to the next step.",
-  "action_query": "step complete, move to next step",
+  "action_query": "step complete, move to next step"
 }}
 </output_format>
 """
 
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
 GUI_REASONING_PROMPT_OMNIPARSER = """
 <objective>
-You are performing reasoning to control a desktop/web browser/application as GUI agent. 
-You are provided with a task description, a history of previous actions, and corresponding screenshots. 
-Your goal is to describe the screen in your reasoning and perform reasoning for the next action according to the previous actions. 
+You are performing reasoning to control a desktop/web browser/application as GUI agent.
+You are provided with a task description, a history of previous actions, and corresponding screenshots.
+Your goal is to describe the screen in your reasoning and perform reasoning for the next action according to the previous actions.
 Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.
 </objective>
 
@@ -903,13 +954,13 @@ Follow these instructions carefully:
 3. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
 4. When task is complete, if GUI mode is active, you should switch to CLI mode.
 5. DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
-6. Play close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
-7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intented or not.
-7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
-8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
-9. Pay close attention to the current mode of the agent - CLI or GUI.
-10. If the current todo is complete, use 'update todos' to mark it as completed.
-11. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
+6. Pay close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
+7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intended or not.
+8. You MUST check if the previous reasoning and action works as intended or not and how it affects your current action.
+9. If an interaction based action is not working as intended, you should try to reason about the problem and adjust accordingly.
+10. Pay close attention to the current mode of the agent - CLI or GUI.
+11. If the current todo is complete, use 'update todos' to mark it as completed.
+12. If the result of the task has been achieved, you MUST use switch to CLI mode action to switch to CLI mode.
 </reasoning_protocol>
 
 <quality_control>
@@ -919,8 +970,16 @@ Follow these instructions carefully:
 - Make sure the query is general and descriptive enough to retrieve relevant GUI actions from a vector database.
 </quality_control>
 
+---
+
+{agent_state}
+
+{task_state}
+
+{gui_event_stream}
+
 <output_format>
-Return ONLY a JSON object with two fields:
+Return ONLY a JSON object with three fields:
 
 {{
   "reasoning": "<a description of the current screen detail needed for the task, natural-language chain-of-thought explaining understanding, validation, and decision>",
@@ -987,16 +1046,21 @@ Describe non-textual elements *only if referenced in or relevant to the query*.
 Previous Step Query: {query}
 """
 
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content LAST
 GUI_PIXEL_POSITION_PROMPT = """
 You are a UI element detection system. Your job is to extract a structured list of interactable elements from the provided 1064x1064 screenshot.
-Element to find: {element_to_find}
 
 Guidelines:
 1.  **Coordinate System:** Use a 0-indexed pixel grid where (0,0) is the top-left corner. The max X is 1063, max Y is 1063.
 2.  **Bounding Boxes:** For every element, provide an inclusive bounding box as [x_min, y_min, x_max, y_max].
 3.  **Output Format:** Return ONLY a valid JSON list of objects. Do not provide any conversational text before or after the JSON.
 
-Analyze the image and generate the JSON list.
 DO NOT hallucinate or make up any information.
 After getting the pixels, do an extra check to make sure the pixel location is visually accurate on the image. If not, try to adjust the pixel location to make it more accurate.
+
+---
+
+Element to find: {element_to_find}
+
+Analyze the image and generate the JSON list.
 """

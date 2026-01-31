@@ -310,13 +310,18 @@ class GUIModule:
                 - reasoning: The model's reasoning output
                 - action_query: A refined query used for action selection
         """
-        # Build the system prompt using the current context configuration
+        # KV CACHING: System prompt is now STATIC only
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False, "gui_event_stream": True, "event_stream": False},
+            system_flags={"policy": False},
         )
-        # Format the user prompt with the incoming query
-        prompt = GUI_REASONING_PROMPT.format(gui_state=query)
+        # KV CACHING: Inject dynamic context into user prompt
+        prompt = GUI_REASONING_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            gui_event_stream=self.context_engine.get_gui_event_stream(),
+            gui_state=query,
+        )
 
         # Attempt the LLM call and parsing up to (retries + 1) times
         for attempt in range(retries + 1):            
@@ -438,13 +443,17 @@ class GUIModule:
             - reasoning_result: The reasoning result.
             - item_index: The index of the item in the image.
         """
-        # Build the system prompt using the current context configuration
+        # KV CACHING: System prompt is now STATIC only
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False, "gui_event_stream": True, "event_stream": False},
+            system_flags={"policy": False},
         )
-        # Format the user prompt with the incoming query
-        prompt = GUI_REASONING_PROMPT_OMNIPARSER
+        # KV CACHING: Inject dynamic context into user prompt
+        prompt = GUI_REASONING_PROMPT_OMNIPARSER.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            gui_event_stream=self.context_engine.get_gui_event_stream(),
+        )
 
         # Attempt the LLM call and parsing up to (retries + 1) times
         for attempt in range(retries + 1):            
