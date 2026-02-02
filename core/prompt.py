@@ -264,11 +264,11 @@ Critical Rules:
 
 ---
 
-{agent_state}
+{event_stream}
 
 {task_state}
 
-{event_stream}
+{agent_state}
 
 <objective>
 Here is your goal:
@@ -328,11 +328,11 @@ GUI Action Selection Rules:
 
 ---
 
-{agent_state}
+{gui_event_stream}
 
 {task_state}
 
-{gui_event_stream}
+{agent_state}
 
 <objective>
 You are a GUI agent. You are given a goal and your event stream, with screenshots. You need to perform the next action to complete the task.
@@ -825,11 +825,11 @@ Follow these instructions:
 
 ---
 
-{agent_state}
+{event_stream}
 
 {task_state}
 
-{event_stream}
+{agent_state}
 
 <output_format>
 Return ONLY a JSON object:
@@ -906,11 +906,11 @@ Follow these instructions carefully:
 
 ---
 
-{agent_state}
+{gui_event_stream}
 
 {task_state}
 
-{gui_event_stream}
+{agent_state}
 
 <gui_state>
 You are provided with a screenshot of the current screen.
@@ -972,11 +972,11 @@ Follow these instructions carefully:
 
 ---
 
-{agent_state}
+{gui_event_stream}
 
 {task_state}
 
-{gui_event_stream}
+{agent_state}
 
 <output_format>
 Return ONLY a JSON object with three fields:

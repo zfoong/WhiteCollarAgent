@@ -17,6 +17,7 @@ from core.logger import logger
 from core.llm_interface import LLMInterface
 from core.state.agent_state import STATE
 from core.prompt import CHECK_TRIGGERS_STATE_PROMPT
+from decorators.profiler import profile, OperationCategory
 
 # ─────────────────────────── Data class ─────────────────────────────
 @dataclass(order=True)
@@ -127,6 +128,7 @@ class TriggerQueue:
     # =================================================================
     # PUT
     # =================================================================
+    @profile("trigger_queue_put", OperationCategory.TRIGGER)
     async def put(self, trig: Trigger) -> None:
         """
         Insert a trigger into the queue, merging with existing session triggers.
@@ -199,6 +201,7 @@ class TriggerQueue:
     # =================================================================
     # GET
     # =================================================================
+    @profile("trigger_queue_get", OperationCategory.TRIGGER)
     async def get(self) -> Trigger:
         """
         Retrieve the next trigger to execute, waiting until one is ready.

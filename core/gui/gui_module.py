@@ -16,7 +16,7 @@ from core.action.action_library import ActionLibrary
 from core.action.action_router import ActionRouter
 from core.context_engine import ContextEngine
 from core.event_stream.event_stream_manager import EventStreamManager
-from core.llm_interface import LLMInterface
+from core.llm_interface import LLMInterface, LLMCallType
 from core.logger import logger
 
 class GUIModule:
@@ -323,12 +323,24 @@ class GUIModule:
             gui_state=query,
         )
 
+        # Get current task_id for session cache (if running in a task)
+        current_task_id = STATE.get_agent_property("current_task_id", "")
+
         # Attempt the LLM call and parsing up to (retries + 1) times
-        for attempt in range(retries + 1):            
-            response = await self.llm.generate_response_async(
-                system_prompt=system_prompt,
-                user_prompt=prompt,
-            )
+        for attempt in range(retries + 1):
+            # Use session cache if we're in a task context and session exists
+            if current_task_id and self.llm.has_session_cache(current_task_id, LLMCallType.GUI_REASONING):
+                response = await self.llm.generate_response_with_session_async(
+                    task_id=current_task_id,
+                    call_type=LLMCallType.GUI_REASONING,
+                    user_prompt=prompt,
+                    system_prompt_for_new_session=system_prompt,
+                )
+            else:
+                response = await self.llm.generate_response_async(
+                    system_prompt=system_prompt,
+                    user_prompt=prompt,
+                )
 
             try:
                 # Parse and validate the structured JSON response
@@ -338,7 +350,7 @@ class GUIModule:
                     self.set_gui_event_stream(reasoning_result.reasoning)
 
                 return reasoning_result
-            except ValueError as e:                
+            except ValueError as e:
                 raise RuntimeError("Failed to obtain valid reasoning from VLM") from e
 
     async def _get_pixel_position_vlm(self, image_bytes: bytes, element_to_find: str) -> List[Dict]:

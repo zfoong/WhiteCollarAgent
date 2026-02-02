@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "auto_save_interval": 5,
+  "log_dir": "decorators/logs"
+}

@@ -27,6 +27,7 @@ from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from core.gui.handler import GUIHandler
+from decorators.profiler import profile, OperationCategory
 
 nest_asyncio.apply()
 
@@ -76,6 +77,7 @@ class ActionManager:
     # Public helpers
     # ------------------------------------------------------------------
 
+    @profile("action_manager_execute_action", OperationCategory.ACTION_EXECUTION)
     async def execute_action(
         self,
         action: Action,
@@ -336,6 +338,7 @@ class ActionManager:
     # Action execution primitives (unchanged)
     # ------------------------------------------------------------------
 
+    @profile("action_manager_execute_atomic_action", OperationCategory.ACTION_EXECUTION)
     async def execute_atomic_action(self, action: Action, input_data: dict):
         try:
             output = await self.executor.execute_action(action, input_data)
@@ -396,6 +399,7 @@ class ActionManager:
             logger.debug("Recovered JSON payload from action output.")
             return parsed
 
+    @profile("action_manager_execute_divisible_action", OperationCategory.ACTION_EXECUTION)
     async def execute_divisible_action(self, action, input_data, parent_id):
         results = {}
         for sub in action.sub_actions:
@@ -408,6 +412,7 @@ class ActionManager:
             )
         return results
     
+    @profile("action_manager_run_observe_step", OperationCategory.ACTION_EXECUTION)
     async def run_observe_step(self, action: Action, action_output: dict) -> Dict[str, Any]:
         """
         Executes the observation code with retries, to confirm action outcome.

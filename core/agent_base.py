@@ -38,7 +38,7 @@ from core.action.action_manager import ActionManager
 from core.action.action_router import ActionRouter
 from core.tui_interface import TUIInterface
 from core.internal_action_interface import InternalActionInterface
-from core.llm_interface import LLMInterface
+from core.llm_interface import LLMInterface, LLMCallType
 from core.vlm_interface import VLMInterface
 from core.database_interface import DatabaseInterface
 from core.logger import logger
@@ -52,6 +52,7 @@ from core.task.task_manager import TaskManager
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.gui.gui_module import GUIModule
 from core.gui.handler import GUIHandler
+from decorators.profiler import profile, profile_loop, OperationCategory
 
 
 @dataclass
@@ -144,6 +145,7 @@ class AgentBase:
             self.task_manager,
             self.state_manager,
             vlm_interface=self.vlm,
+            context_engine=self.context_engine,
         )
 
         GUIHandler.gui_module: GUIModule = GUIModule(
@@ -204,6 +206,7 @@ class AgentBase:
     # =====================================
     # Agent Turn
     # =====================================
+    @profile_loop
     async def react(self, trigger: Trigger) -> None:
         """
         This is the main agent cycle. It executes a full agent turn in response to an incoming trigger.
@@ -318,10 +321,11 @@ class AgentBase:
             "event_stream_summary": event_stream_summary,
         }
 
+    @profile("agent_select_action", OperationCategory.AGENT_LOOP)
     async def _select_action(self, trigger_data: TriggerData) -> tuple[dict, str]:
         """
         Select an action based on current task state.
-        
+
         Returns:
             Tuple of (action_decision, reasoning) where reasoning is empty string
             for non-task contexts.
@@ -337,10 +341,11 @@ class AgentBase:
                 raise ValueError("Action router returned no decision.")
             return action_decision, ""
 
+    @profile("agent_select_action_in_task", OperationCategory.AGENT_LOOP)
     async def _select_action_in_task(self, query: str) -> tuple[dict, str]:
         """
         Select action when running within a task context.
-        
+
         Returns:
             Tuple of (action_decision, reasoning)
         """
@@ -385,6 +390,7 @@ class AgentBase:
 
         return action, action_params, parent_id or None
 
+    @profile("agent_execute_action", OperationCategory.AGENT_LOOP)
     async def _execute_action(
         self,
         action: Action,
@@ -514,6 +520,7 @@ class AgentBase:
         # No limits close or reached
         return True
 
+    @profile("agent_perform_reasoning", OperationCategory.REASONING)
     async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = True) -> ReasoningResult:
         """
         Perform LLM-based reasoning on a user query to guide action selection.
@@ -547,13 +554,25 @@ class AgentBase:
         # Track the last parsing/validation error for meaningful failure reporting
         last_error: Exception | None = None
 
+        # Get current task_id for session cache (if running in a task)
+        current_task_id = STATE.get_agent_property("current_task_id", "")
+
         # Attempt the LLM call and parsing up to (retries + 1) times
         for attempt in range(retries + 1):
-            # Await the asynchronous LLM call (non-blocking)
-            response = await self.llm.generate_response_async(
-                system_prompt=system_prompt,
-                user_prompt=prompt,
-            )
+            # Use session cache if we're in a task context and session exists
+            if current_task_id and self.llm.has_session_cache(current_task_id, LLMCallType.REASONING):
+                response = await self.llm.generate_response_with_session_async(
+                    task_id=current_task_id,
+                    call_type=LLMCallType.REASONING,
+                    user_prompt=prompt,
+                    system_prompt_for_new_session=system_prompt,
+                )
+            else:
+                # Fall back to standard LLM call
+                response = await self.llm.generate_response_async(
+                    system_prompt=system_prompt,
+                    user_prompt=prompt,
+                )
 
             try:
                 # Parse and validate the structured JSON response
@@ -577,6 +596,7 @@ class AgentBase:
         # All retries exhausted — fail fast with a clear error
         raise RuntimeError("Failed to obtain valid reasoning from LLM") from last_error
 
+    @profile("agent_create_new_trigger", OperationCategory.TRIGGER)
     async def _create_new_trigger(self, new_session_id, action_output, STATE):
         """
         Schedule a follow-up trigger when a task is ongoing.

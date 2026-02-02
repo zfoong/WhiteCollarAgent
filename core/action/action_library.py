@@ -14,6 +14,7 @@ from typing import List, Optional
 from core.database_interface import DatabaseInterface
 from core.action.action import Action
 from core.logger import logger
+from decorators.profiler import profile, OperationCategory
 
 class ActionLibrary:
     """
@@ -42,6 +43,7 @@ class ActionLibrary:
         action_dict["updatedAt"] = datetime.datetime.utcnow().isoformat()
         self.db_interface.store_action(action_dict)
 
+    @profile("action_library_retrieve_action", OperationCategory.ACTION_LIBRARY)
     def retrieve_action(self, action_name: str) -> Optional[Action]:
         """
         Fetch a single action by name.
@@ -57,6 +59,7 @@ class ActionLibrary:
             return Action.from_dict(action_data)
         return None
 
+    @profile("action_library_retrieve_default_action", OperationCategory.ACTION_LIBRARY)
     def retrieve_default_action(self) -> List[Action]:
         """
         Retrieve actions marked as defaults.
@@ -74,6 +77,7 @@ class ActionLibrary:
             for action in self.retrieve_default_action()
         }
 
+    @profile("action_library_search_action", OperationCategory.ACTION_LIBRARY)
     def search_action(self, query: str, top_k=50) -> List[str]:
         """
         Search for actions using vector similarity.

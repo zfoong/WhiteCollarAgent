@@ -12,9 +12,12 @@ import ast
 from typing import Optional, List, Dict, Any, Tuple
 from core.action.action_library import ActionLibrary
 from core.context_engine import ContextEngine
+from core.state.agent_state import STATE
 
 from core.logger import logger
+from core.llm_interface import LLMCallType
 from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT
+from decorators.profiler import profile, OperationCategory
 
 
 def _is_visible_in_mode(action, GUI_mode: bool) -> bool:
@@ -58,6 +61,7 @@ class ActionRouter:
         self.vlm_interface = vlm_interface
         self.context_engine = context_engine
 
+    @profile("action_router_select_action", OperationCategory.ACTION_ROUTING)
     async def select_action(
         self,
         query: str,
@@ -113,6 +117,7 @@ class ActionRouter:
 
         return decision
 
+    @profile("action_router_select_action_in_task", OperationCategory.ACTION_ROUTING)
     async def select_action_in_task(
         self,
         query: str,
@@ -218,8 +223,9 @@ class ActionRouter:
         # 3. If we fail to find a valid action name after the retries, raise an error
         raise ValueError("Invalid selected action returned by LLM after retries.")
 
+    @profile("action_router_select_action_in_GUI", OperationCategory.ACTION_ROUTING)
     async def select_action_in_GUI(
-        self, 
+        self,
         query: str,
         action_type: Optional[str] = None,
         GUI_mode=False,
@@ -315,6 +321,10 @@ class ActionRouter:
         max_retries = 3
         last_error: Optional[Exception] = None
         current_prompt = prompt
+
+        # Get current task_id for session cache (if running in a task)
+        current_task_id = STATE.get_agent_property("current_task_id", "") if is_task else ""
+
         for attempt in range(max_retries):
             # KV CACHING: System prompt is now STATIC only
             # Dynamic content (event_stream, task_state) is already in the user prompt
@@ -322,7 +332,18 @@ class ActionRouter:
                 user_flags={"query": False, "expected_output": False},
                 system_flags={"agent_info": not is_task, "policy": False},
             )
-            raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+
+            # Use session cache if we're in a task context and session exists
+            if current_task_id and self.llm_interface.has_session_cache(current_task_id, LLMCallType.ACTION_SELECTION):
+                raw_response = await self.llm_interface.generate_response_with_session_async(
+                    task_id=current_task_id,
+                    call_type=LLMCallType.ACTION_SELECTION,
+                    user_prompt=current_prompt,
+                    system_prompt_for_new_session=system_prompt,
+                )
+            else:
+                raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+
             decision, parse_error = self._parse_action_decision(raw_response)
             if decision is not None:
                 decision.setdefault("parameters", {})
@@ -344,6 +365,11 @@ class ActionRouter:
     async def _prompt_for_decision_gui(self, prompt: str = "", image_bytes: Optional[bytes] = None, is_task: bool = False) -> Dict[str, Any]:
         max_retries = 3
         last_error: Optional[Exception] = None
+        current_prompt = prompt
+
+        # Get current task_id for session cache (if running in a task)
+        current_task_id = STATE.get_agent_property("current_task_id", "") if is_task else ""
+
         for attempt in range(max_retries):
             # KV CACHING: System prompt is now STATIC only
             # Dynamic content (gui_event_stream, task_state) is already in the user prompt
@@ -352,13 +378,24 @@ class ActionRouter:
                 system_flags={"role_info": not is_task, "agent_info": not is_task, "policy": False},
             )
             if image_bytes:
+                # VLM calls don't use session cache (independent calls with images)
                 raw_response = await self.vlm_interface.generate_response_async(
                     image_bytes,
                     system_prompt=system_prompt,
-                    user_prompt=prompt,
-                ) 
+                    user_prompt=current_prompt,
+                )
             else:
-                raw_response = await self.llm_interface.generate_response_async(system_prompt, prompt)
+                # Use session cache if we're in a task context and session exists
+                if current_task_id and self.llm_interface.has_session_cache(current_task_id, LLMCallType.GUI_ACTION_SELECTION):
+                    raw_response = await self.llm_interface.generate_response_with_session_async(
+                        task_id=current_task_id,
+                        call_type=LLMCallType.GUI_ACTION_SELECTION,
+                        user_prompt=current_prompt,
+                        system_prompt_for_new_session=system_prompt,
+                    )
+                else:
+                    raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+
             decision, parse_error = self._parse_action_decision(raw_response)
             if decision is not None:
                 decision.setdefault("parameters", {})

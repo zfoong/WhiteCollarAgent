@@ -22,6 +22,7 @@ from core.task.task import Task
 
 from core.action.action_framework.registry import registry_instance
 from core.action.action_framework.loader import load_actions_from_directories
+from decorators.profiler import profile, OperationCategory
 
 
 class DatabaseInterface:
@@ -408,6 +409,7 @@ class DatabaseInterface:
                 break
         self.chroma_actions.delete(ids=[name], ignore_missing=True)
 
+    @profile("db_search_actions_chromadb", OperationCategory.DATABASE)
     def search_actions(self, query: str, top_k: int = 7) -> List[str]:
         """
         Search stored actions using vector similarity on their names and description.
