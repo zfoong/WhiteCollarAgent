@@ -166,10 +166,28 @@ SELECT_ACTION_PROMPT = """
 Action Selection Rules:
 - use 'send message' ONLY for simple responses or acknowledgments.
 - use 'ignore' when user's chat does not require any reply or action.
-- For ANY task requiring multiple steps or work, use 'start task' FIRST.
+- For ANY task requiring work beyond simple chat, use 'start task' FIRST.
 
-Task Workflow (when receiving a task request):
-1. Use 'start task' to create the task context
+Task Mode Selection (when using 'start task'):
+- Use task_mode='simple' for:
+  * Quick lookups (weather, time, search queries)
+  * Single-answer questions (calculations, conversions)
+  * Tasks completable in 2-3 actions
+  * No planning or verification needed
+- Use task_mode='complex' for:
+  * Multi-step work (research, analysis, coding)
+  * File operations or system changes
+  * Tasks requiring planning and verification
+  * Anything needing user approval before completion
+
+Simple Task Workflow:
+1. Use 'start task' with task_mode='simple'
+2. Execute actions directly to get the result
+3. Use 'send message' to deliver the result
+4. Use 'end task' immediately after delivering result (no user confirmation needed)
+
+Complex Task Workflow:
+1. Use 'start task' with task_mode='complex'
 2. Use 'send message' to acknowledge receipt (REQUIRED)
 3. Use 'update todos' to plan the work following: Acknowledge -> Collect Info -> Execute -> Verify -> Confirm -> Cleanup
 4. Execute actions to complete each todo
@@ -177,9 +195,8 @@ Task Workflow (when receiving a task request):
 
 Critical Rules:
 - DO NOT use 'send message' to claim task completion without actually doing the work.
-- DO NOT use 'end task' without user approval of the final result.
+- For complex tasks: DO NOT use 'end task' without user approval of the final result.
 - You MUST use 'start task' before 'update todos' - todos only work with an active task.
-- ALWAYS acknowledge task receipt before starting work.
 - You must propose concrete parameter values for the selected action's input_schema.
 </rules>
 
@@ -365,6 +382,74 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
     "<parameter name>": <value>,
     "...": <value>
   }}
+}}
+</output_format>
+"""
+
+# Used for simple task mode - streamlined action selection without todo workflow
+# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
+SELECT_ACTION_IN_SIMPLE_TASK_PROMPT = """
+<rules>
+Simple Task Execution Rules:
+- This is a SIMPLE task - complete it quickly and efficiently
+- NO todo list management required - just execute actions directly
+- NO acknowledgment phase required - proceed directly to execution
+- Select actions that directly accomplish the goal
+- Use 'send message' to report the final result to the user
+- Use 'end task' with status 'complete' IMMEDIATELY after delivering the result
+- NO user confirmation required - end task right after sending the result
+
+Action Selection:
+- Choose the most direct action to accomplish the goal
+- Prefer single-shot actions that return results immediately
+- If multiple actions needed, execute sequentially without planning
+
+Critical Rules:
+- DO NOT use 'update todos' - simple tasks don't use todo lists
+- DO NOT wait for user approval - end task after result is delivered
+- After using 'send message' to deliver result, your NEXT action MUST be 'end task'
+- If stuck or error, use 'end task' with status 'abort'
+</rules>
+
+<notes>
+- Keep it simple and fast
+- No ceremony, just results
+- Always use double quotes around strings so the JSON is valid
+- DO NOT return empty response. When encounter issue, return 'send message' to inform user.
+</notes>
+
+---
+
+{event_stream}
+
+{task_state}
+
+{agent_state}
+
+<objective>
+SIMPLE TASK - Execute quickly:
+{query}
+
+Select the next action to complete this task efficiently.
+</objective>
+
+<reasoning>
+{reasoning}
+</reasoning>
+
+<actions>
+{action_candidates}
+</actions>
+
+<allowed_action_names>
+{action_name_candidates}
+</allowed_action_names>
+
+<output_format>
+Return ONLY a valid JSON object:
+{{
+  "action_name": "<action name>",
+  "parameters": {{ ... }}
 }}
 </output_format>
 """

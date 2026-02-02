@@ -119,13 +119,14 @@ class InternalActionInterface:
     # ───────────────── Task Management ─────────────────
 
     @classmethod
-    def do_create_task(cls, task_name: str, task_description: str) -> str:
+    def do_create_task(cls, task_name: str, task_description: str, task_mode: str = "complex") -> str:
         """
         Create a new task.
 
         Args:
             task_name: Short name for the task.
             task_description: Detailed description of the work to perform.
+            task_mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work.
 
         Returns:
             The created task identifier.
@@ -133,12 +134,12 @@ class InternalActionInterface:
         if cls.task_manager is None or cls.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with Task/State managers.")
 
-        task_id = cls.task_manager.create_task(task_name, task_description)
+        task_id = cls.task_manager.create_task(task_name, task_description, mode=task_mode)
         task: Optional[Task] = cls.task_manager.get_task()
         cls.state_manager.add_to_active_task(task)
 
-        # Create session caches for each LLM call type (BytePlus only)
-        if cls.llm_interface and cls.context_engine:
+        # Create session caches for complex tasks only (expensive operation, skip for simple tasks)
+        if task_mode == "complex" and cls.llm_interface and cls.context_engine:
             try:
                 # Generate the static system prompt for the session
                 system_prompt, _ = cls.context_engine.make_prompt(

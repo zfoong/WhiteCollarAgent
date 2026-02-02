@@ -155,10 +155,26 @@ class ContextEngine:
     def get_task_state(self) -> str:
         """
         Get the current task and todo list for inclusion in user prompts.
+
+        For simple tasks, omits the todo section since simple tasks don't use todos.
         """
         current_task: Optional[Task] = STATE.current_task
 
         if current_task:
+            # Check if this is a simple task (no todos needed)
+            is_simple = getattr(current_task, "mode", "complex") == "simple"
+
+            if is_simple:
+                # Simple task - streamlined output without todos
+                return (
+                    "<current_task>\n"
+                    f"Task: {current_task.name} [SIMPLE MODE]\n"
+                    f"Instruction: {current_task.instruction}\n"
+                    "Mode: Simple task - execute directly, no todos required\n"
+                    "</current_task>"
+                )
+
+            # Complex task - include full todo list
             lines = [
                 "<current_task>",
                 f"Task: {current_task.name}",
