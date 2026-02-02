@@ -56,13 +56,14 @@ class TaskManager:
 
     # ─────────────────────── Task Creation ───────────────────────────────────
 
-    def create_task(self, task_name: str, task_instruction: str) -> str:
+    def create_task(self, task_name: str, task_instruction: str, mode: str = "complex") -> str:
         """
         Create a new task without LLM planning.
 
         Args:
             task_name: Human-readable identifier for the task.
             task_instruction: Description of the work to be done.
+            mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work.
 
         Returns:
             The unique task identifier.
@@ -74,6 +75,7 @@ class TaskManager:
             id=task_id,
             name=task_name,
             instruction=task_instruction,
+            mode=mode,
             temp_dir=str(temp_dir),
         )
 
@@ -150,6 +152,10 @@ class TaskManager:
     def get_task(self) -> Optional[Task]:
         """Get the currently active task."""
         return self.active
+
+    def is_simple_task(self) -> bool:
+        """Check if current task is in simple mode."""
+        return self.active is not None and self.active.mode == "simple"
 
     # ─────────────────────── Internal Helpers ────────────────────────────────
 

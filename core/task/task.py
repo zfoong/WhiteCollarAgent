@@ -23,7 +23,8 @@ class Task:
         id: Unique identifier for the task
         name: Human-readable name for the task
         instruction: The original user instruction/request
-        todos: List of todo items for tracking progress
+        mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work
+        todos: List of todo items for tracking progress (not used in simple mode)
         temp_dir: Temporary workspace directory for the task
         created_at: ISO timestamp when the task was created
         status: Current state - running, completed, error, paused, or cancelled
@@ -31,6 +32,8 @@ class Task:
     id: str
     name: str
     instruction: str
+    # Allowed: simple | complex
+    mode: str = "complex"
     todos: List[TodoItem] = field(default_factory=list)
     temp_dir: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -66,6 +69,7 @@ class Task:
             "id": self.id,
             "name": self.name,
             "instruction": self.instruction,
+            "mode": self.mode,
             "status": self.status,
             "todos": [todo.to_dict() for todo in self.todos],
         }

@@ -16,7 +16,7 @@ from core.state.agent_state import STATE
 
 from core.logger import logger
 from core.llm_interface import LLMCallType
-from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT
+from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT, SELECT_ACTION_IN_SIMPLE_TASK_PROMPT
 from decorators.profiler import profile, OperationCategory
 
 
@@ -221,6 +221,100 @@ class ActionRouter:
             )
 
         # 3. If we fail to find a valid action name after the retries, raise an error
+        raise ValueError("Invalid selected action returned by LLM after retries.")
+
+    @profile("action_router_select_action_in_simple_task", OperationCategory.ACTION_ROUTING)
+    async def select_action_in_simple_task(
+        self,
+        query: str,
+        reasoning: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Action selection for simple task mode - streamlined without todo workflow.
+
+        Simple tasks don't use todos and auto-end after delivering results.
+        This method excludes todo-related actions and uses a simpler prompt.
+
+        Args:
+            query: Task-level instruction for the next step.
+            reasoning: Reasoning context from the agent.
+
+        Returns:
+            Dict[str, Any]: Decision payload with ``action_name`` and
+            normalized ``parameters`` for execution.
+        """
+        action_candidates = []
+        action_name_candidates = []
+
+        # Exclude todo management and ignore actions for simple tasks
+        ignore_actions = ["ignore", "update todos"]
+
+        # Retrieve default actions
+        default_actions = self.action_library.retrieve_default_action()
+
+        for act in default_actions:
+            if act.name in ignore_actions:
+                continue
+            if not _is_visible_in_mode(act, GUI_mode=False):
+                continue
+            action_candidates.append({
+                "name": act.name,
+                "description": act.description,
+                "type": act.action_type,
+                "input_schema": act.input_schema,
+                "output_schema": act.output_schema
+            })
+
+        # Additional candidate actions from search
+        candidate_names = self.action_library.search_action(query, top_k=5)
+        logger.info(f"ActionRouter (simple task) found candidate actions: {candidate_names}")
+        for name in candidate_names:
+            act = self.action_library.retrieve_action(name)
+            if not act:
+                continue
+            if act.name in ignore_actions:
+                continue
+            if not _is_visible_in_mode(act, GUI_mode=False):
+                continue
+            action_candidates.append({
+                "name": act.name,
+                "description": act.description,
+                "type": act.action_type,
+                "input_schema": act.input_schema,
+                "output_schema": act.output_schema
+            })
+
+        # Dedupe names while preserving insertion order
+        action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
+
+        # Build the instruction prompt using simple task prompt
+        prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            event_stream=self.context_engine.get_event_stream(),
+            query=query,
+            reasoning=self._format_reasoning(reasoning),
+            action_candidates=self._format_candidates(action_candidates),
+            action_name_candidates=self._format_action_names(action_name_candidates),
+        )
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            decision = await self._prompt_for_decision(prompt, is_task=True)
+
+            selected_action_name = decision.get("action_name", "")
+            if selected_action_name == "":
+                return decision
+
+            selected_action = self.action_library.retrieve_action(selected_action_name)
+            if selected_action is not None and _is_visible_in_mode(selected_action, GUI_mode=False):
+                decision["parameters"] = self._ensure_parameters(decision.get("parameters"))
+                return decision
+
+            logger.warning(
+                f"Received invalid action name '{selected_action_name}' during simple task selection attempt {attempt + 1}"
+            )
+
         raise ValueError("Invalid selected action returned by LLM after retries.")
 
     @profile("action_router_select_action_in_GUI", OperationCategory.ACTION_ROUTING)

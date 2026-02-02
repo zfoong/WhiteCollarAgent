@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
 from core.action.action_router import ActionRouter
-from core.tui_interface import TUIInterface
+from core.tui import TUIInterface
 from core.internal_action_interface import InternalActionInterface
 from core.llm_interface import LLMInterface, LLMCallType
 from core.vlm_interface import VLMInterface
@@ -331,9 +331,13 @@ class AgentBase:
             for non-task contexts.
         """
         is_running_task = self.state_manager.is_running_task()
-        
+
         if is_running_task:
-            return await self._select_action_in_task(trigger_data.query)
+            # Check task mode - simple tasks use streamlined action selection
+            if self.task_manager.is_simple_task():
+                return await self._select_action_in_simple_task(trigger_data.query)
+            else:
+                return await self._select_action_in_task(trigger_data.query)
         else:
             logger.debug(f"[AGENT QUERY] {trigger_data.query}")
             action_decision = await self.action_router.select_action(query=trigger_data.query)
@@ -351,16 +355,41 @@ class AgentBase:
         """
         reasoning_result = await self._perform_reasoning(query=query, log_reasoning_event=True)
         logger.debug(f"[AGENT QUERY] {reasoning_result.action_query}")
-        
+
         action_decision = await self.action_router.select_action_in_task(
             query=reasoning_result.action_query,
             reasoning=reasoning_result.reasoning,
             GUI_mode=STATE.gui_mode,
         )
-        
+
         if not action_decision:
             raise ValueError("Action router returned no decision.")
-        
+
+        return action_decision, reasoning_result.reasoning
+
+    @profile("agent_select_action_in_simple_task", OperationCategory.AGENT_LOOP)
+    async def _select_action_in_simple_task(self, query: str) -> tuple[dict, str]:
+        """
+        Select action for simple task mode - lighter weight than complex task.
+
+        Simple tasks use streamlined reasoning and no todo workflow.
+        They auto-end after delivering results.
+
+        Returns:
+            Tuple of (action_decision, reasoning)
+        """
+        # Simplified reasoning - don't log to event stream for efficiency
+        reasoning_result = await self._perform_reasoning(query=query, log_reasoning_event=False)
+        logger.debug(f"[AGENT QUERY - SIMPLE TASK] {reasoning_result.action_query}")
+
+        action_decision = await self.action_router.select_action_in_simple_task(
+            query=reasoning_result.action_query,
+            reasoning=reasoning_result.reasoning,
+        )
+
+        if not action_decision:
+            raise ValueError("Action router returned no decision.")
+
         return action_decision, reasoning_result.reasoning
 
     async def _retrieve_and_prepare_action(
