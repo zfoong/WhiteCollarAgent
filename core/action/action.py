@@ -11,6 +11,8 @@ class Action:
     Actions can be atomic (directly executable) or hierarchical (contain sub-actions).
     """
 
+    DEFAULT_TIMEOUT: int = 6000  # 100 minutes max timeout (GUI mode might need more time to run)
+
     def __init__(
         self,
         name: str,
@@ -26,7 +28,9 @@ class Action:
         last_use: bool = None,
         default: bool = False,
         platforms: List[str] = ["windows", "linux", "darwin"],
-        platform_overrides: dict[str, dict] = {}
+        platform_overrides: dict[str, dict] = {},
+        requirements: Optional[List[str]] = None,
+        timeout: Optional[int] = None
     ):
         """
         Initialize a new :class:`Action` definition.
@@ -61,6 +65,10 @@ class Action:
                 supported operating systems.
             platform_overrides: Platform-specific overrides for code and schemas,
                 keyed by lowercase platform name.
+            requirements: List of pip package names required by this action.
+                These will be auto-installed before execution if not already present.
+            timeout: Maximum execution time in seconds. Defaults to 600 (10 minutes).
+                Actions exceeding this timeout will be terminated.
         """
         self.name = name
         self.description = description
@@ -79,9 +87,11 @@ class Action:
         self.created_at = datetime.datetime.utcnow().isoformat()
         self.updated_at = self.created_at
         self.last_use = last_use
-        self.default = default  
+        self.default = default
         self.mode = mode
         self.execution_mode = execution_mode
+        self.requirements = requirements or []
+        self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
 
     def to_dict(self):
         """Convert Action to a dictionary format (for database storage)."""
@@ -101,7 +111,9 @@ class Action:
             "default": self.default,
             "platforms": self.platforms,
             "platform_overrides": self.platform_overrides,
-            "execution_mode": self.execution_mode
+            "execution_mode": self.execution_mode,
+            "requirements": self.requirements,
+            "timeout": self.timeout
         }
 
     @classmethod
@@ -125,10 +137,12 @@ class Action:
             output_schema=output_schema,
             sub_actions=sub_actions,
             observer=observer,
-            default=data.get("default", False) ,
+            default=data.get("default", False),
             platforms=data.get("platforms", ["windows", "linux", "darwin"]),
             platform_overrides=data.get("platform_overrides", {}),
-            execution_mode=data.get("execution_mode", "sandboxed")
+            execution_mode=data.get("execution_mode", "sandboxed"),
+            requirements=data.get("requirements", []),
+            timeout=data.get("timeout")
         )
 
         return data_to_return
