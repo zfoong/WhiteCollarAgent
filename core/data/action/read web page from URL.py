@@ -63,7 +63,7 @@ from core.action.action_framework.registry import action
             "description": "Optional error or diagnostic message."
         }
     },
-    requirement=["BeautifulSoup", "trafilatura", "bs4"],
+    requirement=["beautifulsoup4", "trafilatura", "lxml"],
     test_payload={
         "url": "https://example.com/article",
         "timeout": 20,
