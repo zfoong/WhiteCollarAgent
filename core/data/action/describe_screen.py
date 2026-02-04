@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="describe_screen",
     description="Captures the entire screen and converts it into an LLM-friendly, markdown description.",
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={},
     output_schema={
         "status": {

@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="replace_in_file",
         description="Replaces all occurrences of a search string (literal or regex) in a text file with a replacement string.",
         mode="CLI",
+        action_sets=["file_operations"],
         input_schema={
                 "file_path": {
                         "type": "string",

@@ -180,6 +180,12 @@ Task Mode Selection (when using 'task_start'):
   * Tasks requiring planning and verification
   * Anything needing user approval before completion
 
+Action Sets (automatic selection):
+- Action sets are automatically selected based on the task description
+- The 'core' set is always included (send_message, task management)
+- If you need additional capabilities during the task, use 'add_action_sets'
+- Use 'list_action_sets' to see what action sets are available
+
 Simple Task Workflow:
 1. Use 'task_start' with task_mode='simple'
 2. Execute actions directly to get the result
@@ -259,6 +265,8 @@ Adaptive Execution:
 - If you lack information during EXECUTE, go back to COLLECT phase (add new collect todos)
 - If VERIFY fails, either re-EXECUTE or go back to COLLECT more info
 - DO NOT proceed to next phase until current phase requirements are met
+- If you need an action not in the available list, use 'add_action_sets' to add the required capability
+- Use 'list_action_sets' to see what action sets are available if unsure
 
 Critical Rules:
 - The selected action MUST be from the allowed action list. If none suitable, set action_name to "" (empty string).
@@ -271,6 +279,17 @@ Critical Rules:
 - In GUI mode: only ONE UI interaction per action. Switch to CLI mode using 'switch_mode' action when task is complete.
 - You must provide concrete parameter values for the action's input_schema.
 </rules>
+
+<reasoning_protocol>
+Before selecting an action, you MUST reason through these steps:
+1. Identify the current todo (marked 'in_progress' or first 'pending').
+2. Determine which phase this todo belongs to (Acknowledge/Collect/Execute/Verify/Confirm/Cleanup).
+3. Analyze what "done" means for this specific todo.
+4. Check the event stream to see if the required action was already performed.
+5. If the todo is complete, select action to update todos.
+6. If not complete, select the action needed to complete it.
+7. Consider warnings in event stream and avoid repeated patterns.
+</reasoning_protocol>
 
 <notes>
 - Provide every required parameter for the chosen action, respecting each field's type, description, and example.
@@ -291,13 +310,8 @@ Critical Rules:
 Here is your goal:
 {query}
 
-Your job is to select the next action that should run and provide the input parameters so it can be executed immediately.
+Your job is to reason about the current state, then select the next action and provide the input parameters so it can be executed immediately.
 </objective>
-
-<reasoning>
-Here is your reasoning of the current step:
-{reasoning}
-</reasoning>
 
 <actions>
 This is the list of action candidates, each including descriptions and input schema:
@@ -312,6 +326,7 @@ You may only choose from these action names:
 <output_format>
 Return ONLY a valid JSON object with this structure and no extra commentary:
 {{
+  "reasoning": "<chain-of-thought about current todo, its phase, completion status, and decision>",
   "action_name": "<name of the chosen action, or empty string if none apply>",
   "parameters": {{
     "<parameter name>": <value>,
@@ -334,7 +349,19 @@ GUI Action Selection Rules:
 - use 'send_message' when you want to communicate or report to the user.
 - If the current todo is complete, use 'task_update_todos' to mark it as completed and move on.
 - If the result of the task has been achieved, you MUST use 'switch_mode' action to switch to CLI mode.
+- DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
 </rules>
+
+<reasoning_protocol>
+Before selecting an action, you MUST reason through these steps:
+1. Describe the current screen state based on the screenshot/description provided.
+2. Verify if the previous action in the event stream was performed successfully.
+3. Check the event stream for warnings or repeated patterns that need adjustment.
+4. Determine what the next action should be to progress toward the goal.
+5. If selecting a click/mouse action, identify the specific UI element to interact with.
+6. Consider if the current todo is complete and needs updating.
+7. Check if task is complete and mode switch is needed.
+</reasoning_protocol>
 
 <notes>
 - Provide every required parameter for the chosen action, respecting each field's type, description, and example.
@@ -351,18 +378,18 @@ GUI Action Selection Rules:
 
 {agent_state}
 
+<gui_state>
+Current screen state (screenshot description or parsed elements):
+{gui_state}
+</gui_state>
+
 <objective>
-You are a GUI agent. You are given a goal and your event stream, with screenshots. You need to perform the next action to complete the task.
+You are a GUI agent. You are given a goal and your event stream, with screenshots. You need to reason about the current state and perform the next action to complete the task.
 Here is your goal:
 {query}
 
-Your job is to select the next GUI action and provide the input parameters so it can be executed immediately.
+Your job is to reason about the screen, select the next GUI action, and provide the input parameters so it can be executed immediately.
 </objective>
-
-<reasoning>
-Here is your reasoning of the current step:
-{reasoning}
-</reasoning>
 
 <actions>
 This is the list of action candidates, each including descriptions and input schema:
@@ -377,12 +404,18 @@ You may only choose from these action names:
 <output_format>
 Return ONLY a valid JSON object with this structure and no extra commentary:
 {{
+  "reasoning": "<description of the current screen state, verification of previous action, and decision for next action>",
+  "element_to_find": "<description of the UI element to interact with, or empty string if action doesn't need pixel coordinates>",
   "action_name": "<name of the chosen action, or empty string if none apply>",
   "parameters": {{
     "<parameter name>": <value>,
     "...": <value>
   }}
 }}
+
+Note: The 'element_to_find' field is used to locate pixel coordinates for mouse/click actions.
+- For mouse_click, mouse_move, mouse_drag: describe the element like "the Firefox icon on the desktop" or "the search button"
+- For keyboard actions, send_message, task_update_todos, etc.: set element_to_find to ""
 </output_format>
 """
 
@@ -411,6 +444,14 @@ Critical Rules:
 - If stuck or error, use 'task_end' with status 'abort'
 </rules>
 
+<reasoning_protocol>
+Before selecting an action, quickly reason through:
+1. What is the goal of this simple task?
+2. What has been done so far (check event stream)?
+3. What is the most direct action to accomplish/complete the goal?
+4. If result was delivered, end the task.
+</reasoning_protocol>
+
 <notes>
 - Keep it simple and fast
 - No ceremony, just results
@@ -430,12 +471,8 @@ Critical Rules:
 SIMPLE TASK - Execute quickly:
 {query}
 
-Select the next action to complete this task efficiently.
+Reason briefly, then select the next action to complete this task efficiently.
 </objective>
-
-<reasoning>
-{reasoning}
-</reasoning>
 
 <actions>
 {action_candidates}
@@ -448,6 +485,7 @@ Select the next action to complete this task efficiently.
 <output_format>
 Return ONLY a valid JSON object:
 {{
+  "reasoning": "<brief reasoning about current state and what action to take>",
   "action_name": "<action name>",
   "parameters": {{ ... }}
 }}
@@ -860,7 +898,8 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
 </output_format>
 """
 
-# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
+# DEPRECATED: Reasoning is now integrated into action selection prompts (SELECT_ACTION_IN_TASK_PROMPT, etc.)
+# This prompt is kept for reference but is no longer used.
 STEP_REASONING_PROMPT = """
 <objective>
 You are performing reasoning for the current todo in a task workflow.
@@ -948,7 +987,8 @@ Examples:
 </output_format>
 """
 
-# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
+# DEPRECATED: GUI reasoning is now integrated into SELECT_ACTION_IN_GUI_PROMPT.
+# This prompt is kept for reference but is no longer used.
 GUI_REASONING_PROMPT = """
 <objective>
 You are performing reasoning to control a desktop/web browser/application as GUI agent.
@@ -1014,7 +1054,8 @@ Return ONLY a JSON object with two fields:
 </output_format>
 """
 
-# KV CACHING OPTIMIZED: Static content FIRST, dynamic content in MIDDLE, output format LAST
+# DEPRECATED: GUI OmniParser reasoning is now integrated into SELECT_ACTION_IN_GUI_PROMPT.
+# This prompt is kept for reference but is no longer used.
 GUI_REASONING_PROMPT_OMNIPARSER = """
 <objective>
 You are performing reasoning to control a desktop/web browser/application as GUI agent.
@@ -1144,4 +1185,40 @@ After getting the pixels, do an extra check to make sure the pixel location is v
 Element to find: {element_to_find}
 
 Analyze the image and generate the JSON list.
+"""
+
+# --- Action Set Selection ---
+# Used by InternalActionInterface.do_create_task() to automatically select action sets
+ACTION_SET_SELECTION_PROMPT = """
+<objective>
+You are selecting action sets for a task. Based on the task description, choose which action sets the agent will need to complete this task.
+</objective>
+
+<task_information>
+Task Name: {task_name}
+Task Description: {task_description}
+</task_information>
+
+<available_action_sets>
+{available_sets}
+</available_action_sets>
+
+<instructions>
+- Select ONLY the sets needed for this task (fewer is better for performance)
+- The 'core' set is ALWAYS included automatically - do NOT include it in your response
+- Consider what capabilities the task requires based on the description, here are some examples:
+  - If the task involves files, include 'file_operations'
+  - If the task involves web browsing or searching, include 'web_research'
+  - If the task involves PDFs or documents, include 'document_processing'
+  - If the task involves GUI automation, include 'gui_interaction'
+  - If the task involves running commands or scripts, include 'shell'
+</instructions>
+
+<output_format>
+Return ONLY a valid JSON array of action set names (strings), with no additional text or explanation:
+["set_name_1", "set_name_2"]
+
+If no additional sets are needed beyond core, return an empty array:
+[]
+</output_format>
 """

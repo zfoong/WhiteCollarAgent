@@ -6,6 +6,7 @@ from core.action.action_framework.registry import action
     execution_mode="sandboxed",
     mode="CLI",
     default=True,
+    action_sets=["core"],
     input_schema={
         "code": {
             "type": "string",

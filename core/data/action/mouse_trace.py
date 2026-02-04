@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="mouse_trace",
         description="Moves the mouse cursor along a sequence of points, optionally with easing, per-segment duration, and pauses between segments.",
         mode="GUI",
+        action_sets=["gui_interaction"],
         input_schema={
                 "points": {
                         "type": "array",

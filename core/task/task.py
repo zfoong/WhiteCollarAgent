@@ -28,6 +28,8 @@ class Task:
         temp_dir: Temporary workspace directory for the task
         created_at: ISO timestamp when the task was created
         status: Current state - running, completed, error, paused, or cancelled
+        action_sets: Selected action set names for this task (e.g., ["file_operations", "web_research"])
+        compiled_actions: Cached list of action names compiled from action_sets
     """
     id: str
     name: str
@@ -39,6 +41,10 @@ class Task:
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     # Allowed: running | completed | error | paused | cancelled
     status: str = "running"
+    # Action sets selected for this task - determines available actions
+    action_sets: List[str] = field(default_factory=list)
+    # Compiled action names from action_sets - cached for performance
+    compiled_actions: List[str] = field(default_factory=list)
 
     def get_current_todo(self) -> Optional[TodoItem]:
         """
@@ -72,4 +78,6 @@ class Task:
             "mode": self.mode,
             "status": self.status,
             "todos": [todo.to_dict() for todo in self.todos],
+            "action_sets": self.action_sets,
+            "compiled_actions": self.compiled_actions,
         }

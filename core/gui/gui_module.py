@@ -109,6 +109,15 @@ class GUIModule:
         """
         Perform a GUI task step action.
 
+        Reasoning is now integrated into action selection, reducing LLM calls.
+        New flow:
+        1. Take screenshot
+        2. Get image description (VLM call)
+        3. Select action with integrated reasoning (LLM call) → reasoning, element_to_find, action_name, parameters
+        4. If element_to_find is provided, get pixel position (VLM call)
+        5. Inject pixel position into parameters if needed
+        6. Execute action
+
         Args:
             step: The current todo item (optional).
             session_id: The session ID.
@@ -117,7 +126,6 @@ class GUIModule:
         """
         try:
             query: str = next_action_description
-            reasoning: str = ""
             parent_id = parent_action_id
 
             # ===================================
@@ -139,30 +147,62 @@ class GUIModule:
                     "status": "error",
                     "message": "Failed to take screenshot"
                 }
-            
+
             # ===================================
-            # 3. Perform Reasoning
+            # 3. Get Image Description
             # ===================================
             if self.can_use_omniparser:
-                reasoning_result, action_search_query = await self.omniparser_flow(query=query, png_bytes=png_bytes)
+                image_description_list, annotated_image_bytes = await self._get_image_description_omniparser(png_bytes)
+                gui_state = "\n".join(image_description_list)
             else:
-                reasoning_result, action_search_query = await self.vlm_flow(query=query, png_bytes=png_bytes)
-
-            reasoning: str = reasoning_result.reasoning
+                gui_state = await self._get_image_description_vlm(png_bytes=png_bytes, query=query)
 
             # ===================================
-            # 4. Select Action
+            # 4. Select Action (with integrated reasoning)
             # ===================================
-            action_decision = await self.action_router.select_action_in_GUI(query=action_search_query, reasoning=reasoning, GUI_mode=True)
+            action_decision = await self.action_router.select_action_in_GUI(
+                query=query,
+                gui_state=gui_state,
+                GUI_mode=True
+            )
 
             if not action_decision:
                 raise ValueError("Action router returned no decision.")
 
             action_name = action_decision.get("action_name")
             action_params = action_decision.get("parameters", {})
+            reasoning = action_decision.get("reasoning", "")
+            element_to_find = action_decision.get("element_to_find", "")
+
+            logger.debug(f"[GUI REASONING] {reasoning}")
+            logger.debug(f"[GUI ELEMENT TO FIND] {element_to_find}")
 
             if not action_name:
                 raise ValueError("No valid action selected by the router.")
+
+            # Log reasoning to GUI event stream
+            if self.gui_event_stream_manager and reasoning:
+                self.set_gui_event_stream(reasoning)
+
+            # ===================================
+            # 5. Get Pixel Position (if needed)
+            # ===================================
+            if element_to_find and element_to_find.strip():
+                # Get pixel position for the element using VLM
+                pixel_positions = await self._get_pixel_position_vlm(
+                    image_bytes=png_bytes,
+                    element_to_find=element_to_find
+                )
+
+                # Inject pixel position into parameters for mouse actions
+                if pixel_positions and len(pixel_positions) > 0:
+                    first_position = pixel_positions[0]
+                    if "x" in first_position and "y" in first_position:
+                        # Only inject if action needs coordinates
+                        if action_name in ["mouse_click", "mouse_move", "mouse_drag"]:
+                            action_params["x"] = first_position["x"]
+                            action_params["y"] = first_position["y"]
+                            logger.debug(f"[GUI PIXEL] Injected coordinates: x={first_position['x']}, y={first_position['y']}")
 
             # Retrieve action
             action: Optional[Action] = self.action_library.retrieve_action(action_name)
@@ -171,15 +211,13 @@ class GUIModule:
                     f"Action '{action_name}' not found in the library. "
                     "Check DB connectivity or ensure the action is registered."
                 )
-            
-            # Use provided parent action ID (step.action_id no longer exists)
 
             # ===================================
-            # 5. Execute Action
+            # 6. Execute Action
             # ===================================
             action_output = await self.action_manager.execute_action(
                 action=action,
-                context=reasoning_result.action_query if reasoning_result.action_query else query,
+                context=element_to_find if element_to_find else query,
                 event_stream=self.get_gui_event_stream(),
                 parent_id=parent_id,
                 session_id=session_id,

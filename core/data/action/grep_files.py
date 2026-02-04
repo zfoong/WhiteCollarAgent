@@ -259,6 +259,7 @@ def _grep_files_impl(input_data: dict) -> dict:
     description="Searches a text file for keywords and returns matching chunks with pagination.",
     mode="CLI",
     platforms=["linux"],
+    action_sets=["file_operations"],
     input_schema=_INPUT_SCHEMA,
     output_schema=_OUTPUT_SCHEMA,
     test_payload={
@@ -280,6 +281,7 @@ def grep_files_linux(input_data: dict) -> dict:
     description="Searches a text file for keywords and returns matching chunks with pagination.",
     mode="CLI",
     platforms=["windows"],
+    action_sets=["file_operations"],
     input_schema=_INPUT_SCHEMA,
     output_schema=_OUTPUT_SCHEMA,
     test_payload={
@@ -301,6 +303,7 @@ def grep_files_windows(input_data: dict) -> dict:
     description="Searches a text file for keywords and returns matching chunks with pagination.",
     mode="CLI",
     platforms=["darwin"],
+    action_sets=["file_operations"],
     input_schema=_INPUT_SCHEMA,
     output_schema=_OUTPUT_SCHEMA,
     test_payload={

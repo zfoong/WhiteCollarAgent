@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="open_application",
         description="Launches a Windows application (executable) with optional command-line arguments.",
         mode="GUI",
+        action_sets=["gui_interaction"],
         input_schema={
                 "exe_path": {
                         "type": "string",

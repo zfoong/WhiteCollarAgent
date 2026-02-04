@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
     description="Switch the agent between CLI and GUI modes. CLI mode operates without screen control; GUI mode enables screen interaction capabilities.",
     mode="ALL",
     default=True,
+    action_sets=["core"],
     input_schema={
         "target_mode": {
             "type": "string",

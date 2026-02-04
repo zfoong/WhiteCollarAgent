@@ -74,6 +74,9 @@ class ActionMetadata:
     output_schema: Dict[str, Any] = field(default_factory=dict)
     requirements: List[str] = field(default_factory=list)
     test_payload: Optional[Dict[str, Any]] = None
+    # Action sets this action belongs to (e.g., ["file_operations", "core"])
+    # Used for static action list compilation instead of RAG retrieval
+    action_sets: List[str] = field(default_factory=list)
 
     @property
     def display_name(self) -> str:
@@ -371,11 +374,26 @@ def action(
     input_schema: Optional[Dict[str, Any]] = None,
     output_schema: Optional[Dict[str, Any]] = None,
     requirement: Optional[List[str]] = None,
-    test_payload: Optional[Dict[str, Any]] = None
+    test_payload: Optional[Dict[str, Any]] = None,
+    action_sets: Optional[List[str]] = None
 ):
     """
     Decorator used by developers to register functions as actions.
     This runs at import time, populating the registry.
+
+    Args:
+        name: Unique identifier for the action
+        description: Human-readable description of what the action does
+        mode: Visibility mode - "CLI", "GUI", or "ALL"
+        default: If True, action is always available (legacy, prefer action_sets)
+        execution_mode: "internal" or "sandboxed"
+        platforms: Target platforms - "linux", "windows", "darwin", or "all"
+        input_schema: JSON schema for action parameters
+        output_schema: JSON schema for action output
+        requirement: List of pip packages required
+        test_payload: Test data for simulated execution
+        action_sets: List of action set names this action belongs to
+                     (e.g., ["file_operations", "core"])
     """
     # Normalize platforms input to a list of lowercase strings
     if platforms is None:
@@ -398,7 +416,8 @@ def action(
             input_schema=input_schema or {},
             output_schema=output_schema or {},
             requirements=requirement or [],
-            test_payload=test_payload
+            test_payload=test_payload,
+            action_sets=action_sets or []
         )
         
         # 2. Create the full registration object

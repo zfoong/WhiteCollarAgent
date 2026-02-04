@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
     description="Takes a screenshot of the agent screen.",
     platforms=["linux"],
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "output_path": {
             "type": "string",
@@ -171,6 +172,7 @@ def screenshot(input_data: dict) -> dict:
     description="Takes a screenshot of the agent screen.",
     platforms=["windows"],
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "output_path": {
             "type": "string",
@@ -235,6 +237,7 @@ def screenshot_windows(input_data: dict) -> dict:
     description="Takes a screenshot of the agent screen.",
     platforms=["darwin"],
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "output_path": {
             "type": "string",

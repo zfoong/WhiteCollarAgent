@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
     description="Performs web search using Google Custom Search API (if credentials exist) or DuckDuckGo fallback. Supports single query (string) or batch queries (array of strings).",
     default=True,
     mode="CLI",
+    action_sets=["web_research"],
     input_schema={
         "query": {
             "type": ["string", "array"],

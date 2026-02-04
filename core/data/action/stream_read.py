@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
     name="stream_read",
     description="Reads a file and returns its contents with line numbers. Supports offset and limit for paginated reading of large files. You MUST use this action to read a file before using stream_edit to modify it.",
     mode="CLI",
+    action_sets=["file_operations"],
     input_schema={
         "file_path": {
             "type": "string",

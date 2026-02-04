@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="create_file",
     description="This action creates a new text file at the specified path. It handles potential errors such as invalid file paths or permission issues. The file will be created with the given filename and content. If the file already exists, it will be overwritten.",
     mode="CLI",
+    action_sets=["file_operations"],
     input_schema={
         "file_path": {
             "type": "string",

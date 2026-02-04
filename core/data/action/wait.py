@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="wait",
     description="Pause execution for a specified duration. Useful for waiting for UI elements to load or introducing delays in workflows.",
     mode="ALL",
+    action_sets=["core"],
     input_schema={
         "seconds": {
             "type": "number",

@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="ignore",
     description="If a user message requires no response or action, use ignore.",
     mode="CLI",
+    action_sets=["core"],
     input_schema={},
     output_schema={
         "status": {

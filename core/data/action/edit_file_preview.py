@@ -317,6 +317,7 @@ def _edit_file_preview_impl(input_data: dict) -> dict:
     description="Applies a regex-based edit to a slice of lines in a text file, returning paginated original and edited segments. Similar to sed with paging. Does NOT modify the file.",
     mode="CLI",
     platforms=["linux"],
+    action_sets=["file_operations"],
     input_schema=_INPUT_SCHEMA,
     output_schema=_OUTPUT_SCHEMA,
     test_payload={
@@ -339,6 +340,7 @@ def edit_file_preview_linux(input_data: dict) -> dict:
     description="Applies a regex-based edit to a slice of lines in a text file, returning paginated original and edited segments. Similar to sed with paging. Does NOT modify the file.",
     mode="CLI",
     platforms=["windows"],
+    action_sets=["file_operations"],
     input_schema=_INPUT_SCHEMA,
     output_schema=_OUTPUT_SCHEMA,
     test_payload={
@@ -361,6 +363,7 @@ def edit_file_preview_windows(input_data: dict) -> dict:
     description="Applies a regex-based edit to a slice of lines in a text file, returning paginated original and edited segments. Similar to sed with paging. Does NOT modify the file.",
     mode="CLI",
     platforms=["darwin"],
+    action_sets=["file_operations"],
     input_schema=_INPUT_SCHEMA,
     output_schema=_OUTPUT_SCHEMA,
     test_payload={
