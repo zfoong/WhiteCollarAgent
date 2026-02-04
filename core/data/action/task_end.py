@@ -10,6 +10,7 @@ from core.action.action_framework.registry import action
     ),
     default=True,
     mode="CLI",
+    action_sets=["core"],
     input_schema={
         "status": {
             "type": "string",

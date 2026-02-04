@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
     name="stream_edit",
     description="Performs exact string replacement in a file. You MUST use stream_read first to read the file before editing. The old_string must be unique in the file - if it appears multiple times, use replace_all=True or provide more context to make it unique.",
     mode="CLI",
+    action_sets=["file_operations"],
     input_schema={
         "file_path": {
             "type": "string",

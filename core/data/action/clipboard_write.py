@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="clipboard_write",
     description="Write text content to the system clipboard.",
     mode="GUI",
+    action_sets=["clipboard"],
     input_schema={
         "content": {
             "type": "string",

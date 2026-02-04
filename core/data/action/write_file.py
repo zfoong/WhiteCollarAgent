@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="write_file",
     description="Write or overwrite a text file with the provided content. Creates parent directories if they don't exist.",
     mode="CLI",
+    action_sets=["file_operations"],
     input_schema={
         "file_path": {
             "type": "string",

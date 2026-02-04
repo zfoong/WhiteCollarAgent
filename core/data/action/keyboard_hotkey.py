@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="keyboard_hotkey",
     description="Sends arbitrary keystrokes or key-combination shortcuts to the currently focused window (e.g., 'ctrl+c', ['alt+tab', 'f5']).",
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "keys": {
             "type": [

@@ -56,7 +56,13 @@ class TaskManager:
 
     # ─────────────────────── Task Creation ───────────────────────────────────
 
-    def create_task(self, task_name: str, task_instruction: str, mode: str = "complex") -> str:
+    def create_task(
+        self,
+        task_name: str,
+        task_instruction: str,
+        mode: str = "complex",
+        action_sets: Optional[List[str]] = None
+    ) -> str:
         """
         Create a new task without LLM planning.
 
@@ -64,6 +70,9 @@ class TaskManager:
             task_name: Human-readable identifier for the task.
             task_instruction: Description of the work to be done.
             mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work.
+            action_sets: List of action set names to enable for this task
+                         (e.g., ["file_operations", "web_research"]).
+                         The "core" set is always included automatically.
 
         Returns:
             The unique task identifier.
@@ -71,12 +80,26 @@ class TaskManager:
         task_id = self._sanitize_task_id(f"{task_name}_{uuid.uuid4().hex[:6]}")
         temp_dir = self._prepare_task_temp_dir(task_id)
 
+        # Compile action list from selected sets
+        compiled_actions: List[str] = []
+        selected_sets = action_sets or []
+        if selected_sets:
+            from core.action.action_set import action_set_manager
+            # Determine mode for action visibility filtering
+            visibility_mode = "GUI" if STATE.gui_mode else "CLI"
+            compiled_actions = action_set_manager.compile_action_list(
+                selected_sets, mode=visibility_mode
+            )
+            logger.debug(f"[TaskManager] Compiled {len(compiled_actions)} actions from sets: {selected_sets}")
+
         task = Task(
             id=task_id,
             name=task_name,
             instruction=task_instruction,
             mode=mode,
             temp_dir=str(temp_dir),
+            action_sets=selected_sets,
+            compiled_actions=compiled_actions,
         )
 
         self.active = task
@@ -156,6 +179,99 @@ class TaskManager:
     def is_simple_task(self) -> bool:
         """Check if current task is in simple mode."""
         return self.active is not None and self.active.mode == "simple"
+
+    # ─────────────────────── Action Set Management ───────────────────────────
+
+    def add_action_sets(self, sets_to_add: List[str]) -> Dict[str, Any]:
+        """
+        Add action sets to the current task and recompile the action list.
+
+        Args:
+            sets_to_add: List of action set names to add.
+
+        Returns:
+            Dictionary with success status, current sets, and added actions.
+        """
+        if not self.active:
+            return {"success": False, "error": "No active task"}
+
+        from core.action.action_set import action_set_manager
+
+        # Add new sets (deduplicate)
+        current_sets = set(self.active.action_sets)
+        new_sets = set(sets_to_add) - current_sets
+        self.active.action_sets = list(current_sets | new_sets)
+
+        # Recompile action list
+        visibility_mode = "GUI" if STATE.gui_mode else "CLI"
+        old_actions = set(self.active.compiled_actions)
+        self.active.compiled_actions = action_set_manager.compile_action_list(
+            self.active.action_sets, mode=visibility_mode
+        )
+        new_actions = set(self.active.compiled_actions) - old_actions
+
+        # Sync state
+        self._sync_state_manager(self.active)
+
+        logger.debug(f"[TaskManager] Added action sets {sets_to_add}, now have {len(self.active.compiled_actions)} actions")
+        return {
+            "success": True,
+            "current_sets": self.active.action_sets,
+            "added_actions": list(new_actions),
+            "total_actions": len(self.active.compiled_actions),
+        }
+
+    def remove_action_sets(self, sets_to_remove: List[str]) -> Dict[str, Any]:
+        """
+        Remove action sets from the current task and recompile the action list.
+
+        Args:
+            sets_to_remove: List of action set names to remove.
+                            The "core" set cannot be removed.
+
+        Returns:
+            Dictionary with success status and current sets.
+        """
+        if not self.active:
+            return {"success": False, "error": "No active task"}
+
+        from core.action.action_set import action_set_manager
+
+        # Remove sets (but never remove 'core')
+        sets_to_remove_filtered = [s for s in sets_to_remove if s != "core"]
+        current_sets = set(self.active.action_sets)
+        self.active.action_sets = list(current_sets - set(sets_to_remove_filtered))
+
+        # Recompile action list
+        visibility_mode = "GUI" if STATE.gui_mode else "CLI"
+        old_actions = set(self.active.compiled_actions)
+        self.active.compiled_actions = action_set_manager.compile_action_list(
+            self.active.action_sets, mode=visibility_mode
+        )
+        removed_actions = old_actions - set(self.active.compiled_actions)
+
+        # Sync state
+        self._sync_state_manager(self.active)
+
+        logger.debug(f"[TaskManager] Removed action sets {sets_to_remove_filtered}, now have {len(self.active.compiled_actions)} actions")
+        return {
+            "success": True,
+            "current_sets": self.active.action_sets,
+            "removed_actions": list(removed_actions),
+            "total_actions": len(self.active.compiled_actions),
+        }
+
+    def get_action_sets(self) -> List[str]:
+        """Get the current action sets for the active task."""
+        if not self.active:
+            return []
+        return self.active.action_sets.copy()
+
+    def get_compiled_actions(self) -> List[str]:
+        """Get the compiled action list for the active task."""
+        if not self.active:
+            return []
+        return self.active.compiled_actions.copy()
 
     # ─────────────────────── Internal Helpers ────────────────────────────────
 

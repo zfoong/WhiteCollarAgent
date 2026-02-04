@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="mouse_move",
         description="Moves the mouse cursor to a specific screen coordinate.",
         mode="GUI",
+        action_sets=["gui_interaction"],
         input_schema={
                 "x": {
                         "type": "integer",

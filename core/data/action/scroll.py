@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="scroll",
     description="Scrolls the active window one viewport up or down (≈90 % of the screen height, leaving ~10 % overlap).",
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "direction": {
             "type": "string",

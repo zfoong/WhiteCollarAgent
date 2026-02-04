@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="fetch_webpage",
     description="Downloads a web page by URL and returns a clean, markdown-friendly text summary and title (no JavaScript execution).",
     mode="CLI",
+    action_sets=["web_research"],
     input_schema={
         "url": {
             "type": "string",

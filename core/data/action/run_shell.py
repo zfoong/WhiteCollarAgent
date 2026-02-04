@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
         description="Executes a shell command using the appropriate OS shell, capturing stdout, stderr, and exit code. Stdin is closed (EOF) by default and no input can be provided by the agent when prompted by shell.",
         platforms=["linux"],
         default=True,
+        action_sets=["core"],
         input_schema={
                 "command": {
                         "type": "string",
@@ -137,6 +138,7 @@ def shell_exec(input_data: dict) -> dict:
         description="Executes a shell command using the appropriate OS shell, capturing stdout, stderr, and exit code. Stdin is closed (EOF) by default and no input can be provided by the agent when prompted by shell.",
         platforms=["windows"],
         default=True,
+        action_sets=["core"],
         input_schema={
                 "command": {
                         "type": "string",
@@ -267,6 +269,7 @@ def shell_exec_windows(input_data: dict) -> dict:
         description="Executes a shell command using the appropriate OS shell, capturing stdout, stderr, and exit code. Stdin is closed (EOF) by default and no input can be provided by the agent when prompted by shell.",
         platforms=["darwin"],
         default=True,
+        action_sets=["core"],
         input_schema={
                 "command": {
                         "type": "string",

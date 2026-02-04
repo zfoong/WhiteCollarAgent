@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
     description="Opens a web browser (Chrome, Edge, Firefox, Safari, or system default) across platforms. Optionally opens a specified URL.",
     platforms=["windows"],
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "url": {
                 "type": "string",
@@ -103,6 +104,7 @@ def open_browser_windows(input_data: dict) -> dict:
     description="Opens a web browser (Chrome, Edge, Firefox, Safari, or system default) across platforms. Optionally opens a specified URL.",
     platforms=["darwin"],
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "url": {"type": "string", "example": "https://www.example.com", "description": "Optional URL to open in the browser."}
     },
@@ -189,6 +191,7 @@ def open_browser_darwin(input_data: dict) -> dict:
     description="Opens a web browser (Chrome, Edge, Firefox, Safari, or system default) across platforms. Optionally opens a specified URL.",
     platforms=["linux"],
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={ "url": {"type": "string"} },
     output_schema={ "status": {"type": "string"}, "process_id": {"type": "integer"}, "browser": {"type": "string"}, "executable_path": {"type": "string"}, "message": {"type": "string"} },
 )

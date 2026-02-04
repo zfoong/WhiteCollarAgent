@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="read_file",
     description="Read the entire content of a text file. For large files (over 50KB), consider using stream_read instead.",
     mode="CLI",
+    action_sets=["file_operations"],
     input_schema={
         "file_path": {
             "type": "string",

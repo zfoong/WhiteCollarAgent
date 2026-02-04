@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="describe_image",
     description="Uses a Visual Language Model to analyse an image and return a detailed, markdown-ready description.",
     mode="CLI",
+    action_sets=["document_processing"],
     input_schema={
         "image_path": {
             "type": "string",

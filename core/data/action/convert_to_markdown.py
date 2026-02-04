@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="convert_to_markdown",
     description="Cleans scraped text from .txt, .md, or .docx and converts it into clean, well-structured Markdown suitable for PDF conversion.",
     mode="CLI",
+    action_sets=["document_processing"],
     input_schema={
         "input_file": {
             "type": "string",

@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="mouse_drag",
         description="Performs a left-button drag from a start coordinate to an end coordinate.",
         mode="GUI",
+        action_sets=["gui_interaction"],
         input_schema={
                 "start_x": {
                         "type": "integer",

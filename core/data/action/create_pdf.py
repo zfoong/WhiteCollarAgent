@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="create_pdf",
     description="This action creates a PDF file at the specified path using the provided Markdown content. It converts the Markdown to HTML and then to a PDF using fpdf2, preserving headings, paragraphs, lists, bold and italic formatting. It handles errors such as invalid file paths or permission issues, returning a structured JSON output.",
     mode="CLI",
+    action_sets=["document_processing"],
     input_schema={
         "file_path": {
             "type": "string",

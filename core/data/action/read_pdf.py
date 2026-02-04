@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="read_pdf",
     description="Securely reads a PDF with Docling and returns compact, layout-aware JSON including page sizes, bboxes, text, and form-field candidates. Implements a robust fallback using pypdfium2 and pdfminer.six if Docling cannot determine page sizes or extract text.",
     mode="CLI",
+    action_sets=["document_processing"],
     platforms=["windows", "linux", "darwin"],
     input_schema={
         "file_path": {

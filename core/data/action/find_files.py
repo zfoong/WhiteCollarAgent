@@ -5,6 +5,7 @@ from core.action.action_framework.registry import action
     description="Finds files by name or pattern across the system. Supports wildcards, relative paths, and recursive search.",
     mode="CLI",
     platforms=["linux", "darwin"],
+    action_sets=["file_operations"],
     input_schema={
         "pattern": {
             "type": "string",
@@ -112,6 +113,7 @@ def find_file_by_name(input_data: dict) -> dict:
     description="Finds files by name or pattern across the system. Supports wildcards, relative paths, and recursive search.",
     mode="CLI",
     platforms=["windows"],
+    action_sets=["file_operations"],
     input_schema={
         "pattern": {
             "type": "string",

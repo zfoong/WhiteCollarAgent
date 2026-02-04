@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="mouse_click",
     description="Performs a mouse click at the specified screen coordinates (or at the current cursor position if no coordinates are provided). Supports left, right, and middle buttons, as well as single and double clicks.",
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "x": {
             "type": "integer",

@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="list_folder",
         description="Lists the contents of a specified folder/directory.",
         mode="CLI",
+        action_sets=["file_operations"],
         input_schema={
                 "path": {
                         "type": "string",

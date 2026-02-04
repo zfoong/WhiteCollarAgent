@@ -14,6 +14,7 @@ from core.action.action_framework.registry import action
     ),
     mode="ALL",
     default=True,
+    action_sets=["core"],
     input_schema={
         "todos": {
             "type": "array",

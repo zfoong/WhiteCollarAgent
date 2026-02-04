@@ -46,7 +46,7 @@ from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from core.trigger import Trigger, TriggerQueue
-from core.prompt import STEP_REASONING_PROMPT
+# STEP_REASONING_PROMPT removed - reasoning is now integrated into action selection
 from core.state.types import ReasoningResult
 from core.task.task_manager import TaskManager
 from core.event_stream.event_stream_manager import EventStreamManager
@@ -350,47 +350,65 @@ class AgentBase:
         """
         Select action when running within a task context.
 
+        Reasoning is now integrated into the action selection prompt,
+        so this method directly calls the action router without a separate
+        reasoning step.
+
         Returns:
             Tuple of (action_decision, reasoning)
         """
-        reasoning_result = await self._perform_reasoning(query=query, log_reasoning_event=True)
-        logger.debug(f"[AGENT QUERY] {reasoning_result.action_query}")
-
+        # Single LLM call - reasoning is integrated into action selection
         action_decision = await self.action_router.select_action_in_task(
-            query=reasoning_result.action_query,
-            reasoning=reasoning_result.reasoning,
+            query=query,
             GUI_mode=STATE.gui_mode,
         )
 
         if not action_decision:
             raise ValueError("Action router returned no decision.")
 
-        return action_decision, reasoning_result.reasoning
+        # Extract reasoning from the action decision (now included in response)
+        reasoning = action_decision.get("reasoning", "")
+        logger.debug(f"[AGENT REASONING] {reasoning}")
+
+        # Log reasoning to event stream
+        if self.event_stream_manager and reasoning:
+            self.event_stream_manager.log(
+                "agent reasoning",
+                reasoning,
+                severity="DEBUG",
+                display_message=None,
+            )
+            self.state_manager.bump_event_stream()
+
+        return action_decision, reasoning
 
     @profile("agent_select_action_in_simple_task", OperationCategory.AGENT_LOOP)
     async def _select_action_in_simple_task(self, query: str) -> tuple[dict, str]:
         """
         Select action for simple task mode - lighter weight than complex task.
 
-        Simple tasks use streamlined reasoning and no todo workflow.
+        Reasoning is now integrated into the action selection prompt.
+        Simple tasks use streamlined prompts and no todo workflow.
         They auto-end after delivering results.
 
         Returns:
             Tuple of (action_decision, reasoning)
         """
-        # Simplified reasoning - don't log to event stream for efficiency
-        reasoning_result = await self._perform_reasoning(query=query, log_reasoning_event=False)
-        logger.debug(f"[AGENT QUERY - SIMPLE TASK] {reasoning_result.action_query}")
-
+        # Single LLM call - reasoning is integrated into action selection
         action_decision = await self.action_router.select_action_in_simple_task(
-            query=reasoning_result.action_query,
-            reasoning=reasoning_result.reasoning,
+            query=query,
         )
 
         if not action_decision:
             raise ValueError("Action router returned no decision.")
 
-        return action_decision, reasoning_result.reasoning
+        # Extract reasoning from the action decision (now included in response)
+        reasoning = action_decision.get("reasoning", "")
+        logger.debug(f"[AGENT REASONING - SIMPLE TASK] {reasoning}")
+
+        # Don't log to event stream for simple tasks (efficiency)
+
+        return action_decision, reasoning
 
     async def _retrieve_and_prepare_action(
         self, action_decision: dict, initial_parent_id: str | None
@@ -549,81 +567,9 @@ class AgentBase:
         # No limits close or reached
         return True
 
-    @profile("agent_perform_reasoning", OperationCategory.REASONING)
-    async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = True) -> ReasoningResult:
-        """
-        Perform LLM-based reasoning on a user query to guide action selection.
-
-        This function calls an asynchronous LLM API, validates its structured JSON
-        response, and retries if the output is malformed.
-
-        Args:
-            query (str): The raw user query from the user.
-            retries (int): Number of retry attempts if the LLM returns invalid JSON.
-
-        Returns:
-            ReasoningResult: A validated reasoning result containing:
-                - reasoning: The model's reasoning output
-                - action_query: A refined query used for action selection
-        """
-
-        # KV CACHING: System prompt is now STATIC only
-        system_prompt, _ = self.context_engine.make_prompt(
-            user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False},
-        )
-
-        # KV CACHING: Inject dynamic context into user prompt
-        prompt = STEP_REASONING_PROMPT.format(
-            agent_state=self.context_engine.get_agent_state(),
-            task_state=self.context_engine.get_task_state(),
-            event_stream=self.context_engine.get_event_stream(),
-        )
-
-        # Track the last parsing/validation error for meaningful failure reporting
-        last_error: Exception | None = None
-
-        # Get current task_id for session cache (if running in a task)
-        current_task_id = STATE.get_agent_property("current_task_id", "")
-
-        # Attempt the LLM call and parsing up to (retries + 1) times
-        for attempt in range(retries + 1):
-            # Use session cache if we're in a task context and session exists
-            if current_task_id and self.llm.has_session_cache(current_task_id, LLMCallType.REASONING):
-                response = await self.llm.generate_response_with_session_async(
-                    task_id=current_task_id,
-                    call_type=LLMCallType.REASONING,
-                    user_prompt=prompt,
-                    system_prompt_for_new_session=system_prompt,
-                )
-            else:
-                # Fall back to standard LLM call
-                response = await self.llm.generate_response_async(
-                    system_prompt=system_prompt,
-                    user_prompt=prompt,
-                )
-
-            try:
-                # Parse and validate the structured JSON response
-                reasoning_result = self._parse_reasoning_response(response)
-
-                if self.event_stream_manager and log_reasoning_event:
-                    self.event_stream_manager.log(
-                        "agent reasoning",
-                        reasoning_result.reasoning,
-                        severity="DEBUG",
-                        display_message=None,
-                    )
-                    self.state_manager.bump_event_stream()
-
-                return reasoning_result
-
-            except ValueError as e:
-                # Capture the error and retry if attempts remain
-                last_error = e
-
-        # All retries exhausted — fail fast with a clear error
-        raise RuntimeError("Failed to obtain valid reasoning from LLM") from last_error
+    # NOTE: _perform_reasoning method was removed.
+    # Reasoning is now integrated directly into action selection prompts,
+    # reducing the number of LLM calls from 2N to N for N action cycles.
 
     @profile("agent_create_new_trigger", OperationCategory.TRIGGER)
     async def _create_new_trigger(self, new_session_id, action_output, STATE):

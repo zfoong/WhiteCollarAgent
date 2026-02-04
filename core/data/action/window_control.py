@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="window_control",
     description="Controls an application window. Supports focus, close, maximize, and minimize operations. If a title is provided, the matching window is targeted; otherwise the currently active window is used.",
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "operation": {
             "type": "string",

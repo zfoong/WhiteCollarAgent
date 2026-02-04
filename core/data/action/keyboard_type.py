@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="keyboard_type",
     description="Types the given text at the current keyboard focus in any active application window.",
     mode="GUI",
+    action_sets=["gui_interaction"],
     input_schema={
         "text": {
             "type": "string",

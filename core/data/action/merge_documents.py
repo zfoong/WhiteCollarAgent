@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
     name="merge_documents",
     description="Scans a directory for .txt, .md, and .docx files, extracts their content, and combines them into a single draft Markdown file at the specified output path.",
     mode="CLI",
+    action_sets=["document_processing"],
     input_schema={
         "directory_path": {
             "type": "string",

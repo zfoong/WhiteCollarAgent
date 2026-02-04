@@ -123,82 +123,54 @@ class ActionRouter:
         query: str,
         action_type: Optional[str] = None,
         GUI_mode=False,
-        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
         When a task is running, this action selection will be used.
 
-        1. Retrieves top-k candidate action names from ChromaDB.
-        2. Builds a candidate list with searched and default action for the LLM.
-        3. Asks the LLM if any candidate is valid, or if a new action is needed.
-        4. If new action is needed, return an empty action name, and let the outer
-           loop create the action.
-        5. Otherwise, return the chosen existing action along with parameters.
-        
+        Reasoning is now integrated directly into the action selection prompt,
+        eliminating the need for a separate reasoning LLM call.
+
+        1. Gets compiled action list from task's action sets.
+        2. Builds a candidate list for the LLM.
+        3. LLM reasons about the current state and selects an action.
+        4. Returns the chosen action along with parameters and reasoning.
+
         Args:
             query: Task-level instruction for the next step.
             action_type: Optional action type hint supplied to the LLM.
             GUI_mode: Whether the user is interacting through a GUI, affecting
                 which actions are visible.
-            context: Serialized task context to embed in the prompt.
 
         Returns:
-            Dict[str, Any]: Decision payload with ``action_name`` and
-            normalized ``parameters`` for execution, or an empty ``action_name``
-            when a new action should be created.
+            Dict[str, Any]: Decision payload with ``action_name``, ``parameters``,
+            and ``reasoning`` for execution.
         """
         action_candidates = []
         action_name_candidates = []
-    
-        # List of filtered default actions when creating task
+
+        # List of filtered actions
         ignore_actions = ["ignore"]
-    
-        # Retrieve default actions (could be multiple)
-        default_actions = self.action_library.retrieve_default_action()
-    
-        for act in default_actions:
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
-        # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=5)
-        logger.info(f"ActionRouter found candidate actions: {candidate_names}")
-        for name in candidate_names:
-            act = self.action_library.retrieve_action(name)
-            if not act:
-                continue
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
+
+        # Get compiled action list from task's action sets
+        compiled_actions = self._get_current_task_compiled_actions()
+
+        # Use static compiled list - NO RAG SEARCH
+        action_candidates = self._build_candidates_from_compiled_list(
+            compiled_actions, GUI_mode, ignore_actions
+        )
+        logger.info(f"ActionRouter using compiled action list: {len(action_candidates)} actions")
+
         # Dedupe names while preserving insertion order
         action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
 
         # Build the instruction prompt for the LLM
         # KV CACHING: Inject dynamic context into user prompt
+        # Reasoning is now part of the action selection prompt (single LLM call)
         prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=self.context_engine.get_task_state(),
             event_stream=self.context_engine.get_event_stream(),
             query=query,
-            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
             action_name_candidates=self._format_action_names(action_name_candidates),
         )
@@ -227,21 +199,22 @@ class ActionRouter:
     async def select_action_in_simple_task(
         self,
         query: str,
-        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
         Action selection for simple task mode - streamlined without todo workflow.
+
+        Reasoning is now integrated directly into the action selection prompt,
+        eliminating the need for a separate reasoning LLM call.
 
         Simple tasks don't use todos and auto-end after delivering results.
         This method excludes todo-related actions and uses a simpler prompt.
 
         Args:
             query: Task-level instruction for the next step.
-            reasoning: Reasoning context from the agent.
 
         Returns:
-            Dict[str, Any]: Decision payload with ``action_name`` and
-            normalized ``parameters`` for execution.
+            Dict[str, Any]: Decision payload with ``action_name``, ``parameters``,
+            and ``reasoning`` for execution.
         """
         action_candidates = []
         action_name_candidates = []
@@ -249,51 +222,25 @@ class ActionRouter:
         # Exclude todo management and ignore actions for simple tasks
         ignore_actions = ["ignore", "task_update_todos"]
 
-        # Retrieve default actions
-        default_actions = self.action_library.retrieve_default_action()
+        # Get compiled action list from task's action sets
+        compiled_actions = self._get_current_task_compiled_actions()
 
-        for act in default_actions:
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode=False):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-
-        # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=5)
-        logger.info(f"ActionRouter (simple task) found candidate actions: {candidate_names}")
-        for name in candidate_names:
-            act = self.action_library.retrieve_action(name)
-            if not act:
-                continue
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode=False):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
+        # Use static compiled list - NO RAG SEARCH
+        action_candidates = self._build_candidates_from_compiled_list(
+            compiled_actions, GUI_mode=False, ignore_actions=ignore_actions
+        )
+        logger.info(f"ActionRouter (simple task) using compiled action list: {len(action_candidates)} actions")
 
         # Dedupe names while preserving insertion order
         action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
 
         # Build the instruction prompt using simple task prompt
+        # Reasoning is now part of the action selection prompt (single LLM call)
         prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=self.context_engine.get_task_state(),
             event_stream=self.context_engine.get_event_stream(),
             query=query,
-            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
             action_name_candidates=self._format_action_names(action_name_candidates),
         )
@@ -321,68 +268,61 @@ class ActionRouter:
     async def select_action_in_GUI(
         self,
         query: str,
+        gui_state: str = "",
         action_type: Optional[str] = None,
         GUI_mode=False,
-        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
-        When a task is running, this action selection will be used.
+        GUI-specific action selection when a task is running.
 
-        1. Retrieves top-k candidate action names from ChromaDB.
-        2. Builds a candidate list with searched and default action for the LLM.
-        3. Asks the LLM if any candidate is valid, or if a new action is needed.
-        4. If new action is needed, return an empty action name, and let the outer
-           loop create the action.
-        5. Otherwise, return the chosen existing action along with parameters.
-        
+        Reasoning is now integrated directly into the action selection prompt,
+        eliminating the need for a separate reasoning LLM call. The prompt also
+        outputs an 'element_to_find' for pixel position lookup.
+
+        1. Gets compiled action list from task's action sets.
+        2. Builds a candidate list for the LLM.
+        3. LLM reasons about the screen state, selects an action, and identifies
+           the UI element to interact with (if applicable).
+        4. Returns the decision with action, parameters, reasoning, and element_to_find.
+
         Args:
             query: Task-level instruction for the next step.
+            gui_state: Description of the current screen state (from VLM/OmniParser).
             action_type: Optional action type hint supplied to the LLM.
             GUI_mode: Whether the user is interacting through a GUI, affecting
                 which actions are visible.
-            context: Serialized task context to embed in the prompt.
 
         Returns:
-            Dict[str, Any]: Decision payload with ``action_name`` and
-            normalized ``parameters`` for execution, or an empty ``action_name``
-            when a new action should be created.
+            Dict[str, Any]: Decision payload with ``action_name``, ``parameters``,
+            ``reasoning``, and ``element_to_find`` for execution.
         """
         action_candidates = []
         action_name_candidates = []
-    
-        # List of filtered default actions when creating task
+
+        # List of filtered actions
         ignore_actions = ["ignore"]
-    
-        # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=50)
-        logger.info(f"ActionRouter found candidate actions: {candidate_names}")
-        for name in candidate_names:
-            act = self.action_library.retrieve_action(name)
-            if not act:
-                continue
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
+
+        # Get compiled action list from task's action sets
+        compiled_actions = self._get_current_task_compiled_actions()
+
+        # Use static compiled list - NO RAG SEARCH
+        action_candidates = self._build_candidates_from_compiled_list(
+            compiled_actions, GUI_mode, ignore_actions
+        )
+        logger.info(f"ActionRouter (GUI) using compiled action list: {len(action_candidates)} actions")
+
         # Dedupe names while preserving insertion order
         action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
 
         # Build the instruction prompt for the LLM
         # KV CACHING: Inject dynamic context into user prompt (GUI mode uses gui_event_stream)
+        # Reasoning is now part of the action selection prompt (single LLM call)
         prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=self.context_engine.get_task_state(),
             gui_event_stream=self.context_engine.get_gui_event_stream(),
+            gui_state=gui_state,
             query=query,
-            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
             action_name_candidates=self._format_action_names(action_name_candidates),
         )
@@ -581,12 +521,7 @@ class ActionRouter:
             return "[]"
         return json.dumps(names, indent=2, ensure_ascii=False)
 
-    def _format_reasoning(self, context: str | list | dict | None) -> str:
-        if context is None:
-            return ""
-        if isinstance(context, (list, dict)):
-            return json.dumps(context, indent=2, ensure_ascii=False)
-        return str(context)
+    # NOTE: _format_reasoning was removed - reasoning is now integrated into action selection
 
     def _format_event_stream(self, event_stream: str | list | dict | None) -> str:
         if not event_stream:
@@ -599,4 +534,60 @@ class ActionRouter:
         if isinstance(parameters, dict):
             return parameters
         return {}
+
+    def _build_candidates_from_compiled_list(
+        self,
+        compiled_actions: List[str],
+        GUI_mode: bool,
+        ignore_actions: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Build action candidate list from pre-compiled action names.
+
+        This method is used when the task has a static action list (from action sets),
+        eliminating the need for RAG-based action retrieval.
+
+        Args:
+            compiled_actions: Pre-compiled list of action names from task.compiled_actions
+            GUI_mode: Whether to filter for GUI mode visibility
+            ignore_actions: List of action names to exclude
+
+        Returns:
+            List of action candidate dictionaries for the LLM prompt
+        """
+        ignore_actions = ignore_actions or []
+        candidates = []
+
+        for name in compiled_actions:
+            if name in ignore_actions:
+                continue
+
+            act = self.action_library.retrieve_action(name)
+            if not act:
+                continue
+
+            if not _is_visible_in_mode(act, GUI_mode):
+                continue
+
+            candidates.append({
+                "name": act.name,
+                "description": act.description,
+                "type": act.action_type,
+                "input_schema": act.input_schema,
+                "output_schema": act.output_schema
+            })
+
+        return candidates
+
+    def _get_current_task_compiled_actions(self) -> List[str]:
+        """
+        Get the compiled action list from the current task.
+
+        Returns:
+            List of action names if task has compiled_actions, otherwise empty list
+        """
+        task = STATE.current_task
+        if task and hasattr(task, 'compiled_actions') and task.compiled_actions:
+            return task.compiled_actions
+        return []
         

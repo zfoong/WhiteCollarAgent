@@ -119,9 +119,17 @@ class InternalActionInterface:
     # ───────────────── Task Management ─────────────────
 
     @classmethod
-    def do_create_task(cls, task_name: str, task_description: str, task_mode: str = "complex") -> str:
+    def do_create_task(
+        cls,
+        task_name: str,
+        task_description: str,
+        task_mode: str = "complex",
+    ) -> Dict[str, Any]:
         """
-        Create a new task.
+        Create a new task with automatic action set selection.
+
+        The action sets are automatically selected by an LLM based on the task
+        description. This supports custom action sets and MCP tools dynamically.
 
         Args:
             task_name: Short name for the task.
@@ -129,12 +137,19 @@ class InternalActionInterface:
             task_mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work.
 
         Returns:
-            The created task identifier.
+            Dictionary with task_id, action_sets, and action_count.
         """
         if cls.task_manager is None or cls.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with Task/State managers.")
 
-        task_id = cls.task_manager.create_task(task_name, task_description, mode=task_mode)
+        # Step 1: Automatically select action sets via LLM
+        selected_sets = cls._select_action_sets_via_llm(task_name, task_description)
+        logger.info(f"[TASK] Auto-selected action sets for '{task_name}': {selected_sets}")
+
+        # Step 2: Create task with selected action sets
+        task_id = cls.task_manager.create_task(
+            task_name, task_description, mode=task_mode, action_sets=selected_sets
+        )
         task: Optional[Task] = cls.task_manager.get_task()
         cls.state_manager.add_to_active_task(task)
 
@@ -159,7 +174,110 @@ class InternalActionInterface:
             except Exception as e:
                 logger.warning(f"[TASK] Failed to create session caches for task {task_id}: {e}")
 
-        return task_id
+        return {
+            "task_id": task_id,
+            "action_sets": task.action_sets if task else [],
+            "action_count": len(task.compiled_actions) if task else 0,
+        }
+
+    @classmethod
+    def _select_action_sets_via_llm(cls, task_name: str, task_description: str) -> List[str]:
+        """
+        Make LLM call to automatically select action sets based on task description.
+
+        This dynamically discovers available action sets from the registry,
+        supporting custom actions and MCP tools.
+
+        Args:
+            task_name: Short name for the task.
+            task_description: Detailed description of the task.
+
+        Returns:
+            List of action set names selected by the LLM.
+        """
+        import json
+        from core.action.action_set import action_set_manager
+        from core.prompt import ACTION_SET_SELECTION_PROMPT
+
+        # If no LLM interface, fall back to empty list (core-only)
+        if cls.llm_interface is None:
+            logger.warning("[TASK] No LLM interface available, using core-only action sets")
+            return []
+
+        try:
+            # Step 1: Get available action sets dynamically from registry
+            available_sets = action_set_manager.list_all_sets()
+
+            # DEBUG: Log all discovered action sets and their actions
+            logger.info("[ACTION_SETS] ========== Available Action Sets ==========")
+            for set_name, set_desc in available_sets.items():
+                actions_in_set = action_set_manager.get_actions_in_set(set_name)
+                logger.info(f"[ACTION_SETS] {set_name}: {set_desc}")
+                logger.info(f"[ACTION_SETS]   Actions ({len(actions_in_set)}): {actions_in_set}")
+            logger.info("[ACTION_SETS] ============================================")
+
+            # Format sets for prompt (exclude 'core' since it's always included)
+            sets_text = "\n".join(
+                f"- {name}: {desc}"
+                for name, desc in available_sets.items()
+                if name != "core"
+            )
+
+            if not sets_text:
+                # No additional sets available beyond core
+                return []
+
+            # Step 2: Build the prompt
+            prompt = ACTION_SET_SELECTION_PROMPT.format(
+                task_name=task_name,
+                task_description=task_description,
+                available_sets=sets_text
+            )
+
+            # Step 3: Call LLM (use a simpler call for this quick decision)
+            response = cls.llm_interface.generate_response(
+                user_prompt=prompt,
+                system_prompt="You are a helpful assistant that selects action sets for tasks. Return only valid JSON.",
+            )
+
+            # Step 4: Parse the JSON response
+            # Clean up the response (remove markdown code blocks if present)
+            response = response.strip()
+            if response.startswith("```"):
+                # Remove markdown code block markers
+                lines = response.split("\n")
+                response = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+            selected_sets = json.loads(response)
+
+            # Validate that it's a list of strings
+            if not isinstance(selected_sets, list):
+                logger.warning(f"[TASK] LLM returned non-list for action sets: {selected_sets}")
+                return []
+
+            # Filter to only valid set names
+            valid_set_names = set(available_sets.keys())
+            valid_selected = [s for s in selected_sets if isinstance(s, str) and s in valid_set_names and s != "core"]
+
+            # DEBUG: Log selection result
+            logger.info(f"[ACTION_SETS] LLM raw response: {selected_sets}")
+            logger.info(f"[ACTION_SETS] Valid selected sets: {valid_selected}")
+
+            # Log what actions will be available
+            total_actions = []
+            for set_name in ["core"] + valid_selected:
+                actions_in_set = action_set_manager.get_actions_in_set(set_name)
+                total_actions.extend(actions_in_set)
+            logger.info(f"[ACTION_SETS] Total actions for task: {len(set(total_actions))} from sets: {['core'] + valid_selected}")
+
+            return valid_selected
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"[TASK] Failed to parse LLM response for action sets: {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"[TASK] Failed to select action sets via LLM: {e}")
+            return []
 
     @classmethod
     def update_todos(cls, todos: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -242,3 +360,55 @@ class InternalActionInterface:
                 logger.debug(f"[TASK] Ended all session caches for task {task_id}")
             except Exception as e:
                 logger.warning(f"[TASK] Failed to end session caches for task {task_id}: {e}")
+
+    # ───────────────── Action Set Management ─────────────────
+
+    @classmethod
+    def add_action_sets(cls, sets_to_add: List[str]) -> Dict[str, Any]:
+        """
+        Add action sets to the current task.
+
+        Args:
+            sets_to_add: List of action set names to add.
+
+        Returns:
+            Dictionary with success status and updated set information.
+        """
+        if cls.task_manager is None:
+            raise RuntimeError("InternalActionInterface not initialized with TaskManager.")
+        return cls.task_manager.add_action_sets(sets_to_add)
+
+    @classmethod
+    def remove_action_sets(cls, sets_to_remove: List[str]) -> Dict[str, Any]:
+        """
+        Remove action sets from the current task.
+
+        Args:
+            sets_to_remove: List of action set names to remove.
+
+        Returns:
+            Dictionary with success status and updated set information.
+        """
+        if cls.task_manager is None:
+            raise RuntimeError("InternalActionInterface not initialized with TaskManager.")
+        return cls.task_manager.remove_action_sets(sets_to_remove)
+
+    @classmethod
+    def list_action_sets(cls) -> Dict[str, Any]:
+        """
+        List all available action sets and their descriptions.
+
+        Returns:
+            Dictionary with available sets and current task's active sets.
+        """
+        from core.action.action_set import action_set_manager
+
+        available_sets = action_set_manager.list_all_sets()
+        current_sets = []
+        if cls.task_manager:
+            current_sets = cls.task_manager.get_action_sets()
+
+        return {
+            "available_sets": available_sets,
+            "current_sets": current_sets,
+        }

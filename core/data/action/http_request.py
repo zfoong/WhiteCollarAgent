@@ -4,6 +4,7 @@ from core.action.action_framework.registry import action
         name="http_request",
         description="Sends HTTP requests (GET, POST, PUT, PATCH, DELETE) with optional headers, params, and body.",
         mode="CLI",
+        action_sets=["web_research"],
         input_schema={
                 "method": {
                         "type": "string",
