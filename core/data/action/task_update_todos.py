@@ -5,9 +5,9 @@ from core.action.action_framework.registry import action
     description=(
         "Update the todo list for the current task. The todo list follows a structured workflow:\n"
         "1. Acknowledge task receipt (send message to user)\n"
-        "2. Collect information (gather what's needed before execution)\n"
-        "3. Execute task steps (the actual work)\n"
-        "4. Verify outcome (check if result meets requirements)\n"
+        "2. Collect information (gather what's needed before execution by asking user, search online, search from memory, search agent workspace and file system) [one or multiple steps]\n"
+        "3. Execute task steps (the actual work)\n [one or multiple steps]"
+        "4. Verify outcome (check if result meets requirements) [one or multiple steps]\n"
         "5. Confirm with user (get approval before ending)\n"
         "6. Clean up (delete temp files if any)\n\n"
         "Always provide the COMPLETE todo list. Mark items as 'in_progress' when starting, 'completed' when done."
