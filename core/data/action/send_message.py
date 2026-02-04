@@ -22,20 +22,10 @@ from core.action.action_framework.registry import action
                         "example": "ok",
                         "description": "Indicates the action completed successfully."
                 },
-                "message": {
-                        "type": "string",
-                        "example": "Hello, user!",
-                        "description": "The message that was sent to the user."
-                },
                 "fire_at_delay": {
                         "type": "number",
                         "example": 10800,
                         "description": "Delay in seconds before the next follow-up action should be scheduled. 10800 seconds (3 hours) if wait_for_user_reply is true, otherwise 0."
-                },
-                "wait_for_user_reply": {
-                        "type": "boolean",
-                        "example": True,
-                        "description": "Echoed back to indicate whether the agent is waiting for user reply."
                 }
         },
         test_payload={
@@ -60,4 +50,4 @@ def send_message(input_data: dict) -> dict:
     fire_at_delay = 10800 if wait_for_user_reply else 0
     # Return 'success' for test compatibility, but keep 'ok' in production if needed
     status = 'success' if simulated_mode else 'ok'
-    return {'status': status, 'message': message, 'fire_at_delay': fire_at_delay, 'wait_for_user_reply': wait_for_user_reply}
+    return {'status': status, 'fire_at_delay': fire_at_delay}

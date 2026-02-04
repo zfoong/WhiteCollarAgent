@@ -22,11 +22,6 @@ from core.action.action_framework.registry import action
             "example": "success",
             "description": "'success' if typing completed, 'error' otherwise."
         },
-        "typed_text": {
-            "type": "string",
-            "example": "Hello, world!",
-            "description": "Echo of the text that was typed."
-        },
         "message": {
             "type": "string",
             "example": "No text provided.",
@@ -51,10 +46,10 @@ def keyboard_typing(input_data: dict) -> dict:
     text = input_data.get('text', '')
     interval = float(input_data.get('interval', 0))
     if not text:
-        return {'status': 'error', 'typed_text': '', 'message': 'No text provided.'}
+        return {'status': 'error', 'message': 'No text provided.'}
         exit()
     try:
         pyautogui.write(text, interval=interval)
-        return {'status': 'success', 'typed_text': text, 'message': ''}
+        return {'status': 'success', 'message': ''}
     except Exception as e:
-        return {'status': 'error', 'typed_text': '', 'message': str(e)}
+        return {'status': 'error', 'message': str(e)}

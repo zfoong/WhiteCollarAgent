@@ -17,6 +17,16 @@ from core.action.action_framework.registry import action
         }
     },
     output_schema={
+        "status": {
+            "type": "string",
+            "example": "success",
+            "description": "'success' or 'error'."
+        },
+        "message": {
+            "type": "string",
+            "example": "Draft created successfully.",
+            "description": "Status message or error description."
+        },
         "output_file": {
             "type": "string",
             "description": "Path to the generated draft.md file."
@@ -91,46 +101,57 @@ def combine_text_documents(input_data: dict) -> dict:
             'files_included': ['test_file1.txt', 'test_file2.md']
         }
 
-    if not directory or not os.path.isdir(directory):
-        return {'status': 'error', 'message': "'directory_path' must be a valid directory.", 'output_file': '', 'files_included': []}
-    if not output_path:
-        return {'status': 'error', 'message': "'output_path' is required and must be a file path ending in .md", 'output_file': '', 'files_included': []}
+    try:
+        if not directory or not os.path.isdir(directory):
+            return {'status': 'error', 'message': "'directory_path' must be a valid directory.", 'output_file': '', 'files_included': []}
+        if not output_path:
+            return {'status': 'error', 'message': "'output_path' is required and must be a file path ending in .md", 'output_file': '', 'files_included': []}
 
-    supported_ext = {'.txt', '.md', '.docx'}
-    collected = []
+        supported_ext = {'.txt', '.md', '.docx'}
+        collected = []
 
-    for fname in os.listdir(directory):
-        ext = os.path.splitext(fname)[1].lower()
-        if ext in supported_ext:
-            collected.append(os.path.join(directory, fname))
+        for fname in os.listdir(directory):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in supported_ext:
+                collected.append(os.path.join(directory, fname))
 
-    if not collected:
-        return {'status': 'error', 'message': 'No supported text files found in directory.', 'output_file': '', 'files_included': []}
+        if not collected:
+            return {'status': 'error', 'message': 'No supported text files found in directory.', 'output_file': '', 'files_included': []}
 
-    content_blocks = []
-    included_files = []
+        content_blocks = []
+        included_files = []
 
-    for path in collected:
-        ext = os.path.splitext(path)[1].lower()
-        if ext == '.txt': text = read_txt(path)
-        elif ext == '.md': text = read_md(path)
-        elif ext == '.docx': text = read_docx(path)
-        else: continue
+        for path in collected:
+            ext = os.path.splitext(path)[1].lower()
+            if ext == '.txt': text = read_txt(path)
+            elif ext == '.md': text = read_md(path)
+            elif ext == '.docx': text = read_docx(path)
+            else: continue
 
-        if text.strip():
-            content_blocks.append(f"# File: {os.path.basename(path)}\n\n{text}\n\n---\n")
-            included_files.append(os.path.basename(path))
+            if text.strip():
+                content_blocks.append(f"# File: {os.path.basename(path)}\n\n{text}\n\n---\n")
+                included_files.append(os.path.basename(path))
 
-    # Ensure directory for output exists
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        # Ensure directory for output exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
 
-    final_md = '\n'.join(content_blocks)
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(final_md)
+        final_md = '\n'.join(content_blocks)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(final_md)
 
-    return {
-        'status': 'success',
-        'message': 'Draft created successfully.',
-        'output_file': output_path,
-        'files_included': included_files
-    }
+        return {
+            'status': 'success',
+            'message': 'Draft created successfully.',
+            'output_file': output_path,
+            'files_included': included_files
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': str(e),
+            'output_file': '',
+            'files_included': []
+        }

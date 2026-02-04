@@ -17,11 +17,6 @@ from core.action.action_framework.registry import action
                         "example": "success",
                         "description": "Indicates the result of the list operation"
                 },
-                "path": {
-                        "type": "string",
-                        "example": "/home/user/documents",
-                        "description": "The folder path that was listed"
-                },
                 "contents": {
                         "type": "array",
                         "example": [
@@ -30,6 +25,10 @@ from core.action.action_framework.registry import action
                                 "image.png"
                         ],
                         "description": "List of files/folders contained in the specified directory"
+                },
+                "message": {
+                        "type": "string",
+                        "description": "Error message if status is 'error'"
                 }
         },
         test_payload={
@@ -45,10 +44,10 @@ def list_folder(input_data: dict) -> dict:
     
     if simulated_mode:
         # Return mock result for testing
-        return {'status': 'success', 'path': path, 'contents': ['file1.txt', 'file2.txt', 'subfolder']}
+        return {'status': 'success', 'contents': ['file1.txt', 'file2.txt', 'subfolder']}
     
     try:
         contents = os.listdir(path)
-        return {'status': 'success', 'path': path, 'contents': contents}
+        return {'status': 'success', 'contents': contents}
     except Exception as e:
-        return {'status': 'error', 'path': '', 'contents': [], 'message': str(e)}
+        return {'status': 'error', 'contents': [], 'message': str(e)}

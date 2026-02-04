@@ -49,10 +49,6 @@ from core.action.action_framework.registry import action
             "type": "string",
             "example": "success",
             "description": "Indicates if the update was successful"
-        },
-        "todos": {
-            "type": "array",
-            "description": "The updated todo list"
         }
     },
     test_payload={
@@ -74,8 +70,7 @@ def update_todos(input_data: dict) -> dict:
     if not simulated_mode:
         import core.internal_action_interface as iai
         result = iai.InternalActionInterface.update_todos(todos)
-        if result.get("status") == "ok":
-            result["status"] = "success"
-        return result
+        status = "success" if result.get("status") in ("ok", "success") else "error"
+        return {"status": status}
 
-    return {"status": "success", "todos": todos}
+    return {"status": "success"}
