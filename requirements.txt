@@ -34,3 +34,4 @@ textual>=0.58.0
 pyperclip
 gradio_client
 python-dotenv
+scikit-learn
