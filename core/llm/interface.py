@@ -513,29 +513,42 @@ class LLMInterface:
                 system_prompt_for_new_session, user_prompt, log_response=False
             )
 
-        # Use prefix cache for BytePlus - caches system prompt only, each call is independent
-        # This avoids context accumulation that causes overflow
+        # Use SESSION cache for BytePlus - context grows with each call via previous_response_id
+        # The session accumulates: system_prompt + user_prompt_1 + response_1 + user_prompt_2 + ...
+        # Only delta events should be sent after the first call to avoid duplication
         session_key = f"{task_id}:{call_type}"
-        stored_system_prompt = self._session_system_prompts.get(session_key)
-        effective_system_prompt = system_prompt_for_new_session or stored_system_prompt
 
-        if not effective_system_prompt:
-            raise ValueError(
-                f"No system prompt for task {task_id}:{call_type}"
-            )
-
-        # Use prefix cache - each call sends: cached_system_prompt + current_user_prompt
-        # Context stays constant (~3-5k tokens), never grows
         try:
-            result = self._byteplus_cache_manager.get_or_create_prefix_cache(
-                system_prompt=effective_system_prompt,
-                user_prompt=user_prompt,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-            response = self._process_prefix_response(result, session_key)
+            # Check if session exists in BytePlus cache manager
+            if self._byteplus_cache_manager.has_session(task_id, call_type):
+                # Session exists - use it
+                response = self._generate_byteplus_with_session(task_id, call_type, user_prompt)
+            else:
+                # No session exists - create one and get first response
+                stored_system_prompt = self._session_system_prompts.get(session_key)
+                effective_system_prompt = system_prompt_for_new_session or stored_system_prompt
+
+                if not effective_system_prompt:
+                    raise ValueError(
+                        f"No system prompt for task {task_id}:{call_type}"
+                    )
+
+                logger.info(f"[SESSION CACHE] Creating new session for {session_key}")
+                result = self._byteplus_cache_manager.create_session_cache(
+                    task_id=task_id,
+                    call_type=call_type,
+                    system_prompt=effective_system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                # Process the response from session creation
+                response = self._process_session_response(result, task_id, call_type, is_first_call=True)
+
         except Exception as e:
-            logger.warning(f"[PREFIX CACHE] Failed: {e}, falling back to standard")
+            logger.warning(f"[SESSION CACHE] Failed: {e}, falling back to standard")
+            stored_system_prompt = self._session_system_prompts.get(session_key)
+            effective_system_prompt = system_prompt_for_new_session or stored_system_prompt
             return self._generate_response_sync(
                 effective_system_prompt, user_prompt, log_response=False
             )

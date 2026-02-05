@@ -163,7 +163,17 @@ class ActionRouter:
         # Build the instruction prompt for the LLM
         # KV CACHING: Static/session-static content first, dynamic (event_stream) last
         # Reasoning is now part of the action selection prompt (single LLM call)
-        prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
+        #
+        # For session caching:
+        # - static_prompt: everything except event_stream (cached prefix)
+        # - full_prompt: includes event_stream (used for first call or non-cached)
+        static_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            event_stream="",  # Empty for static prompt
+            query=query,
+            action_candidates=self._format_candidates(action_candidates),
+        )
+        full_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             event_stream=self.context_engine.get_event_stream(),
             query=query,
@@ -172,7 +182,12 @@ class ActionRouter:
 
         max_retries = 3
         for attempt in range(max_retries):
-            decision = await self._prompt_for_decision(prompt, is_task=True)
+            decision = await self._prompt_for_decision(
+                full_prompt,
+                is_task=True,
+                static_prompt=static_prompt,
+                call_type=LLMCallType.ACTION_SELECTION,
+            )
 
             selected_action_name = decision.get("action_name", "")
             if selected_action_name == "":
@@ -229,7 +244,17 @@ class ActionRouter:
         # Build the instruction prompt using simple task prompt
         # KV CACHING: Static/session-static content first, dynamic (event_stream) last
         # Reasoning is now part of the action selection prompt (single LLM call)
-        prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
+        #
+        # For session caching:
+        # - static_prompt: everything except event_stream (cached prefix)
+        # - full_prompt: includes event_stream (used for first call or non-cached)
+        static_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            event_stream="",  # Empty for static prompt
+            query=query,
+            action_candidates=self._format_candidates(action_candidates),
+        )
+        full_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             event_stream=self.context_engine.get_event_stream(),
             query=query,
@@ -238,7 +263,12 @@ class ActionRouter:
 
         max_retries = 3
         for attempt in range(max_retries):
-            decision = await self._prompt_for_decision(prompt, is_task=True)
+            decision = await self._prompt_for_decision(
+                full_prompt,
+                is_task=True,
+                static_prompt=static_prompt,
+                call_type=LLMCallType.ACTION_SELECTION,
+            )
 
             selected_action_name = decision.get("action_name", "")
             if selected_action_name == "":
@@ -305,7 +335,18 @@ class ActionRouter:
         # Build the instruction prompt for the LLM
         # KV CACHING: Static/session-static content first, dynamic (gui_event_stream) last
         # Reasoning is now part of the action selection prompt (single LLM call)
-        prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
+        #
+        # For session caching:
+        # - static_prompt: everything except gui_event_stream (cached prefix)
+        # - full_prompt: includes gui_event_stream (used for first call or non-cached)
+        static_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            gui_event_stream="",  # Empty for static prompt
+            gui_state=gui_state,
+            query=query,
+            action_candidates=self._format_candidates(action_candidates),
+        )
+        full_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             gui_event_stream=self.context_engine.get_gui_event_stream(),
             gui_state=gui_state,
@@ -315,7 +356,11 @@ class ActionRouter:
 
         max_retries = 3
         for attempt in range(max_retries):
-            decision = await self._prompt_for_decision_gui(prompt=prompt, is_task=True)
+            decision = await self._prompt_for_decision_gui(
+                prompt=full_prompt,
+                is_task=True,
+                static_prompt=static_prompt,
+            )
 
             selected_action_name = decision.get("action_name", "")
             if selected_action_name == "":
@@ -337,7 +382,27 @@ class ActionRouter:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _prompt_for_decision(self, prompt: str, is_task: bool = False) -> Dict[str, Any]:
+    async def _prompt_for_decision(
+        self,
+        prompt: str,
+        is_task: bool = False,
+        static_prompt: Optional[str] = None,
+        call_type: str = LLMCallType.ACTION_SELECTION,
+    ) -> Dict[str, Any]:
+        """
+        Prompt the LLM for an action decision with session caching support.
+
+        For BytePlus session caching:
+        - First call: Send full prompt (static_prompt + event_stream)
+        - Subsequent calls: Send only delta events (new events since last call)
+
+        Args:
+            prompt: The full prompt (used for non-session calls or first call)
+            is_task: Whether this is a task context (enables session caching)
+            static_prompt: The static parts of the prompt without event_stream
+                          (used for session cache creation)
+            call_type: The type of LLM call for session cache keying
+        """
         max_retries = 3
         last_error: Optional[Exception] = None
         current_prompt = prompt
@@ -347,21 +412,66 @@ class ActionRouter:
 
         for attempt in range(max_retries):
             # KV CACHING: System prompt is now STATIC only
-            # Dynamic content (event_stream, task_state) is already in the user prompt
+            # Dynamic content (event_stream) is handled separately for session caching
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
                 system_flags={"agent_info": not is_task, "policy": False},
             )
 
-            # Use session cache if we're in a task context and session exists
-            if current_task_id and self.llm_interface.has_session_cache(current_task_id, LLMCallType.ACTION_SELECTION):
-                raw_response = await self.llm_interface.generate_response_with_session_async(
-                    task_id=current_task_id,
-                    call_type=LLMCallType.ACTION_SELECTION,
-                    user_prompt=current_prompt,
-                    system_prompt_for_new_session=system_prompt,
-                )
+            raw_response = None
+
+            # Use session cache if we're in a task context AND session is registered
+            # Session is only registered for complex tasks (not simple tasks)
+            if current_task_id and is_task:
+                has_session = self.llm_interface.has_session_cache(current_task_id, call_type)
+
+                if has_session:
+                    # Session is registered (complex task) - use session caching
+                    # Check if we've synced events before (i.e., made at least one LLM call)
+                    from core.event_stream.event_stream_manager import EventStreamManager
+                    event_stream_manager: EventStreamManager = self.context_engine.state_manager.event_stream_manager
+                    stream = event_stream_manager.get_stream()
+                    has_synced_before = stream.has_session_sync(call_type) if stream else False
+
+                    if has_synced_before:
+                        # We've made calls before - send only delta events
+                        delta_events, has_delta = self.context_engine.get_event_stream_delta(call_type)
+
+                        if has_delta:
+                            # Send only the new events
+                            logger.info(f"[SESSION CACHE] Sending delta events for {call_type}")
+                            raw_response = await self.llm_interface.generate_response_with_session_async(
+                                task_id=current_task_id,
+                                call_type=call_type,
+                                user_prompt=delta_events,
+                                system_prompt_for_new_session=system_prompt,
+                            )
+                            # Mark events as synced after successful call
+                            self.context_engine.mark_event_stream_synced(call_type)
+                        else:
+                            # No new events - this could mean summarization happened
+                            logger.info(f"[SESSION CACHE] No delta events, resetting cache for {call_type}")
+                            self.llm_interface.end_session_cache(current_task_id, call_type)
+                            self.context_engine.reset_event_stream_sync(call_type)
+                            # Fall through to first-call path
+                            has_synced_before = False
+
+                    if not has_synced_before:
+                        # First call with session - send full prompt to establish session
+                        logger.info(f"[SESSION CACHE] Creating new session for {call_type} (first call)")
+                        raw_response = await self.llm_interface.generate_response_with_session_async(
+                            task_id=current_task_id,
+                            call_type=call_type,
+                            user_prompt=current_prompt,  # Full prompt with event_stream
+                            system_prompt_for_new_session=system_prompt,
+                        )
+                        # Mark events as synced after successful session creation
+                        self.context_engine.mark_event_stream_synced(call_type)
+                else:
+                    # No session registered (simple task) - use prefix cache / regular response
+                    raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             else:
+                # Not in task context - use regular response
                 raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
 
             decision, parse_error = self._parse_action_decision(raw_response)
@@ -382,21 +492,47 @@ class ActionRouter:
             raise last_error
         raise ValueError("Unable to parse LLM decision")
         
-    async def _prompt_for_decision_gui(self, prompt: str = "", image_bytes: Optional[bytes] = None, is_task: bool = False) -> Dict[str, Any]:
+    async def _prompt_for_decision_gui(
+        self,
+        prompt: str = "",
+        image_bytes: Optional[bytes] = None,
+        is_task: bool = False,
+        static_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Prompt the LLM for a GUI action decision with session caching support.
+
+        For BytePlus session caching:
+        - First call: Send full prompt (static_prompt + gui_event_stream)
+        - Subsequent calls: Send only delta events (new events since last call)
+
+        Note: VLM calls with image_bytes don't use session caching.
+
+        Args:
+            prompt: The full prompt (used for non-session calls or first call)
+            image_bytes: Optional screenshot bytes for VLM calls
+            is_task: Whether this is a task context (enables session caching)
+            static_prompt: The static parts of the prompt without gui_event_stream
+                          (used for session cache creation)
+        """
         max_retries = 3
         last_error: Optional[Exception] = None
         current_prompt = prompt
+        call_type = LLMCallType.GUI_ACTION_SELECTION
 
         # Get current task_id for session cache (if running in a task)
         current_task_id = STATE.get_agent_property("current_task_id", "") if is_task else ""
 
         for attempt in range(max_retries):
             # KV CACHING: System prompt is now STATIC only
-            # Dynamic content (gui_event_stream, task_state) is already in the user prompt
+            # Dynamic content (gui_event_stream) is handled separately for session caching
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
                 system_flags={"role_info": not is_task, "agent_info": not is_task, "policy": False},
             )
+
+            raw_response = None
+
             if image_bytes:
                 # VLM calls don't use session cache (independent calls with images)
                 raw_response = await self.vlm_interface.generate_response_async(
@@ -404,17 +540,55 @@ class ActionRouter:
                     system_prompt=system_prompt,
                     user_prompt=current_prompt,
                 )
-            else:
-                # Use session cache if we're in a task context and session exists
-                if current_task_id and self.llm_interface.has_session_cache(current_task_id, LLMCallType.GUI_ACTION_SELECTION):
-                    raw_response = await self.llm_interface.generate_response_with_session_async(
-                        task_id=current_task_id,
-                        call_type=LLMCallType.GUI_ACTION_SELECTION,
-                        user_prompt=current_prompt,
-                        system_prompt_for_new_session=system_prompt,
-                    )
+            elif current_task_id and is_task:
+                # Use session cache if we're in a task context AND session is registered
+                # Session is only registered for complex tasks (not simple tasks)
+                has_session = self.llm_interface.has_session_cache(current_task_id, call_type)
+
+                if has_session:
+                    # Session is registered (complex task) - use session caching
+                    from core.event_stream.event_stream_manager import EventStreamManager
+                    event_stream_manager: EventStreamManager = self.context_engine.state_manager.event_stream_manager
+                    stream = event_stream_manager.get_stream()
+                    has_synced_before = stream.has_session_sync(call_type) if stream else False
+
+                    if has_synced_before:
+                        # We've made calls before - send only delta events
+                        delta_events, has_delta = self.context_engine.get_event_stream_delta(call_type)
+
+                        if has_delta:
+                            logger.info(f"[SESSION CACHE] Sending delta events for {call_type}")
+                            raw_response = await self.llm_interface.generate_response_with_session_async(
+                                task_id=current_task_id,
+                                call_type=call_type,
+                                user_prompt=delta_events,
+                                system_prompt_for_new_session=system_prompt,
+                            )
+                            self.context_engine.mark_event_stream_synced(call_type)
+                        else:
+                            # No new events - invalidate and recreate session
+                            logger.info(f"[SESSION CACHE] No delta events, resetting cache for {call_type}")
+                            self.llm_interface.end_session_cache(current_task_id, call_type)
+                            self.context_engine.reset_event_stream_sync(call_type)
+                            has_synced_before = False
+
+                    if not has_synced_before:
+                        # First call with session - send full prompt
+                        logger.info(f"[SESSION CACHE] Creating new session for {call_type} (first call)")
+                        raw_response = await self.llm_interface.generate_response_with_session_async(
+                            task_id=current_task_id,
+                            call_type=call_type,
+                            user_prompt=current_prompt,  # Full prompt with gui_event_stream
+                            system_prompt_for_new_session=system_prompt,
+                        )
+                        self.context_engine.mark_event_stream_synced(call_type)
                 else:
+                    # No session registered (simple task) - use prefix cache / regular response
+                    logger.info(f"[PREFIX CACHE] Using regular response for {call_type} (simple task)")
                     raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+            else:
+                # Not in task context - use regular response
+                raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
 
             decision, parse_error = self._parse_action_decision(raw_response)
             if decision is not None:

@@ -142,6 +142,11 @@ class InternalActionInterface:
         if cls.task_manager is None or cls.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with Task/State managers.")
 
+        # Clear the event stream from any previous task before starting new one
+        # This prevents old events from polluting the new task's context
+        cls.state_manager.event_stream_manager.clear_all()
+        logger.info(f"[TASK] Cleared event stream for new task: {task_name}")
+
         # Step 1: Automatically select action sets via LLM
         selected_sets = cls._select_action_sets_via_llm(task_name, task_description)
         logger.info(f"[TASK] Auto-selected action sets for '{task_name}': {selected_sets}")
@@ -426,7 +431,13 @@ class InternalActionInterface:
         """
         if cls.task_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with TaskManager.")
-        return cls.task_manager.add_action_sets(sets_to_add)
+
+        result = cls.task_manager.add_action_sets(sets_to_add)
+
+        # Invalidate session cache - action list has changed
+        cls._invalidate_action_selection_caches()
+
+        return result
 
     @classmethod
     def remove_action_sets(cls, sets_to_remove: List[str]) -> Dict[str, Any]:
@@ -441,7 +452,40 @@ class InternalActionInterface:
         """
         if cls.task_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with TaskManager.")
-        return cls.task_manager.remove_action_sets(sets_to_remove)
+
+        result = cls.task_manager.remove_action_sets(sets_to_remove)
+
+        # Invalidate session cache - action list has changed
+        cls._invalidate_action_selection_caches()
+
+        return result
+
+    @classmethod
+    def _invalidate_action_selection_caches(cls) -> None:
+        """
+        Invalidate action selection session caches when action sets change.
+
+        When action sets are added or removed, the cached prompt becomes stale
+        because the <actions> section has changed. This method clears the
+        session caches for both CLI and GUI action selection.
+        """
+        task_id = cls._get_current_task_id()
+        if not task_id or not cls.llm_interface:
+            return
+
+        try:
+            # End action selection caches (both CLI and GUI)
+            cls.llm_interface.end_session_cache(task_id, LLMCallType.ACTION_SELECTION)
+            cls.llm_interface.end_session_cache(task_id, LLMCallType.GUI_ACTION_SELECTION)
+
+            # Also reset event stream sync points
+            if cls.context_engine:
+                cls.context_engine.reset_event_stream_sync(LLMCallType.ACTION_SELECTION)
+                cls.context_engine.reset_event_stream_sync(LLMCallType.GUI_ACTION_SELECTION)
+
+            logger.info(f"[CACHE] Invalidated action selection caches for task {task_id} due to action set change")
+        except Exception as e:
+            logger.warning(f"[CACHE] Failed to invalidate caches for task {task_id}: {e}")
 
     @classmethod
     def list_action_sets(cls) -> Dict[str, Any]:

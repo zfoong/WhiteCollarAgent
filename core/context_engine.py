@@ -138,6 +138,72 @@ class ContextEngine:
             )
         return "<event_stream>\n(no events yet)\n</event_stream>"
 
+    def get_event_stream_delta(self, call_type: str) -> tuple[str, bool]:
+        """
+        Get only new events since the last session sync for session caching.
+
+        For BytePlus session caching, we only want to send new events
+        instead of the full event stream on subsequent calls.
+
+        Args:
+            call_type: The type of LLM call (e.g., "action_selection")
+
+        Returns:
+            Tuple of (delta_events_wrapped, has_delta).
+            - delta_events_wrapped: The new events wrapped in event_stream tags, or empty string
+            - has_delta: True if there are new events to send
+        """
+        from core.event_stream.event_stream_manager import EventStreamManager
+
+        event_stream_manager: EventStreamManager = self.state_manager.event_stream_manager
+        stream = event_stream_manager.get_stream()
+
+        if not stream:
+            return "", False
+
+        delta_str, has_delta = stream.get_delta_events(call_type)
+
+        if not has_delta:
+            return "", False
+
+        # Wrap delta events in the expected format
+        # Note: No closing tag - this is continuation of the event stream
+        return delta_str, True
+
+    def mark_event_stream_synced(self, call_type: str) -> None:
+        """
+        Mark that the event stream has been synced to a session cache.
+
+        Called after sending events to a session cache.
+
+        Args:
+            call_type: The type of LLM call
+        """
+        from core.event_stream.event_stream_manager import EventStreamManager
+
+        event_stream_manager: EventStreamManager = self.state_manager.event_stream_manager
+        stream = event_stream_manager.get_stream()
+
+        if stream:
+            stream.mark_session_synced(call_type)
+
+    def reset_event_stream_sync(self, call_type: str) -> None:
+        """
+        Reset the session sync point for the event stream.
+
+        Called when a session cache is invalidated/recreated.
+
+        Args:
+            call_type: The type of LLM call
+        """
+        from core.event_stream.event_stream_manager import EventStreamManager
+
+        event_stream_manager: EventStreamManager = self.state_manager.event_stream_manager
+        stream = event_stream_manager.get_stream()
+
+        if stream:
+            stream.reset_session_sync(call_type)
+
     def get_gui_event_stream(self) -> str:
         """
         Get the GUI event stream content for inclusion in user prompts.
