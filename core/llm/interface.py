@@ -1005,6 +1005,8 @@ class LLMInterface:
             # 1. call_type is provided
             # 2. system_prompt is long enough
             # 3. cache manager is available
+            # Note: GeminiCacheManager will automatically fall back to implicit caching
+            # if the system prompt is below Gemini's 1024 token minimum
             use_explicit_cache = (
                 call_type
                 and system_prompt

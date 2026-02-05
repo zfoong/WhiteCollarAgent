@@ -435,9 +435,13 @@ class GeminiClient:
                 raise GeminiAPIError(f"Prompt blocked by Gemini: {reason}")
 
         candidates: Iterable[Dict[str, Any]] = response.get("candidates", []) or []
-        for candidate in candidates:
-            if candidate.get("finishReason") == "SAFETY":
+        candidates_list = list(candidates)  # Convert to list so we can iterate multiple times
+
+        for candidate in candidates_list:
+            finish_reason = candidate.get("finishReason")
+            if finish_reason == "SAFETY":
                 # Skip candidates halted for safety reasons.
+                logger.warning(f"[GEMINI] Candidate blocked for safety: {candidate.get('safetyRatings', [])}")
                 continue
             content = candidate.get("content") or {}
             parts: Iterable[Dict[str, Any]] = content.get("parts", []) or []
@@ -445,5 +449,19 @@ class GeminiClient:
             text = "".join(texts).strip()
             if text:
                 return text
+            else:
+                # Log when candidate exists but has no text
+                logger.warning(
+                    f"[GEMINI] Candidate has no text content. "
+                    f"finishReason={finish_reason}, parts_count={len(list(parts))}, "
+                    f"candidate_keys={list(candidate.keys())}"
+                )
+
+        # Log when no usable candidates found
+        if candidates_list:
+            finish_reasons = [c.get("finishReason") for c in candidates_list]
+            logger.warning(f"[GEMINI] No usable content from {len(candidates_list)} candidates. finishReasons={finish_reasons}")
+        else:
+            logger.warning(f"[GEMINI] Response has no candidates. Response keys: {list(response.keys())}")
 
         return ""

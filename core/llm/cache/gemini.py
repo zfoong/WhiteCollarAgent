@@ -46,6 +46,11 @@ class GeminiCacheManager:
         result = manager.get_or_create_cache(system_prompt, user_prompt, "reasoning", ...)
     """
 
+    # Gemini requires at least 1024 tokens for explicit caching
+    # Using ~4 characters per token as a rough estimate
+    MIN_CACHE_TOKENS = 1024
+    CHARS_PER_TOKEN_ESTIMATE = 4
+
     def __init__(self, gemini_client: "GeminiClient", model: str) -> None:
         self._client = gemini_client
         self._model = model
@@ -54,6 +59,14 @@ class GeminiCacheManager:
         # Track cache creation time for TTL management
         self._cache_created_at: Dict[str, float] = {}
         self._config = get_cache_config()
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count for a text string.
+
+        Uses a rough estimate of ~4 characters per token for English text.
+        This is conservative to avoid hitting the "too small" error.
+        """
+        return len(text) // self.CHARS_PER_TOKEN_ESTIMATE
 
     def _make_cache_key(self, system_prompt: str, call_type: str) -> str:
         """Create a unique key for the cache based on system prompt and call type."""
@@ -80,6 +93,23 @@ class GeminiCacheManager:
         Returns:
             Response dict with tokens_used, content, cached_tokens, etc.
         """
+        # Check if system prompt is large enough for explicit caching
+        # Gemini requires at least 1024 tokens; skip explicit cache if too small
+        estimated_tokens = self._estimate_tokens(system_prompt)
+        if estimated_tokens < self.MIN_CACHE_TOKENS:
+            logger.debug(
+                f"[GEMINI CACHE] System prompt too small for explicit caching "
+                f"({estimated_tokens} estimated tokens < {self.MIN_CACHE_TOKENS} min). "
+                f"Using implicit caching instead."
+            )
+            return self._client.generate_text(
+                self._model,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+
         cache_key = self._make_cache_key(system_prompt, call_type)
 
         # Check if we have an existing cache
