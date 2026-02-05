@@ -1221,8 +1221,10 @@ class LLMInterface:
                 system_prompt_for_new_session, user_prompt, log_response=False
             )
 
-        # Use prefix cache for BytePlus - caches system prompt only, each call is independent
-        # This avoids context accumulation that causes overflow
+        # Use SESSION cache for BytePlus - context grows with each call
+        # Round 1: system_prompt + static_prompt + event_1
+        # Round 2: event_2 (delta only)
+        # Round 3: event_3 (delta only)
         session_key = f"{task_id}:{call_type}"
         stored_system_prompt = self._session_system_prompts.get(session_key)
         effective_system_prompt = system_prompt_for_new_session or stored_system_prompt
@@ -1232,19 +1234,57 @@ class LLMInterface:
                 f"No system prompt for task {task_id}:{call_type}"
             )
 
-        # Use prefix cache - each call sends: cached_system_prompt + current_user_prompt
-        # Context stays constant (~3-5k tokens), never grows
+        # Store system prompt for future cache recreation if not stored
+        if session_key not in self._session_system_prompts:
+            self._session_system_prompts[session_key] = effective_system_prompt
+
         try:
-            result = self._byteplus_cache_manager.get_or_create_prefix_cache(
+            # Check if session cache exists
+            if self._byteplus_cache_manager.has_session(task_id, call_type):
+                # Session exists - send only the user_prompt (delta events)
+                logger.info(f"[SESSION CACHE] Using existing session for {session_key}, sending delta")
+                result = self._byteplus_cache_manager.chat_with_session(
+                    task_id=task_id,
+                    call_type=call_type,
+                    user_prompt=user_prompt,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                response = self._process_session_response(result, task_id, call_type, is_first_call=False)
+            else:
+                # No session - create one with full prompt (system + user)
+                logger.info(f"[SESSION CACHE] Creating new session for {session_key}")
+                result = self._byteplus_cache_manager.create_session_cache(
+                    task_id=task_id,
+                    call_type=call_type,
+                    system_prompt=effective_system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                response = self._process_session_response(result, task_id, call_type, is_first_call=True)
+
+        except BytePlusContextOverflowError as overflow_exc:
+            # Context exceeded maximum length - reset session and retry with fresh context
+            logger.warning(f"[SESSION CACHE] Context overflow for {session_key}, resetting session...")
+
+            # End the overflowed session
+            self._byteplus_cache_manager.end_session(task_id, call_type)
+
+            # Create a fresh session with system prompt and current user prompt
+            logger.info(f"[SESSION CACHE] Creating fresh session for {session_key} after overflow")
+            result = self._byteplus_cache_manager.create_session_cache(
+                task_id=task_id,
+                call_type=call_type,
                 system_prompt=effective_system_prompt,
                 user_prompt=user_prompt,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                call_type=call_type,
             )
-            response = self._process_prefix_response(result, session_key)
+            response = self._process_session_response(result, task_id, call_type, is_first_call=True)
+
         except Exception as e:
-            logger.warning(f"[PREFIX CACHE] Failed: {e}, falling back to standard")
+            logger.warning(f"[SESSION CACHE] Failed: {e}, falling back to standard")
             return self._generate_response_sync(
                 effective_system_prompt, user_prompt, log_response=False
             )

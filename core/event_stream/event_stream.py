@@ -52,6 +52,7 @@ class EventStream:
     Per-session event stream.
     - Keep recent events verbatim (tail_events)
     - Roll older events into head_summary when hitting thresholds
+    - Track session cache sync points for delta event retrieval
     """
 
     def __init__(
@@ -81,6 +82,10 @@ class EventStream:
         self._summarize_task: asyncio.Task | None = None
         self._lock = threading.RLock()
         self._total_tokens: int = 0
+
+        # Session cache tracking: maps call_type -> event_index of last synced event
+        # Used to track which events have been sent to each session cache
+        self._session_sync_points: dict[str, int] = {}
 
     # ────────────────────────────── logging ──────────────────────────────
 
@@ -271,6 +276,11 @@ class EventStream:
                 else:
                     self.tail_events = self.tail_events[cutoff:]
 
+                # Reset all session sync points - event indices are now invalid
+                # Session caches will be recreated on next access
+                self._session_sync_points.clear()
+                logger.info("[EventStream] Cleared all session sync points after summarization")
+
         except Exception:
             logger.exception("[EventStream] LLM summarization failed. Keeping all events without summarization.")
             return
@@ -346,3 +356,76 @@ class EventStream:
         self.head_summary = None
         self.tail_events.clear()
         self._total_tokens = 0
+        self._session_sync_points.clear()
+
+    # ───────────────────── Session Cache Delta Tracking ─────────────────────
+
+    def mark_session_synced(self, call_type: str) -> None:
+        """
+        Mark that all current events have been synced to the session cache.
+
+        Called after sending events to a session cache to track the sync point.
+        Next call to get_delta_events() will return only events added after this.
+
+        Args:
+            call_type: The type of LLM call (e.g., "action_selection", "gui_action_selection")
+        """
+        with self._lock:
+            # Store the current tail length as the sync point
+            self._session_sync_points[call_type] = len(self.tail_events)
+            logger.debug(f"[EventStream] Session sync point for {call_type}: {self._session_sync_points[call_type]}")
+
+    def get_delta_events(self, call_type: str) -> Tuple[str, bool]:
+        """
+        Get events added since the last sync point for a given call type.
+
+        Used for session caching where only new events should be appended
+        to the session cache instead of re-sending the full event stream.
+
+        Args:
+            call_type: The type of LLM call
+
+        Returns:
+            Tuple of (delta_events_string, has_delta).
+            - delta_events_string: Newline-delimited string of new events
+            - has_delta: True if there are new events since last sync
+        """
+        with self._lock:
+            sync_point = self._session_sync_points.get(call_type, 0)
+
+            # Check if summarization happened (events were pruned)
+            # If sync_point is greater than current tail length, summarization occurred
+            if sync_point > len(self.tail_events):
+                # Return None to signal that cache needs to be invalidated
+                logger.info(f"[EventStream] Summarization detected for {call_type}, cache invalidation needed")
+                return "", False
+
+            # Get events since sync point
+            delta_events = self.tail_events[sync_point:]
+
+            if not delta_events:
+                return "", False
+
+            lines = [r.compact_line() for r in delta_events]
+            return "\n".join(lines), True
+
+    def reset_session_sync(self, call_type: str) -> None:
+        """
+        Reset the sync point for a session cache.
+
+        Called when the session cache is invalidated/recreated.
+
+        Args:
+            call_type: The type of LLM call
+        """
+        with self._lock:
+            self._session_sync_points.pop(call_type, None)
+            logger.debug(f"[EventStream] Reset session sync for {call_type}")
+
+    def has_session_sync(self, call_type: str) -> bool:
+        """Check if a sync point exists for the given call type."""
+        return call_type in self._session_sync_points
+
+    def get_event_count(self) -> int:
+        """Get the current number of events in the tail."""
+        return len(self.tail_events)
