@@ -61,7 +61,7 @@ steps:
   name: Confirm conversion scope and rules
   description: Ensure all key parameters for the batch conversion (paths, formats, and policies) are clearly defined and confirmed by the user before any work.
   action_instruction: >
-    Use the "send message" action to restate and confirm the required inputs:
+    Use the "send_message" action to restate and confirm the required inputs:
     - {source_root_directories}: the folder(s) to search for documents.
     - {source_formats}: which source formats to include (e.g., docx, odt, pdf, txt).
     - {target_format}: the single target format for this batch (or clearly define if multiple targets are requested).
@@ -72,7 +72,7 @@ steps:
     - {dry_run}: whether to first preview what would be converted.
     - {max_files}: an upper bound on how many files to process, if the user wants a safety cap.
     Ask the user to confirm or correct any unclear items. If something critical is missing (for example, target format or how to treat originals),
-    use the "ask question" action with a focused question. Once answers are received, send a brief "send message" summarizing
+    use the "send_message" action with a focused question. Once answers are received, send a brief "send_message" summarizing
     the final parameters in one place.
   validation_instruction: >
     Check that:
@@ -135,7 +135,7 @@ steps:
     - Confirm that the script completed without an unhandled exception.
     - Check that total_files_matched and count_converted (or would_convert) are reasonable given the user’s expectations.
     - Ensure that a log_file_path is printed and points to a location in the workspace.
-    - If total_files_matched is 0, notify the user via "send message" that no matching documents were found and ask whether to
+    - If total_files_matched is 0, notify the user via "send_message" that no matching documents were found and ask whether to
       adjust formats/paths or stop the task.
     - If the error count is unexpectedly high, prepare to mention this clearly in the final summary.
 
@@ -157,7 +157,7 @@ steps:
   name: Close task and report to user
   description: Summarize what was (or would be) converted, provide the log file location, and mark the task status appropriately.
   action_instruction: >
-    Use "send message" to provide a concise final summary:
+    Use "send_message" to provide a concise final summary:
     - Source roots processed: {source_root_directories}.
     - Source formats and target format: {source_formats} → {target_format}.
     - Output location policy: {output_root_directory} (or "next to originals") and whether folder structure was preserved.

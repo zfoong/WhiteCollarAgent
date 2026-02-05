@@ -29,7 +29,7 @@ context:
       - Confirm which options and attributes matter.
       - Gather only the information needed for those attributes.
       - Build a single comparison table in memory and output once.
-    - Use "send message" and "ask question" for clarification when options or attributes are unclear.
+    - Use "send_message" and "send_message" for clarification when options or attributes are unclear.
     - If online information is needed for each option, prefer:
       - "google search" or "google search batch" to quickly fetch key details, or
       - "read web page from URL" when the user provides specific links.
@@ -58,7 +58,7 @@ steps:
   name: Confirm options and attributes
   description: Make sure the list of options and the comparison attributes are clearly defined before doing any data gathering.
   action_instruction: >
-    Use "send message" to restate the current understanding:
+    Use "send_message" to restate the current understanding:
     - Options to compare: {option_list}.
     - Planned attributes (e.g., {price}, {feature_set}, {limits}, {platforms}, {support}, {licensing}, {notes}).
     - Whether the user wants:
@@ -67,9 +67,9 @@ steps:
     - Output preference:
       - Table in chat only, or
       - Table plus file ({output_format}) saved at {comparison_table_path}.
-    If some parts are unclear (e.g., user only said “compare these tools” without attributes), use "ask question" to get a short list
+    If some parts are unclear (e.g., user only said “compare these tools” without attributes), use "send_message" to get a short list
     of most important attributes (for example, “Which 3–5 attributes matter most for your decision?”). After the user replies,
-    send a brief "send message" summarizing the final agreed options and attributes.
+    send a brief "send_message" summarizing the final agreed options and attributes.
 
   validation_instruction: >
     Confirm that:
@@ -77,13 +77,13 @@ steps:
     - There is at least one attribute to compare; ideally 3–7 focused ones.
     - Data source preference (user-only vs. quick online lookup) is known.
     - Output format preference is known or defaults to “table in chat only”.
-    If any of these are missing, call "ask question" to clarify and do not proceed until they are resolved.
+    If any of these are missing, call "send_message" to clarify and do not proceed until they are resolved.
 
   name: Gather attribute data for each option
   description: Collect the needed attribute values for each option using either user input, online lookup, or a mix, according to the user’s preference.
   action_instruction: >
     If the user prefers user-provided info only:
-      - Use "send message" (and if needed, "ask question") to ask them to provide or confirm values for each {option} × {attribute} in a compact format
+      - Use "send_message" (and if needed, "send_message") to ask them to provide or confirm values for each {option} × {attribute} in a compact format
         (e.g., bullet list or simple lines).
     If the user allows online lookup:
       - Use "google search" or "google search batch" with queries like
@@ -101,7 +101,7 @@ steps:
     - Each option has at least some values filled for each attribute.
     - No option is completely missing data.
     - There are no obviously duplicated or contradictory values for the same attribute within a single option.
-    If a critical attribute is missing for many options, send a short "send message" to the user explaining this and ask whether to:
+    If a critical attribute is missing for many options, send a short "send_message" to the user explaining this and ask whether to:
     - Keep the attribute with partial data, or
     - Drop the attribute from the comparison.
 
@@ -118,7 +118,7 @@ steps:
       - Attributes in the order agreed with the user.
       - Options in the order provided by the user.
     Once the table string is prepared:
-      - Use "send message" to show the Markdown table directly to the user.
+      - Use "send_message" to show the Markdown table directly to the user.
     If the user requested a file:
       - For Markdown or plain text:
         - Use "create text file" to save the table (and a short title/summary) at {comparison_table_path}.
@@ -149,7 +149,7 @@ steps:
   name: Close task and report to user
   description: Summarize the result, highlight key insights, share the table/file location, and mark the task status.
   action_instruction: >
-    Use "send message" to provide:
+    Use "send_message" to provide:
     - A brief summary of the main differences/similarities between {options} based on the table (e.g., which is cheaper, which has more features, which fits {user_goal}).
     - Confirmation that the comparison table has been generated and shown.
     - If a file was created:

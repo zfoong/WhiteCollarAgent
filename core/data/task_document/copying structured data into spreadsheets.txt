@@ -63,7 +63,7 @@ steps:
   name: Confirm sources and schema
   description: Make sure the list of sources and the target table schema are clearly defined and agreed with the user.
   action_instruction: >
-    Use "send message" to restate your understanding in a compact checklist:
+    Use "send_message" to restate your understanding in a compact checklist:
     - Sources:
       - Files: {source_file_paths} (if known).
       - URLs: {source_urls} (if known).
@@ -74,14 +74,14 @@ steps:
     - Any simple extraction hints (e.g., “data is in an HTML table”, “each line is one record”, “look under heading ‘Transactions’”).
     - Optional rules: {dedupe_rule}, {missing_rule}, {max_rows}, {max_sources}.
     Ask the user to correct or fill in missing pieces. If a critical part is unclear (e.g., no column list, or ambiguous sources),
-    use "ask question" with a focused prompt (e.g., "Please list the exact columns you want in the spreadsheet, in order.").
-    Once the user responds, send one brief "send message" summarizing the finalized parameters so they are recorded.
+    use "send_message" with a focused prompt (e.g., "Please list the exact columns you want in the spreadsheet, in order.").
+    Once the user responds, send one brief "send_message" summarizing the finalized parameters so they are recorded.
   validation_instruction: >
     Verify that:
     - At least one source is provided (file path or URL).
     - A non-empty {columns_spec} list is defined and ordered.
     - An output format and path are chosen (or a default is acceptable).
-    If any of these are missing, use "ask question" again. Proceed only once the user has clearly confirmed sources, schema, and output path.
+    If any of these are missing, use "send_message" again. Proceed only once the user has clearly confirmed sources, schema, and output path.
 
   name: Acquire and read source content
   description: Ensure all sources are accessible in the workspace or via HTTP, and read their content in a way suitable for parsing.
@@ -101,7 +101,7 @@ steps:
   validation_instruction: >
     Check each read action’s status:
     - Ensure no critical source failed silently (e.g., unreadable file or HTTP error).
-    - If one or more sources cannot be accessed, "send message" briefly listing which ones failed and ask whether to:
+    - If one or more sources cannot be accessed, "send_message" briefly listing which ones failed and ask whether to:
       - Continue with the remaining sources, or
       - Stop and let the user fix access issues.
     Proceed to extraction only with the set of sources the user has agreed to process.
@@ -140,7 +140,7 @@ steps:
     - Confirm the script completed without unhandled exceptions.
     - Confirm the reported record count is reasonable (non-zero unless expected).
     - Note the exact path of {output_spreadsheet}.
-    If the script failed or produced zero rows unexpectedly, send a short "send message" explaining what happened and, if needed,
+    If the script failed or produced zero rows unexpectedly, send a short "send_message" explaining what happened and, if needed,
     ask the user whether to adjust parsing rules or stop.
 
   name: Overall validate spreadsheet output
@@ -152,13 +152,13 @@ steps:
       - The first row matches {columns_spec} exactly (names and order).
       - The file has at least one data row (unless the user expected no matches).
     - Optionally sample a few rows and verify that obvious fields (like IDs, dates, or amounts) look correctly placed and not clearly misaligned.
-    If something looks clearly wrong (e.g., header mismatch or empty file), send a brief "send message" to the user describing the issue and asking if they want to rerun extraction with adjusted rules.
+    If something looks clearly wrong (e.g., header mismatch or empty file), send a brief "send_message" to the user describing the issue and asking if they want to rerun extraction with adjusted rules.
   # No extra validation_instruction beyond these simple checks.
 
   name: Close task and report to user
   description: Summarize what was done, provide the output file path, and set task status.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
     - Sources processed: list of {sources_list} (or a brief description if many).
     - Columns used: {columns_spec}.
     - Output file: {output_spreadsheet} (format {output_format}).

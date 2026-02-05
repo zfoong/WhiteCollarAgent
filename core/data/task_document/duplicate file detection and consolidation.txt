@@ -64,7 +64,7 @@ steps:
   name: Confirm scope and consolidation rules
   description: Clarify and confirm which directories to scan, how duplicates are defined, and how extras should be handled.
   action_instruction: >
-    Use the "send message" action to restate the task in concrete terms and ask the user to confirm or fill in:
+    Use the "send_message" action to restate the task in concrete terms and ask the user to confirm or fill in:
     - Root directory path(s) to scan.
     - Whether to include subfolders (recursive true/false).
     - Duplicate definition:
@@ -80,7 +80,7 @@ steps:
       - Include extensions (e.g., only ".jpg" and ".png") or minimum file size.
     - Whether the user wants a dry-run (detect and log duplicates only, no file changes) before applying move/delete.
     - Optional safety cap on max number of files to scan.
-    If any of these are unclear or conflicting (e.g., delete requested but no confirmation), use "ask question" with a focused question. Once clarified, send a short "send message" summarizing the final agreed parameters for the task history.
+    If any of these are unclear or conflicting (e.g., delete requested but no confirmation), use "send_message" with a focused question. Once clarified, send a short "send_message" summarizing the final agreed parameters for the task history.
   validation_instruction: >
     Ensure that:
     - At least one root directory path string is provided.
@@ -88,7 +88,7 @@ steps:
     - A consolidation rule for choosing the canonical file is specified.
     - The action for non-canonical files is explicit (move vs delete).
     - If move is chosen, a valid-looking consolidation folder path or strategy is defined.
-    If any of these are missing, call "ask question" again and do not proceed until the user has confirmed them.
+    If any of these are missing, call "send_message" again and do not proceed until the user has confirmed them.
 
   name: Scan and hash files to identify duplicate candidates
   description: Perform a single efficient traversal to collect files under the chosen roots, filter them, and compute hashes to find exact duplicate groups (and simple near-duplicates if requested).
@@ -119,10 +119,10 @@ steps:
   validation_instruction: >
     Check the action result:
     - Status indicates success and stderr does not contain unhandled exceptions.
-    - At least one root was valid; if none were valid, notify the user via "send message" and stop.
+    - At least one root was valid; if none were valid, notify the user via "send_message" and stop.
     - Total files scanned is reasonable (non-zero unless the user expects otherwise).
     - There is a non-zero number of duplicate groups if the user requested duplicates and they are expected.
-    If no duplicates are found, send a "send message" explaining that no duplicate groups were detected, and ask the user whether to adjust filters or end the task.
+    If no duplicates are found, send a "send_message" explaining that no duplicate groups were detected, and ask the user whether to adjust filters or end the task.
 
   name: Decide canonical files and planned actions per group
   description: Use the scan results to choose which file to keep in each duplicate group and which to mark as extra, based on user rules.
@@ -150,7 +150,7 @@ steps:
     - For each group, exactly one canonical file is flagged (you can spot-check via "shell view" or by trusting the script’s summary).
     - Planned actions match the user’s choices (e.g., if user chose move-only, ensure delete count is zero).
     If a dry-run was requested:
-      - Explain via "send message" that a plan has been computed and share counts.
+      - Explain via "send_message" that a plan has been computed and share counts.
       - Ask if the user wants to proceed with applying the plan or adjust rules.
 
   name: Apply consolidation actions (move/delete extras)
@@ -187,7 +187,7 @@ steps:
     - Confirm that:
       - The total number of processed file entries in the log matches the counts reported earlier.
       - Status values are limited to expected types (kept, moved, deleted, *_error).
-    Then use "send message" to send a concise summary:
+    Then use "send_message" to send a concise summary:
       - Root directories scanned.
       - Duplicate definition used (exact + any near-duplicate rule).
       - Consolidation rule (how canonical files were chosen).

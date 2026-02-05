@@ -59,7 +59,7 @@ steps:
   name: Confirm scope and categorization rules
   description: Collect and confirm the root paths, whether the user wants type-based or project-based categorization, and the basic rules for where each file type should go.
   action_instruction: >
-    Use "send message" to state the current understanding and request missing details:
+    Use "send_message" to state the current understanding and request missing details:
     - Ask for: root directory path(s) to scan.
     - Ask the user to choose: type-based categories (Documents/Images/Videos/Archives/etc.) or project-based folders.
     - If type-based:
@@ -71,7 +71,7 @@ steps:
     - Ask if any file types or folders should be excluded (e.g., hidden files, specific extensions, or directories).
     - Ask for collision handling preference (append counter by default, or skip).
     - Ask if they want a dry-run preview (log only) before actual moves.
-    Once the user responds, send a brief "send message" summarizing the final rules so they are explicit in the task history.
+    Once the user responds, send a brief "send_message" summarizing the final rules so they are explicit in the task history.
   validation_instruction: >
     Ensure that:
     - At least one root directory path is provided.
@@ -79,7 +79,7 @@ steps:
     - For type-based: there is a clear extension mapping (either the default accepted or a user-provided variant).
     - For project-based: there is at least one project folder name and a simple rule for assignment.
     - Recursion and collision strategy are decided (default collision: append counter).
-    If any of these are missing or ambiguous, use "ask question" with a focused prompt and only proceed once the user has clearly confirmed.
+    If any of these are missing or ambiguous, use "send_message" with a focused prompt and only proceed once the user has clearly confirmed.
 
   name: Scan and categorize files
   description: Traverse the specified root folder(s) once, apply the categorization rules to each file, and prepare a plan (including optional dry-run mapping) in a single script.
@@ -125,14 +125,14 @@ steps:
     Check the script’s action output:
     - Status should indicate success (no unhandled exception).
     - Ensure stdout includes a summary and a log file path.
-    - If zero files were seen or all were skipped, send a short "send message" explaining that nothing was moved and why (e.g., filters too tight), and ask if the user wants to adjust rules or finish.
-    If the script failed with a clear coding or permission error, briefly explain via "send message" and decide whether to retry with a corrected script or "mark task error".
+    - If zero files were seen or all were skipped, send a short "send_message" explaining that nothing was moved and why (e.g., filters too tight), and ask if the user wants to adjust rules or finish.
+    If the script failed with a clear coding or permission error, briefly explain via "send_message" and decide whether to retry with a corrected script or "mark task error".
 
   name: Review and optionally re-run without dry-run
   description: If a dry-run was requested, let the user review the plan, then optionally repeat the categorization with moves enabled.
   action_instruction: >
     If dry_run was true:
-      - Use "send message" to:
+      - Use "send_message" to:
         - Inform the user that a dry-run mapping has been created.
         - Provide the log file path.
         - Include a small sample of the summary from stdout (e.g., count of planned moves per category).
@@ -144,7 +144,7 @@ steps:
     If a real move run was executed after a dry-run:
       - Confirm from the latest script output that moves actually occurred (non-zero "moved" count).
       - Ensure the latest log file path is clear and will be referenced in the final message.
-    If the user decided to stop after the dry-run, ensure it is clearly noted in a "send message" that the task ended with no file changes.
+    If the user decided to stop after the dry-run, ensure it is clearly noted in a "send_message" that the task ended with no file changes.
 
   name: Final check against definition_of_done
   description: Use the script’s summary and log to verify that the operation meets the agreed criteria without extra scanning.
@@ -170,7 +170,7 @@ steps:
   name: Close task and report to user
   description: Summarize the categorization results, share the log location, and finalize the task status.
   action_instruction: >
-    Use "send message" to deliver a concise final summary:
+    Use "send_message" to deliver a concise final summary:
     - State the task name and that categorization is complete (or that it was a dry-run only).
     - List:
       - Root directory path(s) processed.

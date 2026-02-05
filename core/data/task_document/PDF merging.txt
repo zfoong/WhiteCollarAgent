@@ -25,7 +25,7 @@ context:
     - When only a folder is given, apply a clear, simple rule (e.g., sort by filename) and show that to the user before merging if there is any ambiguity.
     - Use Python (via "create and run python script") and install a lightweight PDF library (e.g., pypdf) inside the script if needed.
     - Perform basic validation at the end: ensure the merged file exists, is non-empty, and has at least as many pages as the total of all input PDFs.
-    - Use "send message" sparingly but clearly: once to confirm parameters, once to present final results.
+    - Use "send_message" sparingly but clearly: once to confirm parameters, once to present final results.
     - Avoid GUI mode; CLI/script is sufficient.
   deadline: {time_left} left until deadline {deadline}
   definition_of_done(check during final validation step):
@@ -33,7 +33,7 @@ context:
     - The number of pages in the merged PDF is equal to the sum of pages from all input PDFs that were successfully processed.
     - The order of input PDFs used for merging matches the user’s specified list or the documented ordering rule.
     - The log at {log_file_path} lists all input PDFs, the applied order, final output path, and a simple status (success/error).
-    - The final "send message" includes a clear summary and the output/log paths.
+    - The final "send_message" includes a clear summary and the output/log paths.
   avoid:
     - Guessing complex ordering rules; if order is unclear, ask once and then keep it simple.
     - Doing multiple passes over the same files when one script can handle discovery, ordering, and merging.
@@ -44,7 +44,7 @@ steps:
   name: Confirm input PDFs and output file
   description: Ensure which PDFs to merge, in what order, and where the merged file should be saved.
   action_instruction: >
-    Use the "send message" action to confirm:
+    Use the "send_message" action to confirm:
     - Whether the user will provide an explicit ordered list of PDF paths (e.g., [{pdf_1_path}, {pdf_2_path}, ...]),
       OR a folder {input_directory} from which all PDFs should be merged.
     - If a folder is used:
@@ -55,7 +55,7 @@ steps:
     - Whether to keep all original PDFs (default) or delete/move them after a successful merge.
     - Whether the user wants a dry-run first (just list the planned merge order and output path, no merge).
     Ask the user to correct or fill in missing items. If a critical detail is unclear (e.g., input order or output path),
-    use "ask question" once with a focused question. After receiving answers, send a short "send message"
+    use "send_message" once with a focused question. After receiving answers, send a short "send_message"
     summarizing the final agreed parameters (inputs, order rule, output path, and whether it's a dry-run).
   validation_instruction: >
     Before proceeding, confirm that:
@@ -65,7 +65,7 @@ steps:
     - {output_pdf_path} is specified (or easily derivable from {merged_file_name} in a known directory, e.g., {workspace_path}).
     - The default behavior for originals (keep vs delete/move) is explicit.
     - Dry-run vs actual merge is decided.
-    If any of these are missing or conflicting, call "ask question" again, then update the summary via "send message".
+    If any of these are missing or conflicting, call "send_message" again, then update the summary via "send_message".
     Proceed only when parameters are clearly confirmed.
 
   name: Resolve and validate input PDF files
@@ -92,10 +92,10 @@ steps:
     Check the script’s status (from "create and run python script"):
     - It should complete without unhandled exceptions.
     - There should be at least one valid input PDF path in the final list.
-    - If any specified PDFs are missing or invalid, send a short "send message" to the user summarizing which ones were skipped.
-    If no valid PDFs remain, inform the user via "send message" and stop the task, or ask for corrected inputs.
+    - If any specified PDFs are missing or invalid, send a short "send_message" to the user summarizing which ones were skipped.
+    If no valid PDFs remain, inform the user via "send_message" and stop the task, or ask for corrected inputs.
     If dry_run was requested solely to preview order:
-      - Use "send message" to show a compact list of the resolved order and ask the user to confirm before actual merging.
+      - Use "send_message" to show a compact list of the resolved order and ask the user to confirm before actual merging.
 
   name: Merge PDFs
   description: Merge the validated input PDF files into a single output PDF in the confirmed order using one script call.
@@ -130,7 +130,7 @@ steps:
     - "MERGE_SUCCESS" should appear in stdout.
     - {output_pdf_path} and {log_file_path} should be mentioned.
     - The reported merged_pages should be >= 1 and ideally equal to total_input_pages (if all inputs were valid).
-    If "MERGE_FAILED" or an error is present, send a short "send message" to the user explaining the error and
+    If "MERGE_FAILED" or an error is present, send a short "send_message" to the user explaining the error and
     decide (with user input if necessary) whether to retry (e.g., after removing a broken PDF) or stop the task.
 
   name: Validate merged PDF (lightweight)
@@ -150,13 +150,13 @@ steps:
     Ensure that:
     - Validation completed without error (PDF was readable).
     - The reported page count makes sense and aligns with expectations.
-    If validation fails, notify the user via "send message" that the merged file appears corrupted or unreadable,
+    If validation fails, notify the user via "send_message" that the merged file appears corrupted or unreadable,
     and mark the task as error or rerun merge if the cause is obvious (e.g., a single problematic input PDF).
 
   name: Close task and report to user
   description: Summarize the merge result, expose relevant paths, and mark the task status.
   action_instruction: >
-    Use "send message" to provide a concise final summary:
+    Use "send_message" to provide a concise final summary:
     - Whether this was a dry-run or an actual merge.
     - The number of input PDFs merged and the final ordered list (possibly abbreviated if long).
     - The final page count of the merged PDF (if available).

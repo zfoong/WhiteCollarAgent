@@ -68,7 +68,7 @@ steps:
   name: Confirm extraction scope and output format
   description: Clarify where to get contact data from (URLs or queries) and what output file to create.
   action_instruction: >
-    Use "send message" to restate and confirm:
+    Use "send_message" to restate and confirm:
     - Whether the user will provide:
       - A list of URLs {target_urls}, or
       - A search query {directory_query} or {company_name} for discovery.
@@ -79,7 +79,7 @@ steps:
       - number of search results per query: {max_results_per_query}.
     - Whether generic emails like info@ or sales@ should be included.
     Ask the user to confirm or correct these. If a critical item is unclear (e.g. URLs vs query, or no output path),
-    use "ask question" to ask a focused question. Once clarified, send a short "send message" summarizing:
+    use "send_message" to ask a focused question. Once clarified, send a short "send_message" summarizing:
     - final list of URLs or search query,
     - main domain filters (if any),
     - output path {output_file_path}.
@@ -87,7 +87,7 @@ steps:
     Ensure that:
     - Either {target_urls} is non-empty OR {directory_query} / {company_name} is provided.
     - {output_file_path} is defined (or a default can be constructed).
-    If not, use "ask question" again. Proceed only when the data source and output path are clear.
+    If not, use "send_message" again. Proceed only when the data source and output path are clear.
 
   name: Discover or finalize target URLs
   description: Produce the final list of URLs to process, either directly from the user or via a simple search.
@@ -101,11 +101,11 @@ steps:
       - From the search results, collect URLs that:
         - match {include_domains} or the main company/domain, and
         - look like contact/directory pages (e.g., URL contains "contact", "team", "directory", "staff", "offices").
-    Assemble the final URL list {final_urls}. If it is empty, send a short "send message" explaining no useful pages were found
+    Assemble the final URL list {final_urls}. If it is empty, send a short "send_message" explaining no useful pages were found
     and ask the user if they want to adjust the query or provide URLs manually.
   validation_instruction: >
     Confirm that {final_urls} is non-empty. If empty:
-      - Inform the user with "send message".
+      - Inform the user with "send_message".
       - Ask if they want to try another query or stop.
     Proceed only when a non-empty {final_urls} has been agreed.
 
@@ -155,7 +155,7 @@ steps:
     - Ensure the script reports non-zero URLs processed (matching the length of {final_urls}).
     - Note the number of final unique contacts reported.
     If the script reports zero contacts:
-      - Send a short "send message" to the user explaining that no contacts were found from these pages
+      - Send a short "send_message" to the user explaining that no contacts were found from these pages
         and ask if they want to adjust inputs or accept the empty result.
 
   name: Validate extracted file and basic data quality
@@ -169,18 +169,18 @@ steps:
         - at least email or phone filled for rows (skip header).
       - Optionally count how many rows are present (excluding header).
     If severe issues are detected (e.g., file missing, format broken), explain briefly to the user
-    using "send message" and decide whether to re-run extraction or "mark task error".
+    using "send_message" and decide whether to re-run extraction or "mark task error".
   validation_instruction: >
     Confirm:
     - {output_file_path} exists.
     - At least the header row is present.
     - There is no obvious corruption (e.g., single giant line with no delimiters).
-    If everything looks reasonable, proceed. If not, notify the user with "send message" and consider re-running or ending with error.
+    If everything looks reasonable, proceed. If not, notify the user with "send_message" and consider re-running or ending with error.
 
   name: Close task and report to user
   description: Summarize the extraction results and mark the task status.
   action_instruction: >
-    Use "send message" to provide a short summary including:
+    Use "send_message" to provide a short summary including:
     - Number of URLs processed (from {final_urls}).
     - Number of contacts found before and after deduplication.
     - Any notable patterns (e.g., mostly generic emails, few phone numbers).

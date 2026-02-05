@@ -61,7 +61,7 @@ steps:
   name: Confirm portal workflow and inputs
   description: Clarify the portal, authentication method, target section, and data to be submitted so that the workflow is unambiguous.
   action_instruction: >
-    Use the "send message" action to summarize what is needed and show the current understanding:
+    Use the "send_message" action to summarize what is needed and show the current understanding:
     - {portal_url} or portal name.
     - Auth method: username/password, SSO, or API token.
     - Target section or direct URL (e.g., “Where in the portal should this be submitted?”).
@@ -69,21 +69,21 @@ steps:
     - Any files to upload with explicit paths in the workspace, such as {upload_file_path}.
     - Whether this is a one-off submission or part of a repeating workflow (for this task, just perform the current run).
     Ask the user to confirm or correct this information. If anything critical is missing or unclear (for example, the target section URL or how to interpret a data field),
-    use "ask question" with a focused prompt (e.g., "What is the exact path in the portal where this file should be uploaded?").
-    Once the user responds, send a short "send message" restating the final parameters in a compact checklist.
+    use "send_message" with a focused prompt (e.g., "What is the exact path in the portal where this file should be uploaded?").
+    Once the user responds, send a short "send_message" restating the final parameters in a compact checklist.
   validation_instruction: >
     Ensure that:
     - A portal URL {portal_url} and a description of the target section ({target_section_path} or {target_section_url}) are provided.
     - Authentication details are clearly defined (which credentials or token to use).
     - Required fields and upload files are listed with values and valid-looking paths.
-    If any of these are missing, use "ask question" again. Proceed only when the user has confirmed the workflow details.
+    If any of these are missing, use "send_message" again. Proceed only when the user has confirmed the workflow details.
 
   name: Prepare data and environment
   description: Verify that input files and data are available and choose the interaction mode (GUI vs HTTP) based on user input.
   action_instruction: >
     - If files need to be uploaded:
       - Use "list folder" or, when needed, "find file by name" to ensure that each {upload_file_path} exists in the workspace or under {target_directory}.
-      - If a file is missing, use "send message" to inform the user and ask if they can provide or regenerate it.
+      - If a file is missing, use "send_message" to inform the user and ask if they can provide or regenerate it.
     - If structured data is provided in a local file (e.g., {data_file_path}), and you need to extract specific values:
       - Use "read word file", "read pdf file", or "summarize file content" only if necessary to locate a field; otherwise rely on direct user-provided values.
     - Decide interaction mode:
@@ -95,7 +95,7 @@ steps:
     - All required upload files exist (or the user has been informed if any are missing).
     - Interaction mode is clearly chosen (GUI or HTTP) based on the user’s preference and available details.
     - GUI mode is active if you are going to operate a browser-based workflow.
-    If critical prerequisites (like necessary files) cannot be satisfied, explain this via "send message" and either ask for new input or prepare to "mark task error".
+    If critical prerequisites (like necessary files) cannot be satisfied, explain this via "send_message" and either ask for new input or prepare to "mark task error".
 
   name: Authenticate to the portal
   description: Log into the portal (or authenticate via API) using the provided credentials or tokens.
@@ -106,7 +106,7 @@ steps:
       - Submit the login form using the visible login button.
       - If SSO is used:
         - Follow the on-screen prompts to select the appropriate IdP and continue until the portal’s main dashboard or landing page is visible.
-      - If 2FA or additional verification appears (e.g., code sent via SMS/email), use "ask question" to request the code from the user, then enter it and continue.
+      - If 2FA or additional verification appears (e.g., code sent via SMS/email), use "send_message" to request the code from the user, then enter it and continue.
     - For API-based authentication:
       - Use "send HTTP requests" to call the specified auth endpoint with the provided credentials or token headers.
       - Store any returned session token or cookie in a variable for subsequent calls within the same action.
@@ -115,7 +115,7 @@ steps:
       - Confirm that a post-login page or dashboard is visible (e.g., no login error message is present; the URL or page title indicates successful login).
     - For API:
       - Confirm that the HTTP response status is 2xx and that any required session token is present.
-    If login fails (incorrect credentials, expired token, or unexpected errors), inform the user with "send message",
+    If login fails (incorrect credentials, expired token, or unexpected errors), inform the user with "send_message",
     ask for updated details if appropriate, and retry once if the user provides corrected information. If repeated failures occur, consider "mark task error" with explanation.
 
   name: Navigate to target submission page
@@ -130,7 +130,7 @@ steps:
       - Use "send HTTP requests" with a GET call to the provided submission endpoint (if necessary) to confirm that it is reachable and returns the expected structure or status.
   validation_instruction: >
     - Ensure that the page or endpoint clearly corresponds to the requested submission location (e.g., correct title, headings, or form labels).
-    - If it appears that the wrong section is open, use "send message" to briefly describe what you see and ask the user whether it matches their expectations or if they can provide a more precise path or link.
+    - If it appears that the wrong section is open, use "send_message" to briefly describe what you see and ask the user whether it matches their expectations or if they can provide a more precise path or link.
 
   name: Enter data, upload files, and submit
   description: Fill the required fields, upload any necessary files, and submit the form or API request.
@@ -170,13 +170,13 @@ steps:
       - Reached the correct section.
       - Entered/uploaded the specified data.
       - Received confirmation from the portal or API.
-    - If any major step failed (e.g., could not reach section, submission rejected), send a "send message" explaining the failure and whether anything was partially submitted, then consider if a retry or correction is reasonable within this task.
+    - If any major step failed (e.g., could not reach section, submission rejected), send a "send_message" explaining the failure and whether anything was partially submitted, then consider if a retry or correction is reasonable within this task.
   # This step uses the global definition_of_done above; no separate validation_instruction is needed.
 
   name: Close task and report to user
   description: Provide a concise summary of the portal workflow outcome and mark the task status.
   action_instruction: >
-    Use "send message" to give a brief summary that includes:
+    Use "send_message" to give a brief summary that includes:
     - The portal name and {portal_url}.
     - The section where data was submitted (e.g., {target_section_path}).
     - A list or short description of what was submitted (key fields and file names like {upload_file_name}).

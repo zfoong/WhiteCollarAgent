@@ -68,7 +68,7 @@ steps:
   name: Confirm sync scope and rules
   description: Clarify which directories to sync, the direction of sync, and conflict/deletion behavior. Keep this confirmation concise and explicit.
   action_instruction: >
-    Use the "send message" action to restate the planned sync in simple terms and ask the user to confirm or correct:
+    Use the "send_message" action to restate the planned sync in simple terms and ask the user to confirm or correct:
     - Directories involved, e.g., {source_dir} and {target_dir}, or {dir_a} and {dir_b}.
     - Sync mode: "one-way" ({source_dir} → {target_dir}) or "two-way" ({dir_a} ↔ {dir_b}).
     - Conflict policy for files changed on both sides: "newer-wins", "source-wins", "target-wins", or "skip".
@@ -79,9 +79,9 @@ steps:
       - "mirror" (delete files that exist only on one side according to the sync mode).
     - Whether a dry-run is desired before applying real changes.
     - Any safety caps such as maximum files or total size to modify.
-    If any of these are unclear or missing (e.g., user did not specify conflict policy), use "ask question" with a focused
+    If any of these are unclear or missing (e.g., user did not specify conflict policy), use "send_message" with a focused
     question (e.g., "When the same file is changed in both places, should the newer one win or should we skip?").
-    After receiving the user’s replies, send a short "send message" summarizing the final parameters
+    After receiving the user’s replies, send a short "send_message" summarizing the final parameters
     (e.g., "Sync {source_dir} → {target_dir}, recursive, newer-wins, copy-only, dry_run={dry_run_flag}").
   validation_instruction: >
     Confirm that:
@@ -151,14 +151,14 @@ steps:
       - Verify that actions are "would_*" variants and that no indications of actual file modification appear in stdout.
     For actual run:
       - Verify that at least some actions ("copy_*", "delete_*") are reported if the user expected changes.
-    If the script failed globally or produced obviously inconsistent counts, explain this via "send message" and either
+    If the script failed globally or produced obviously inconsistent counts, explain this via "send_message" and either
     correct the script and rerun, or prepare to "mark task error" if it cannot be fixed simply.
 
   name: (Optional) Execute real sync after dry-run
   description: If the user requested a dry-run first, optionally rerun the sync script with dry_run disabled using the same parameters.
   action_instruction: >
     If the initial run was a dry-run:
-      - Use "send message" to:
+      - Use "send_message" to:
         - Inform the user that the dry-run has completed.
         - Provide a short summary: number of files that would be copied/deleted/skipped, approximate total bytes affected,
           and the log file path.
@@ -193,7 +193,7 @@ steps:
   name: Close task and report to user
   description: Summarize the sync operation (or dry-run), share the log location, and mark task status.
   action_instruction: >
-    Use "send message" to give a concise final summary:
+    Use "send_message" to give a concise final summary:
     - Directories synchronized: list {dir_a}, {dir_b}, and any additional locations.
     - Sync mode and conflict policy used.
     - Deletion behavior ("copy-only" or "mirror").

@@ -69,7 +69,7 @@ steps:
   name: Confirm template and data inputs
   description: Make sure the agent has a clear template source and all key data fields needed to fill the contract.
   action_instruction: >
-    Use "send message" to confirm:
+    Use "send_message" to confirm:
     - {template_path} or {template_name} and where it is stored (e.g., "{template_directory}" or workspace).
     - Whether the template is .docx, .txt, or .md (if not obvious from extension).
     - The key fields for the contract:
@@ -79,8 +79,8 @@ steps:
     - Desired formats:
       - docx only, text/markdown only, or docx + pdf.
     - Whether unknown placeholders should be left unchanged or treated as an error.
-    Ask the user to fill any missing mandatory fields (e.g., effective date or party names) using "ask question" where necessary, each focused on one missing item.
-    Once they respond, send a concise "send message" summarizing:
+    Ask the user to fill any missing mandatory fields (e.g., effective date or party names) using "send_message" where necessary, each focused on one missing item.
+    Once they respond, send a concise "send_message" summarizing:
     - Template: {template_path}
     - Output directory: {output_directory}
     - Output formats: {output_format}
@@ -92,25 +92,25 @@ steps:
       - {party_A_name}, {party_B_name}, {project_name}, {effective_date}
     - An {output_directory} is known (e.g., workspace or a specific folder).
     - At least one output format is chosen (docx and/or pdf or text).
-    If any of these are missing, use "ask question" to obtain them and do not move on until they are clearly defined.
+    If any of these are missing, use "send_message" to obtain them and do not move on until they are clearly defined.
 
   name: Locate and verify template file
   description: Check that the template file exists and is readable, and optionally inspect for placeholder patterns.
   action_instruction: >
     Use "find file by name" or "list folder" as needed:
     - If the user gave an exact {template_path}, you can skip searching and just rely on that path.
-    - Otherwise, use "find file by name" with {template_name} (e.g., "service_agreement_template*.docx") and confirm the resolved path via "send message".
+    - Otherwise, use "find file by name" with {template_name} (e.g., "service_agreement_template*.docx") and confirm the resolved path via "send_message".
     Once the path {template_path} is known:
     - If it's a .docx file and confirmation is needed, you may use "read word file" to extract text and quickly verify that expected placeholders
       like {PARTY_A_NAME}, {PARTY_B_NAME}, {PROJECT_NAME}, {EFFECTIVE_DATE} are present in the content.
     - If it's a .txt or .md file, you can also read it via a short "create and run python script" or similar to verify placeholders.
-    If the file is missing or unreadable, send a short "send message" explaining the issue and ask the user to correct {template_path}.
+    If the file is missing or unreadable, send a short "send_message" explaining the issue and ask the user to correct {template_path}.
   validation_instruction: >
     Confirm that:
     - {template_path} points to an existing file with an expected extension (.docx, .txt, .md).
     - The file is readable (no permission errors).
     - At least a subset of expected placeholder tokens is present (e.g., {PARTY_A_NAME}, {PARTY_B_NAME}, {PROJECT_NAME}).
-    If the template cannot be found or appears to contain no placeholders at all, notify the user via "send message" and either:
+    If the template cannot be found or appears to contain no placeholders at all, notify the user via "send_message" and either:
     - Ask them to provide a corrected template, or
     - Use "mark task error" if they cannot supply a usable template.
 
@@ -153,7 +153,7 @@ steps:
     - status should indicate success, or at least no unhandled exceptions.
     - stdout should mention output_contract_path.
     - If the script reported unresolved placeholders and unknown_placeholder_behavior was "error", treat this as a problem:
-      - Use "send message" to show the list of unresolved tokens and ask the user whether to:
+      - Use "send_message" to show the list of unresolved tokens and ask the user whether to:
         - Provide values for them, or
         - Accept leaving them unchanged and rerun with unknown_placeholder_behavior="leave".
     If the script completed successfully and output_contract_path exists, proceed to the optional PDF step (if requested) or directly to final validation.
@@ -175,7 +175,7 @@ steps:
     Verify that:
     - The PDF conversion action returns a success status.
     - {output_pdf_path} is non-empty and reported by the action.
-    If conversion fails, inform the user via "send message" and let them know that the docx/text contract is still available; they may choose to retry or accept only the primary format.
+    If conversion fails, inform the user via "send_message" and let them know that the docx/text contract is still available; they may choose to retry or accept only the primary format.
 
   name: Final check and report to user
   description: Perform a minimal final validation and inform the user where the generated contract(s) are stored, then close the task.
@@ -183,7 +183,7 @@ steps:
     Perform a simple final check using "create and run python script" or "shell view" if needed:
       - Confirm that {output_contract_path} exists.
       - If requested, confirm that {output_pdf_path} exists.
-    Then use "send message" to give the user a concise summary:
+    Then use "send_message" to give the user a concise summary:
       - Template used: {template_path}
       - Parties: {party_A_name} and {party_B_name}
       - Project: {project_name}

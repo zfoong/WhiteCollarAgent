@@ -62,7 +62,7 @@ steps:
   name: Confirm search scope and criteria
   description: Clarify exactly what the user wants to find, where to search, and any simple filters to apply.
   action_instruction: >
-    Use the "send message" action to summarize what is needed:
+    Use the "send_message" action to summarize what is needed:
     - Root directory/ies: {root_paths} (e.g., "C:\Users\{user}\Documents", "D:\Projects").
     - Target type: {target_type} ("file", "folder", or "both").
     - Name keyword/pattern: {keyword_pattern} (for example, "*{keyword}*").
@@ -72,15 +72,15 @@ steps:
       - Simple exclude substrings (e.g., "backup", ".git"),
       - Simple size or modified-time filters if user cares.
     Ask the user to confirm or adjust these details. If a critical element is missing (e.g., no root path or keyword),
-    use "ask question" with a focused prompt such as "What is the root folder I should start searching from?"
-    Once confirmed, send a brief "send message" summarizing the final search parameters for this task (so they are recorded in the event stream).
+    use "send_message" with a focused prompt such as "What is the root folder I should start searching from?"
+    Once confirmed, send a brief "send_message" summarizing the final search parameters for this task (so they are recorded in the event stream).
   validation_instruction: >
     Ensure:
     - At least one {root_path} string is provided.
     - A non-empty {keyword} or {keyword_pattern} is provided.
     - {target_type} is one of "file", "folder", or "both".
     - {recursive_flag} is known (default to true if the user does not care).
-    If any of these are missing or unclear, use "ask question" again and do not proceed until they are confirmed.
+    If any of these are missing or unclear, use "send_message" again and do not proceed until they are confirmed.
 
   name: Run name-based search
   description: Use the built-in file search action(s) to find matching files/folders by name under the specified root path(s).
@@ -96,9 +96,9 @@ steps:
   validation_instruction: >
     Check the "find file by name" action outputs:
     - Confirm calls succeed (status is OK and there are no critical errors).
-    - If all roots fail (e.g., invalid paths), use "send message" to explain that no valid roots were found and ask the user to correct {root_paths}; if still invalid, consider "mark task error".
+    - If all roots fail (e.g., invalid paths), use "send_message" to explain that no valid roots were found and ask the user to correct {root_paths}; if still invalid, consider "mark task error".
     - If zero matches are found:
-      - Use "send message" to report that nothing matched {keyword_pattern} under {root_paths} and ask if the user wants to adjust the pattern, root, or filters.
+      - Use "send_message" to report that nothing matched {keyword_pattern} under {root_paths} and ask if the user wants to adjust the pattern, root, or filters.
       - If the user decides not to adjust, the task can still be completed as "search performed, no matches."
 
   name: Apply optional property filters (size/time/type)
@@ -120,7 +120,7 @@ steps:
     - Verify that stdout reports:
       - Total raw matches,
       - Total filtered matches.
-    - If the result set becomes empty after filtering, note this in a "send message" so the user understands that matches existed by name but did not meet the additional criteria.
+    - If the result set becomes empty after filtering, note this in a "send_message" so the user understands that matches existed by name but did not meet the additional criteria.
     If no filters were used, validation is just confirming that the raw match list exists.
 
   name: Overall validate search results
@@ -139,7 +139,7 @@ steps:
   name: Close task and report to user
   description: Present the search results to the user, optionally link to a full log, and mark the task status.
   action_instruction: >
-    Use "send message" to give a concise summary:
+    Use "send_message" to give a concise summary:
     - Root path(s) searched: {root_paths}.
     - Target type: {target_type}.
     - Name keyword/pattern: {keyword_pattern}.

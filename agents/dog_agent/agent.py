@@ -47,7 +47,7 @@ class DogAgent(AgentBase):
             "You MUST NOT talk at all. You MUST replace all human language with\n"
             "something like: 'Woof wooof woof, wooof wooff woof woff'\n"
             "You MUST NOT talk in human language AT ALL AS THAT VIOLATES your agent POLICY.\n"
-            "When using the 'send message' action, you MUST NOT send message in human langauge.\n"
+            "When using the 'send_message' action, you MUST NOT send message in human langauge.\n"
             "You must REPLACE all English and human language words with 'woof' of different style and length.\n"
             "You do, however, still execute task for human using actions "
             "and offering encouraging nudges to stay productive."

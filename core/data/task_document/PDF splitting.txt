@@ -66,7 +66,7 @@ steps:
   name: Confirm PDFs and splitting rule
   description: Ensure the agent knows exactly which PDFs to split, how to split them, where to save outputs, and whether to keep or remove originals.
   action_instruction: >
-    Use "send message" to restate and confirm the key parameters with the user:
+    Use "send_message" to restate and confirm the key parameters with the user:
     - Source PDFs: either explicit paths ({source_pdf_paths}) or a single directory {source_directory}
       (optionally with recursion into subfolders).
     - Splitting rule: one of:
@@ -78,16 +78,16 @@ steps:
     - Output naming pattern: {output_name_pattern}, or confirm default "{base_name}_part_{index}.pdf".
     - Whether to keep or delete original PDFs after successful splitting.
     - Any safety limit (e.g., "stop if more than {max_output_files} outputs would be created").
-    If any of these are unclear or missing, use "ask question" with a focused question (for example,
+    If any of these are unclear or missing, use "send_message" with a focused question (for example,
     "Should I split {source_pdf_path} into one file per page, or into chunks of {pages_per_chunk} pages?").
-    Once clarified, send a brief "send message" summarizing the final agreed parameters so they are explicit.
+    Once clarified, send a brief "send_message" summarizing the final agreed parameters so they are explicit.
   validation_instruction: >
     Before proceeding:
     - Check that at least one source specification is provided (either {source_pdf_paths} or {source_directory}).
     - Check that the splitting rule is concrete (e.g., pages_per_chunk is a positive integer, page_ranges are valid strings).
     - Check that {output_directory} is defined.
     - If deletion of originals is requested, double-check with the user in the confirmation summary.
-    If any required element is missing or ambiguous, do not continue; ask again using "ask question".
+    If any required element is missing or ambiguous, do not continue; ask again using "send_message".
 
   name: Locate source PDFs (if using directory)
   description: When a directory is given instead of explicit paths, resolve which PDF files to process.
@@ -105,7 +105,7 @@ steps:
       - Use the resulting list as the internal set {resolved_source_pdfs}.
   validation_instruction: >
     Check the script output:
-    - If zero PDFs are found, send a "send message" telling the user that no PDFs were discovered under {source_directory}
+    - If zero PDFs are found, send a "send_message" telling the user that no PDFs were discovered under {source_directory}
       and ask whether to adjust the directory or stop.
     - If one or more PDFs are found, proceed and treat them as {resolved_source_pdfs}.
     - If the directory does not exist or cannot be read, inform the user and ask for a corrected path or decide to cancel.
@@ -169,13 +169,13 @@ steps:
     Verify that:
       - The number of outputs created is reasonable (not zero unless the user expected it).
       - Errors are present only for specific problem files and are clearly recorded.
-    If the log or counts look obviously wrong (e.g., zero created outputs while the script claimed success), inform the user via "send message" and, if necessary, mark the task as error or rerun after user guidance.
+    If the log or counts look obviously wrong (e.g., zero created outputs while the script claimed success), inform the user via "send_message" and, if necessary, mark the task as error or rerun after user guidance.
   # Simple log-based validation is sufficient; no extra PDF reads are needed here.
 
   name: Close task and report to user
   description: Summarize what was done, provide key paths, and mark the task status.
   action_instruction: >
-    Use "send message" to provide a short final summary:
+    Use "send_message" to provide a short final summary:
     - Source PDFs processed (either list a few names or the directory {source_directory}).
     - Splitting rule used (pages_per_chunk, per-page, or page_ranges, etc.).
     - Whether originals were preserved or deleted.

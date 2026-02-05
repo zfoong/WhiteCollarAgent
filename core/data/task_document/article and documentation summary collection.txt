@@ -35,7 +35,7 @@ context:
     - If only queries are provided, use "google search" (or "google search batch" for multiple {query_list}) once to resolve each query into one or a few URLs, then treat them like normal sources.
     - Avoid complex multi-phase flows; summarization is done directly from the cleaned content without extra intermediate files unless needed.
     - Use "create text file" exactly once (or a small number of times) to write the final reference document to {summary_doc_path}.
-    - Use "send message" to confirm parameters briefly and to deliver the final result.
+    - Use "send_message" to confirm parameters briefly and to deliver the final result.
   deadline: {time_left} left until deadline {deadline}
   definition_of_done(check during final validation step):
     - Every URL or search-derived source that could be fetched has a corresponding section in the reference document (or is explicitly noted as failed).
@@ -61,7 +61,7 @@ steps:
   name: Confirm sources and output preferences
   description: Make sure the agent knows which pages or queries to use and how the user wants the reference document produced.
   action_instruction: >
-    Use "send message" to restate and confirm:
+    Use "send_message" to restate and confirm:
     - Whether the user is providing:
       - A list of URLs {url_list}, or
       - One or more queries {query_list} to search for articles/documentation.
@@ -70,9 +70,9 @@ steps:
     - The desired output file path and format (default {summary_doc_path} as a .md file in the workspace).
     - Whether short quotes or code snippets should be included, or just high-level summaries.
     Ask the user to confirm or adjust the above. If any critical information is missing
-    (for example, neither URLs nor queries are provided), use "ask question" with a focused prompt
+    (for example, neither URLs nor queries are provided), use "send_message" with a focused prompt
     such as "Please provide one or more URLs or a search query for the documentation/articles you want summarized."
-    Once clarified, send a brief "send message" summarizing the final agreed inputs (sources and output path).
+    Once clarified, send a brief "send_message" summarizing the final agreed inputs (sources and output path).
   validation_instruction: >
     Ensure that:
     - At least one URL in {url_list} or one query in {query_list} is available.
@@ -90,12 +90,12 @@ steps:
         - num_results set to a small number (e.g., 3–5 per query).
       - From the search_results, select the most relevant URLs per query (e.g., the first result or results that clearly look like docs/articles).
       - Construct a final {resolved_url_list} from all chosen URLs, respecting {max_sources} if set.
-      - Optionally send a short "send message" with a brief list of selected URLs so the user can see what will be summarized.
+      - Optionally send a short "send_message" with a brief list of selected URLs so the user can see what will be summarized.
   validation_instruction: >
     Confirm that:
     - {resolved_url_list} is non-empty after searching.
     - The number of selected URLs does not exceed {max_sources}, if provided.
-    - If no usable URLs were found, send a short "send message" explaining that the search did not return suitable articles/docs and ask the user to provide URLs directly or refine queries. If the user does not provide new input, the task may be "mark task cancel" with a clear reason.
+    - If no usable URLs were found, send a short "send_message" explaining that the search did not return suitable articles/docs and ask the user to provide URLs directly or refine queries. If the user does not provide new input, the task may be "mark task cancel" with a clear reason.
 
   name: Fetch page content and extract per-source summaries
   description: For each URL, fetch the cleaned page content and extract a short, structured summary suitable for inclusion in the reference document.
@@ -126,7 +126,7 @@ steps:
       - A title (or a reasonable placeholder like "Untitled {index}"),
       - A URL,
       - A non-empty list of bullet points.
-    - If all sources failed, send a "send message" explaining that none of the pages could be fetched or parsed and suggest that the user check the URLs.
+    - If all sources failed, send a "send_message" explaining that none of the pages could be fetched or parsed and suggest that the user check the URLs.
       If no recovery is possible, consider "mark task error" with a short explanation.
 
   name: Create reference summary document
@@ -151,12 +151,12 @@ steps:
     - Status indicates success.
     - The returned path matches {summary_doc_path}.
     Optionally, if needed, use "shell view" or a quick "create and run python script" to check that the file is non-empty.
-    If file creation fails (e.g., invalid path), send a "send message" explaining the issue and ask the user for a different output path. Retry once if the user provides a new path; otherwise, consider "mark task error" with a short explanation.
+    If file creation fails (e.g., invalid path), send a "send_message" explaining the issue and ask the user for a different output path. Retry once if the user provides a new path; otherwise, consider "mark task error" with a short explanation.
 
   name: Close task and report to user
   description: Summarize what was done, provide the location of the reference document, and mark the task status.
   action_instruction: >
-    Use "send message" to provide a concise final summary including:
+    Use "send_message" to provide a concise final summary including:
     - The number of URLs or sources processed.
     - The number of successful summaries vs. failed or skipped sources.
     - The topic or label {topic}, if used.

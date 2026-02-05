@@ -26,8 +26,8 @@ from core.event_stream.event_stream_manager import EventStreamManager
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
-from core.task.task import Step
 from core.gui.handler import GUIHandler
+from decorators.profiler import profile, OperationCategory
 
 nest_asyncio.apply()
 
@@ -77,6 +77,7 @@ class ActionManager:
     # Public helpers
     # ------------------------------------------------------------------
 
+    @profile("action_manager_execute_action", OperationCategory.ACTION_EXECUTION)
     async def execute_action(
         self,
         action: Action,
@@ -160,7 +161,7 @@ class ActionManager:
                 is_gui_task=is_gui_task,
                 event_type="action_start",
                 event=f"Running action {action.name} with input: {input_data}.",
-                display_message=f"Running {action.name}",
+                display_message=f"Running {action.display_name}",
                 action_name=action.name,
             )
             
@@ -240,9 +241,19 @@ class ActionManager:
                 is_gui_task=is_gui_task,
                 event_type="action_end",
                 event=f"Action {action.name} completed with output: {outputs}.",
-                display_message=f"{action.name} → {display_status}",
+                display_message=f"{action.display_name} → {display_status}",
                 action_name=action.name,
             )
+
+            # Emit waiting_for_user event if action requested to wait for user reply
+            if outputs and outputs.get("wait_for_user_reply", False):
+                self._log_event_stream(
+                    is_gui_task=is_gui_task,
+                    event_type="waiting_for_user",
+                    event="Agent is waiting for user response.",
+                    display_message=None,  # No display message - handled by TUI status bar only
+                    action_name=action.name,
+                )
 
             # current_step: Optional[Step] = self.state_manager.get_current_step()
             # if current_step:
@@ -327,6 +338,7 @@ class ActionManager:
     # Action execution primitives (unchanged)
     # ------------------------------------------------------------------
 
+    @profile("action_manager_execute_atomic_action", OperationCategory.ACTION_EXECUTION)
     async def execute_atomic_action(self, action: Action, input_data: dict):
         try:
             output = await self.executor.execute_action(action, input_data)
@@ -387,6 +399,7 @@ class ActionManager:
             logger.debug("Recovered JSON payload from action output.")
             return parsed
 
+    @profile("action_manager_execute_divisible_action", OperationCategory.ACTION_EXECUTION)
     async def execute_divisible_action(self, action, input_data, parent_id):
         results = {}
         for sub in action.sub_actions:
@@ -399,6 +412,7 @@ class ActionManager:
             )
         return results
     
+    @profile("action_manager_run_observe_step", OperationCategory.ACTION_EXECUTION)
     async def run_observe_step(self, action: Action, action_output: dict) -> Dict[str, Any]:
         """
         Executes the observation code with retries, to confirm action outcome.

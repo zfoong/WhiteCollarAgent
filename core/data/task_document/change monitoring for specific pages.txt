@@ -79,7 +79,7 @@ steps:
   name: Confirm monitoring configuration
   description: Ensure the list of pages and how they should be monitored are clear before any network calls.
   action_instruction: >
-    Use the "send message" action to briefly summarize and confirm:
+    Use the "send_message" action to briefly summarize and confirm:
     - {urls}: list of pages to monitor.
     - {monitoring_root}: base folder for baselines, snapshots, and logs (e.g., {monitoring_root}/baselines, {monitoring_root}/snapshots, {monitoring_root}/logs).
     - {monitoring_targets}: what parts of the pages matter (e.g., “main body text”, “price block”, “specific phrase(s)”).
@@ -89,14 +89,14 @@ steps:
     - Any {change_sensitivity} options (ignore whitespace-only changes, ignore case).
     - Any content limits ({max_chars_per_page}) to keep snapshots small.
     - Whether to automatically update the baseline when a change is detected (default: update baseline).
-    If anything is unclear or missing (especially {urls} or {monitoring_root}), use "ask question" with a focused query.
-    Once confirmed, send a short "send message" recap so the configuration is explicit in the task history.
+    If anything is unclear or missing (especially {urls} or {monitoring_root}), use "send_message" with a focused query.
+    Once confirmed, send a short "send_message" recap so the configuration is explicit in the task history.
   validation_instruction: >
     Verify that:
     - {urls} is non-empty.
     - {monitoring_root} is specified.
     - {monitoring_targets} is at least minimally defined (even if it means "monitor overall page text").
-    If any of these are missing or ambiguous, call "ask question" again and wait for a clear answer before proceeding.
+    If any of these are missing or ambiguous, call "send_message" again and wait for a clear answer before proceeding.
 
   name: Run monitoring script (fetch, compare, update)
   description: Use a single Python script to fetch all pages, compare them to baselines, write logs, and maintain snapshots.
@@ -159,7 +159,7 @@ steps:
     - status should indicate success (no unhandled exception).
     - stdout should show counts for baseline_created, changed, unchanged, and errors.
     - stdout should show the log file path and the baseline/snapshot directories.
-    If the script fails globally, use "send message" to briefly explain the failure and decide whether to retry
+    If the script fails globally, use "send_message" to briefly explain the failure and decide whether to retry
     with a fixed script or to "mark task error" if it cannot be resolved within reasonable effort.
 
   name: Overall validate monitoring run
@@ -180,7 +180,7 @@ steps:
   name: Close task and report to user
   description: Summarize the monitoring results, tell the user where artifacts are stored, and mark task status.
   action_instruction: >
-    Use "send message" to provide a concise summary including:
+    Use "send_message" to provide a concise summary including:
     - The number of pages processed ({total_urls}).
     - Counts:
       - baseline_created: {num_baseline_created}

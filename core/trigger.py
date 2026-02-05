@@ -14,9 +14,10 @@ from dataclasses import dataclass, field
 from collections import defaultdict, OrderedDict
 from typing import Dict, List, Optional, Any
 from core.logger import logger
-from core.llm_interface import LLMInterface
+from core.llm import LLMInterface
 from core.state.agent_state import STATE
 from core.prompt import CHECK_TRIGGERS_STATE_PROMPT
+from decorators.profiler import profile, OperationCategory
 
 # ─────────────────────────── Data class ─────────────────────────────
 @dataclass(order=True)
@@ -73,16 +74,6 @@ class TriggerQueue:
             )
         logger.debug("=" * 70 + "\n")
 
-    def create_conversation_history_state(self):
-        """Return formatted conversation history for trigger comparison."""
-        conversation_state = STATE.conversation_state
-        if conversation_state:
-            return (
-                "This is the conversation history (from oldest to newest messages):"
-                f"\n{conversation_state}"
-            )
-        return "There is no stored conversation history for the current session yet."
-
     def create_event_stream_state(self):
         """Return formatted event stream content for trigger comparison."""
         event_stream = STATE.event_stream
@@ -97,20 +88,30 @@ class TriggerQueue:
         """Return formatted task/plan context for trigger comparison."""
         current_task: Optional[Task] = STATE.current_task
         if current_task:
-            current_task_dict: Dict[str, Any] = current_task.to_dict(fold=False, current_step_index=STATE.agent_properties.get_property("current_step_index"))
-            return "The plan of the current on-going task:" + f"\n{json.dumps(current_task_dict, indent=4)}"
+            # Format task in LLM-friendly way (matching context_engine format)
+            lines = [
+                "<current_task>",
+                f"Task: {current_task.name}",
+                f"Instruction: {current_task.instruction}",
+                "",
+                "Todos:",
+            ]
+
+            if current_task.todos:
+                for todo in current_task.todos:
+                    if todo.status == "completed":
+                        checkbox = "[x]"
+                    elif todo.status == "in_progress":
+                        checkbox = "[>]"
+                    else:
+                        checkbox = "[ ]"
+                    lines.append(f"{checkbox} {todo.content}")
+            else:
+                lines.append("(no todos yet)")
+
+            lines.append("</current_task>")
+            return "\n".join(lines)
         return ""
-
-    def create_system_agent_state(self):
-        """Compose session context for trigger handling from component states."""
-
-        sections = [
-            self.create_conversation_history_state(),
-            self.create_event_stream_state(),
-            self.create_task_state(),
-        ]
-
-        return "\n\n".join([section for section in sections if section])
 
     async def clear(self) -> None:
         """
@@ -127,6 +128,7 @@ class TriggerQueue:
     # =================================================================
     # PUT
     # =================================================================
+    @profile("trigger_queue_put", OperationCategory.TRIGGER)
     async def put(self, trig: Trigger) -> None:
         """
         Insert a trigger into the queue, merging with existing session triggers.
@@ -146,14 +148,20 @@ class TriggerQueue:
 
         if len(existing_triggers) > 0:
 
-            sys_msg = f"Existing Context: {self.create_system_agent_state()}"
+            # KV CACHING: System prompt is now minimal/static
+            # Dynamic context moved to user prompt
+            sys_msg = "You are a trigger management system."
+
             # If heap empty → push directly
             if not existing_triggers:
                 existing_triggers.append(trig)
             else:
                 logger.debug("[TRIGGER QUEUE] Heap not empty → ignoring new trigger for LLM comparison")
 
+            # KV CACHING: Add dynamic context to user prompt
             usr_msg = CHECK_TRIGGERS_STATE_PROMPT.format(
+                event_stream=self.create_event_stream_state(),
+                task_state=self.create_task_state(),
                 context=trig,
                 existing_triggers=existing_triggers,
             )
@@ -193,6 +201,7 @@ class TriggerQueue:
     # =================================================================
     # GET
     # =================================================================
+    @profile("trigger_queue_get", OperationCategory.TRIGGER)
     async def get(self) -> Trigger:
         """
         Retrieve the next trigger to execute, waiting until one is ready.

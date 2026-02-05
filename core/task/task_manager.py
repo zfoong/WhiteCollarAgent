@@ -1,13 +1,19 @@
-import json, time, uuid
+# -*- coding: utf-8 -*-
+"""
+Simplified TaskManager for todo-based task tracking.
+
+This replaces the complex step-based workflow with a simple todo list
+mechanism. The agent manages todos directly without LLM-based planning.
+"""
+
+import uuid
 import shutil
-from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
-from dataclasses import asdict
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 import re
 
-from core.task.task_planner import TaskPlanner
-from core.task.task import Task, Step
-from core.trigger import TriggerQueue, Trigger
+from core.task.task import Task
+from core.todo.todo import TodoItem
 from core.logger import logger
 from core.database_interface import DatabaseInterface
 from core.event_stream.event_stream_manager import EventStreamManager
@@ -15,35 +21,29 @@ from core.config import AGENT_WORKSPACE_ROOT
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 
+
 class TaskManager:
+    """
+    Simplified task manager using todo-based tracking.
+
+    Coordinates task lifecycle without complex step planning or triggers.
+    The agent directly manages the todo list via update_todos().
+    """
+
     def __init__(
         self,
-        task_planner: TaskPlanner,
-        triggers: TriggerQueue,
         db_interface: DatabaseInterface,
         event_stream_manager: EventStreamManager,
         state_manager: StateManager,
     ):
         """
-        Coordinate task lifecycle management, including planning, execution,
-        persistence, and event logging.
-
-        The manager keeps an in-memory map of active :class:`Task` objects,
-        persists changes to the database, synchronizes the state manager, and
-        pushes triggers to the runtime queue to drive execution.
+        Initialize the task manager.
 
         Args:
-            task_planner: Planner responsible for generating and updating step
-                plans from high-level instructions.
-            triggers: Queue used to schedule next actions for execution.
-            db_interface: Persistence layer for task and step status updates.
-            event_stream_manager: Event stream hub for user-visible progress
-                logging.
-            state_manager: In-memory state tracker for sharing task context
-                with other components.
+            db_interface: Persistence layer for task logging.
+            event_stream_manager: Event stream for user-visible progress.
+            state_manager: State tracker for sharing task context.
         """
-        self.task_planner = task_planner
-        self.triggers = triggers
         self.db_interface = db_interface
         self.event_stream_manager = event_stream_manager
         self.state_manager = state_manager
@@ -51,360 +51,282 @@ class TaskManager:
         self.workspace_root = Path(AGENT_WORKSPACE_ROOT)
 
     def reset(self) -> None:
-        """Clear all active tasks and detach any session-linked state."""
+        """Clear active task state."""
         self.active = None
 
-    # ─────────────────────── Creation ─────────────────────────────────
-    async def create_task(self, task_name: str, task_instruction: str) -> str:
-        """
-        Generate a new task plan and register it as active.
+    # ─────────────────────── Task Creation ───────────────────────────────────
 
-        The planner is invoked to break down the requested task into steps. A
-        temporary workspace is provisioned, the plan is normalized into a
-        :class:`Task`, and the result is recorded in the database and event
-        stream. If planning fails, a minimal placeholder step is created so the
-        task can still be surfaced.
+    def create_task(
+        self,
+        task_name: str,
+        task_instruction: str,
+        mode: str = "complex",
+        action_sets: Optional[List[str]] = None
+    ) -> str:
+        """
+        Create a new task without LLM planning.
 
         Args:
-            task_name: Human-readable identifier supplied by the caller.
-            task_instruction: Free-form description of the work to be
-                completed.
+            task_name: Human-readable identifier for the task.
+            task_instruction: Description of the work to be done.
+            mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work.
+            action_sets: List of action set names to enable for this task
+                         (e.g., ["file_operations", "web_research"]).
+                         The "core" set is always included automatically.
 
         Returns:
-            The unique identifier assigned to the created task.
+            The unique task identifier.
         """
-        task_id = f"{task_name}_{uuid.uuid4().hex[:6]}"
-        task_id = self._sanitize_task_id(task_id)
-        plan_json = await self.task_planner.plan_task(task_name, task_instruction)
+        task_id = self._sanitize_task_id(f"{task_name}_{uuid.uuid4().hex[:6]}")
         temp_dir = self._prepare_task_temp_dir(task_id)
-        
-        raw_task: Dict[str, Any] = {}
-        try:
-            raw_task = json.loads(plan_json)
-            raw_steps = raw_task.get("steps")
-            if not isinstance(raw_steps, list):
-                raise ValueError("plan must be list")
-            steps: List[Step] = [
-                Step(
-                    step_index=i,
-                    step_name=st.get("step_name", "Default name value"),
-                    description=st.get("description", "Default description value"),
-                    action_instruction=st.get("action_instruction", ""),
-                    validation_instruction=st.get("validation_instruction", ""),
-                    status=st.get("status", "pending"),
-                    failure_message=st.get("failure_message"),
-                )
-                for i, st in enumerate(raw_steps)
-            ]
-        except Exception as e:
-            logger.error(f"[TaskManager] invalid plan – {e}")
-            raw_task = {
-                "goal": None,
-                "inputs_params": None,
-                "context": None,
-            }
-            steps = [Step(step_index=0, step_name="Send Message", description="Plan generation failed", action_instruction="", validation_instruction="", status="failed")]
 
-        # Ensure a current step exists
-        if steps and all(s.status != "current" for s in steps):
-            first_pending = next((s for s in steps if s.status == "pending"), None)
-            if first_pending:
-                first_pending.status = "current"
+        # Compile action list from selected sets
+        compiled_actions: List[str] = []
+        selected_sets = action_sets or []
+        if selected_sets:
+            from core.action.action_set import action_set_manager
+            # Determine mode for action visibility filtering
+            visibility_mode = "GUI" if STATE.gui_mode else "CLI"
+            compiled_actions = action_set_manager.compile_action_list(
+                selected_sets, mode=visibility_mode
+            )
+            logger.debug(f"[TaskManager] Compiled {len(compiled_actions)} actions from sets: {selected_sets}")
 
-        wf = Task(
+        task = Task(
             id=task_id,
             name=task_name,
             instruction=task_instruction,
-            goal=raw_task.get("goal"),
-            inputs_params=raw_task.get("inputs_params"),
-            context=raw_task.get("context"),
-            steps=steps,
+            mode=mode,
             temp_dir=str(temp_dir),
+            action_sets=selected_sets,
+            compiled_actions=compiled_actions,
         )
-        self.active = wf
-        self.db_interface.log_task(wf)
-        self._sync_state_manager(wf)
-        logger.debug(f"[TaskManager] Task {task_id} with {len(steps)} steps created")
 
-        self.event_stream_manager.event_stream.temp_dir=temp_dir
+        self.active = task
+        self.db_interface.log_task(task)
+        self._sync_state_manager(task)
 
-        logger.debug("LOGGGING TO EVENT STREAM")
+        self.event_stream_manager.event_stream.temp_dir = temp_dir
         self.event_stream_manager.log(
             "task_start",
-            f"Created task: '{task_name}' with instruction: '{task_instruction}'.",
+            f"Created task: '{task_name}'",
             display_message=task_name,
         )
 
+        STATE.set_agent_property("current_task_id", task_id)
+        logger.debug(f"[TaskManager] Task {task_id} created")
         return task_id
 
-    # ─────────────────────── Public: plan update helper ───────────────────────
-    async def update_task_plan(
-        self,
-        event_stream: str,
-        advance_next: bool = False,
-    ) -> Tuple[Optional[str], Optional[Step]]:
-        wf = self.active
-        if not wf:
-            logger.warning(f"[TaskManager] No active task found")
-            return None, None
+    # ─────────────────────── Todo Management ─────────────────────────────────
 
-        updated_plan_json = await self.task_planner.update_plan(
-            task_instruction=wf.instruction,
-            task_plan=wf,
-            event_stream=event_stream,
-            advance_next=advance_next,
-        )
+    def update_todos(self, todos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Update the todo list for the active task.
 
-        raw_task: Dict[str, Any] = {}
-        try:
-            raw_task = json.loads(updated_plan_json)
-            raw_steps = raw_task.get("steps")
-            if not isinstance(raw_steps, list):
-                raise ValueError("plan must be list")
-            steps: List[Step] = [
-                Step(
-                    step_index=i,
-                    step_name=st.get("step_name", "Default name value"),
-                    description=st.get("description", "Default description value"),
-                    action_instruction=st.get("action_instruction", ""),
-                    validation_instruction=st.get("validation_instruction", ""),
-                    status=st.get("status", "pending"),
-                    failure_message=st.get("failure_message"),
-                )
-                for i, st in enumerate(raw_steps)
-            ]
-        except Exception as e:
-            logger.error(f"[TaskManager] invalid plan – {e}")
-            raw_task = {
-                "goal": None,
-                "inputs_params": None,
-                "context": None,
-            }
-            steps = [Step(step_index=0, step_name="chat", description="Plan generation failed", action_instruction="", validation_instruction="", status="failed")]
+        Called by the agent to add, update, or complete todos.
 
-        # Ensure a current step exists
-        if steps and all(s.status != "current" for s in steps):
-            first_pending = next((s for s in steps if s.status == "pending"), None)
-            if first_pending:
-                first_pending.status = "current"
+        Args:
+            todos: List of todo dictionaries with content, status, and
+                   optional active_form.
 
-        updated_wf = Task(
-            id=wf.id,
-            name=wf.name,
-            instruction=wf.instruction,
-            goal=raw_task.get("goal"),
-            inputs_params=raw_task.get("inputs_params"),
-            context=raw_task.get("context"),
-            steps=steps,
-            temp_dir=str(wf.temp_dir),
-        )
-        self.active = updated_wf
-        self.db_interface.log_task(updated_wf)
-        self._sync_state_manager(updated_wf)
-        logger.debug(f"[TaskManager] Task {wf.id} with {len(steps)} steps created")
-        
-        new_current_step = next((s for s in wf.steps if s.status == "current"), None)
+        Returns:
+            The updated todo list as dictionaries.
+        """
+        if not self.active:
+            logger.warning("[TaskManager] No active task to update todos")
+            return []
 
-        if new_current_step:
-            if not new_current_step.action_id:
-                new_current_step.action_id = str(uuid.uuid4())
-            self.db_interface.log_task(wf)
-            self._sync_state_manager(wf)
+        self.active.todos = [TodoItem.from_dict(t) for t in todos]
+        self.db_interface.log_task(self.active)
+        self._sync_state_manager(self.active)
 
-        return new_current_step
+        logger.debug(f"[TaskManager] Updated {len(self.active.todos)} todos")
+        return [t.to_dict() for t in self.active.todos]
 
-    # ─────────────────────── Start execution ──────────────────────────────────
-    async def start_task(self) -> Dict[str, Any]:
-        wf = self.active
-        if not wf:
-            return {"error": "task_not_found"}
+    def get_todos(self) -> List[Dict[str, Any]]:
+        """Get the current todo list as dictionaries."""
+        if not self.active:
+            return []
+        return [t.to_dict() for t in self.active.todos]
 
-        step = await self._ensure_and_log_current_step(wf)
-        if not step:
-            return {"error": "no_current_step"}
+    # ─────────────────────── Task Completion ─────────────────────────────────
 
-        await self.triggers.put(
-            Trigger(
-                fire_at=time.time(),
-                priority=5,
-                next_action_description=step.description,
-                session_id=wf.id,
-                payload={
-                    "parent_action_id": step.action_id,
-                },
-            )
-        )
-
-        logger.debug(f"[TaskManager] Step {step.step_name} queued ({wf.id})")
-        return {"status": "queued", "step": step.step_name}
-
-    # ─────────────────────── New tool-able controls ───────────────────────────
     async def mark_task_completed(self, message: Optional[str] = None) -> bool:
-        wf = self.active
-        if not wf:
+        """Mark the current task as completed."""
+        if not self.active:
             return False
-        # finalize current step as completed if it's still open
-        await self._finalize_current_step(wf, terminal_status="completed", message=message)
-        await self._end_task(wf, status="completed", note=message)
+        await self._end_task(self.active, "completed", message)
         return True
 
     async def mark_task_error(self, message: Optional[str] = None) -> bool:
-        wf = self.active
-        if not wf:
+        """Mark the current task as failed with an error."""
+        if not self.active:
             return False
-        await self._finalize_current_step(wf, terminal_status="failed", message=message)
-        await self._end_task(wf, status="error", note=message)
+        await self._end_task(self.active, "error", message)
         return True
 
     async def mark_task_cancel(self, reason: Optional[str] = None) -> bool:
-        wf = self.active
-        if not wf:
+        """Cancel the current task."""
+        if not self.active:
             return False
-        # mark all non-terminal steps as cancelled
-        for st in wf.steps:
-            if st.status in ("pending", "current"):
-                st.status = "cancelled"
-        await self._finalize_current_step(wf, terminal_status="cancelled", message=reason)
-        await self._end_task(wf, status="cancelled", note=reason)
+        await self._end_task(self.active, "cancelled", reason)
         return True
 
-    async def start_next_step(
-        self,
-        replan: bool = False,
-    ) -> Dict[str, Any]:
+    def get_task(self) -> Optional[Task]:
+        """Get the currently active task."""
+        return self.active
+
+    def is_simple_task(self) -> bool:
+        """Check if current task is in simple mode."""
+        return self.active is not None and self.active.mode == "simple"
+
+    # ─────────────────────── Action Set Management ───────────────────────────
+
+    def add_action_sets(self, sets_to_add: List[str]) -> Dict[str, Any]:
         """
-        Finalize the current step as 'completed' and move to the next step.
-        If replan=True, ask the planner to update the plan and advance; the
-        resulting 'current' step (which may be newly created) will be used.
+        Add action sets to the current task and recompile the action list.
 
         Args:
-            task_id: Identifier of the active task being advanced.
-            replan: Whether to request a fresh plan update before selecting the
-                next step.
+            sets_to_add: List of action set names to add.
 
         Returns:
-            A status payload describing the next action (queued, completed, or
-            no_next_step) or an error if the task is unknown.
+            Dictionary with success status, current sets, and added actions.
         """
-        wf = self.active
-        if not wf:
-            return {"error": "task_not_found"}
+        if not self.active:
+            return {"success": False, "error": "No active task"}
 
-        # 1) finalize the current step as completed
-        await self._finalize_current_step(wf, terminal_status="completed")
+        from core.action.action_set import action_set_manager
 
-        new_current: Optional[Step] = None
+        # Add new sets (deduplicate)
+        current_sets = set(self.active.action_sets)
+        new_sets = set(sets_to_add) - current_sets
+        self.active.action_sets = list(current_sets | new_sets)
 
-        if replan:
-            # 2a) replan and ask to advance
-            new_current = await self.update_task_plan(
-                event_stream="",           # no external event payload at this entry point
-                advance_next=True,         # explicit baton move
-            )
-        else:
-            # 2b) no replan: promote the next pending step
-            #    (first non-terminal step after the previously current one)
-            new_current = next((s for s in wf.steps if s.status == "pending"), None)
-            if new_current:
-                new_current.status = "current"
+        # Recompile action list
+        visibility_mode = "GUI" if STATE.gui_mode else "CLI"
+        old_actions = set(self.active.compiled_actions)
+        self.active.compiled_actions = action_set_manager.compile_action_list(
+            self.active.action_sets, mode=visibility_mode
+        )
+        new_actions = set(self.active.compiled_actions) - old_actions
 
-        # 3) if no new current, we may be done
-        if not new_current:
-            # If the last step is terminal and last is completed/skipped, we can auto-complete
-            if wf.steps and wf.steps[-1].status in ("completed", "skipped"):
-                await self._end_task(wf, status="completed", note="Auto-completed after last step")
-                return {"status": "completed"}
-            return {"status": "no_next_step"}
+        # Sync state
+        self._sync_state_manager(self.active)
 
-        # 4) ensure action row and enqueue trigger
-        await self._ensure_and_log_current_step(wf)
-        self.db_interface.log_task(wf)
-        self._sync_state_manager(wf)
-        logger.info(f"[TASK MANAGER] Current step index: {new_current.step_index}")
-        STATE.set_agent_property("current_step_index", new_current.step_index)
-        return {"status": "queued", "step": new_current.step_name}
+        logger.debug(f"[TaskManager] Added action sets {sets_to_add}, now have {len(self.active.compiled_actions)} actions")
+        return {
+            "success": True,
+            "current_sets": self.active.action_sets,
+            "added_actions": list(new_actions),
+            "total_actions": len(self.active.compiled_actions),
+        }
 
-    # ─────────────────────── Internal helpers ─────────────────────────────────
-    async def _ensure_and_log_current_step(self, wf: Task) -> Optional[Step]:
-        """Ensure there is a current step, promote the first pending if needed, and persist the change."""
-        step = wf.get_current_step()
-        if not step:
-            return None
+    def remove_action_sets(self, sets_to_remove: List[str]) -> Dict[str, Any]:
+        """
+        Remove action sets from the current task and recompile the action list.
 
-        updated = False
-        if step.status != "current":
-            step.status = "current"
-            updated = True
-        if not step.action_id:
-            step.action_id = str(uuid.uuid4())
-            updated = True
+        Args:
+            sets_to_remove: List of action set names to remove.
+                            The "core" set cannot be removed.
 
-        if updated:
-            self.db_interface.log_task(wf)
-        self._sync_state_manager(wf)
-        return step
+        Returns:
+            Dictionary with success status and current sets.
+        """
+        if not self.active:
+            return {"success": False, "error": "No active task"}
 
-    async def _finalize_current_step(self, wf: Task, terminal_status: str, message: Optional[str] = None) -> None:
-        step = next((s for s in wf.steps if s.status == "current"), None)
-        if not step:
-            return
-        step.status = terminal_status
-        if message:
-            step.failure_message = message
-        self.db_interface.log_task(wf)
-        self._sync_state_manager(wf)
+        from core.action.action_set import action_set_manager
 
-    async def _end_task(self, wf: Task, status: str, note: Optional[str]) -> None:
-        wf.status = status
-        self.db_interface.log_task(wf)
-        self._sync_state_manager(wf)
+        # Remove sets (but never remove 'core')
+        sets_to_remove_filtered = [s for s in sets_to_remove if s != "core"]
+        current_sets = set(self.active.action_sets)
+        self.active.action_sets = list(current_sets - set(sets_to_remove_filtered))
+
+        # Recompile action list
+        visibility_mode = "GUI" if STATE.gui_mode else "CLI"
+        old_actions = set(self.active.compiled_actions)
+        self.active.compiled_actions = action_set_manager.compile_action_list(
+            self.active.action_sets, mode=visibility_mode
+        )
+        removed_actions = old_actions - set(self.active.compiled_actions)
+
+        # Sync state
+        self._sync_state_manager(self.active)
+
+        logger.debug(f"[TaskManager] Removed action sets {sets_to_remove_filtered}, now have {len(self.active.compiled_actions)} actions")
+        return {
+            "success": True,
+            "current_sets": self.active.action_sets,
+            "removed_actions": list(removed_actions),
+            "total_actions": len(self.active.compiled_actions),
+        }
+
+    def get_action_sets(self) -> List[str]:
+        """Get the current action sets for the active task."""
+        if not self.active:
+            return []
+        return self.active.action_sets.copy()
+
+    def get_compiled_actions(self) -> List[str]:
+        """Get the compiled action list for the active task."""
+        if not self.active:
+            return []
+        return self.active.compiled_actions.copy()
+
+    # ─────────────────────── Internal Helpers ────────────────────────────────
+
+    async def _end_task(self, task: Task, status: str, note: Optional[str]) -> None:
+        """Finalize a task with the given status."""
+        task.status = status
+        self.db_interface.log_task(task)
+        self._sync_state_manager(task)
+
         self.event_stream_manager.log(
             "task_end",
             f"Task ended with status '{status}'. {note or ''}",
-            display_message=wf.name,
+            display_message=task.name,
         )
+
+        # Reset agent state
         STATE.set_agent_property("current_task_id", "")
         STATE.set_agent_property("action_count", 0)
         STATE.set_agent_property("token_count", 0)
-        # purge any queued triggers for the session
-        try:
-            await self.triggers.remove_sessions([wf.id])
-        except Exception:
-            logger.warning(f"[TaskManager] Failed to purge triggers for {wf.id}")
-        # remove from active memory
+
+        # Clear active task
         self.active = None
         if self.state_manager:
             self.state_manager.remove_active_task()
+
+        # Cleanup temp directory on successful completion
         if status == "completed":
-            self._cleanup_task_temp_dir(wf)
+            self._cleanup_task_temp_dir(task)
 
-    def get_task(self) -> Optional[Task]:
-        return self.active
-
-    def _sync_state_manager(self, wf: Optional[Task]) -> None:
-        if not self.state_manager:
-            return
-        self.state_manager.add_to_active_task(task=wf)
+    def _sync_state_manager(self, task: Optional[Task]) -> None:
+        """Sync task state to the state manager."""
+        if self.state_manager:
+            self.state_manager.add_to_active_task(task=task)
 
     def _prepare_task_temp_dir(self, task_id: str) -> Path:
+        """Create a temporary directory for the task."""
         temp_root = self.workspace_root / "tmp"
         temp_root.mkdir(parents=True, exist_ok=True)
         task_temp_dir = temp_root / task_id
         task_temp_dir.mkdir(parents=True, exist_ok=True)
         return task_temp_dir
 
-    def _cleanup_task_temp_dir(self, wf: Task) -> None:
-        if not wf.temp_dir:
+    def _cleanup_task_temp_dir(self, task: Task) -> None:
+        """Remove the task's temporary directory."""
+        if not task.temp_dir:
             return
         try:
-            shutil.rmtree(wf.temp_dir, ignore_errors=True)
-            logger.debug("[TaskManager] Cleaned up temp dir for task %s", wf.id)
+            shutil.rmtree(task.temp_dir, ignore_errors=True)
+            logger.debug(f"[TaskManager] Cleaned up temp dir for task {task.id}")
         except Exception:
-            logger.warning("[TaskManager] Failed to clean temp dir for %s", wf.id, exc_info=True)
+            logger.warning(f"[TaskManager] Failed to clean temp dir for {task.id}", exc_info=True)
 
-    # ─────────────────────── helper function ───────────────────────────────────
     def _sanitize_task_id(self, s: str) -> str:
+        """Sanitize a string for use as a task ID."""
         s = s.strip()
-        s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)  # replace invalid chars with _
-        s = re.sub(r"_+", "_", s)               # collapse repeats
+        s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+        s = re.sub(r"_+", "_", s)
         return s.strip("._-") or "task"

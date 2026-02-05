@@ -52,7 +52,7 @@ steps:
   name: Confirm input and summary requirements
   description: Ensure the agent knows what to summarize, how short the summary should be, and who the summary is for.
   action_instruction: >
-    Use "send message" to briefly confirm:
+    Use "send_message" to briefly confirm:
     - Which report data to use:
       - Specific files (e.g., {report_file_paths}), or
       - The last text the user pasted in the chat.
@@ -60,14 +60,14 @@ steps:
     - Target audience (e.g., executives vs. internal team) and tone (e.g., neutral, formal, upbeat).
     - Any focus areas (e.g., "highlight revenue and cost trends", "focus on customer satisfaction").
     - Preferred output (plain text vs. markdown) and a suggested file name (default {report_file_base_name}_summary_{date_time}.txt).
-    If any of these are unclear or missing, use "ask question" with a focused question (e.g., "Do you prefer a very short bullet list or a short paragraph-style summary?").
-    Once clarified, restate the final parameters in a short "send message" so they are recorded in the task context.
+    If any of these are unclear or missing, use "send_message" with a focused question (e.g., "Do you prefer a very short bullet list or a short paragraph-style summary?").
+    Once clarified, restate the final parameters in a short "send_message" so they are recorded in the task context.
   validation_instruction: >
     Confirm that:
     - At least one input source is clearly defined (file path(s) or pasted text).
     - The user has given at least a rough summary length (e.g., short paragraph vs. ~{max_words} words).
     - The tone/audience is either specified or safe to assume as neutral/executive overview.
-    If any of these are missing, call "ask question" again and only proceed when the requirements are reasonably clear.
+    If any of these are missing, call "send_message" again and only proceed when the requirements are reasonably clear.
 
   name: Read and condense report content
   description: Load the relevant report content and reduce it to the essential information needed for a short narrative summary.
@@ -88,7 +88,7 @@ steps:
     Ensure that:
     - The selected actions completed successfully (status OK).
     - The extracted or summarized text is non-empty and reasonably complete (not just headings or boilerplate).
-    - If the content is unexpectedly short or noisy, send a brief "send message" to the user indicating this and ask if they still want a summary or additional context.
+    - If the content is unexpectedly short or noisy, send a brief "send_message" to the user indicating this and ask if they still want a summary or additional context.
 
   name: Draft narrative summary
   description: Based on the condensed content and user preferences, write a short narrative or bullet list that captures the main trends and key points.
@@ -126,7 +126,7 @@ steps:
   name: Close task and report to user
   description: Provide the summary (or its location) to the user and mark the task status.
   action_instruction: >
-    Use "send message" to:
+    Use "send_message" to:
     - Briefly restate what was summarized (e.g., "I drafted a short narrative summary of {report_file} focusing on {focus_areas}.").
     - Describe:
       - The length and style of the summary (e.g., "about {max_words} words, executive-level, neutral tone").

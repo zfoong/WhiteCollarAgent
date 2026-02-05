@@ -7,7 +7,7 @@ from typing import Dict, Optional, List, Tuple
 from core.action.action import Action
 from core.state.agent_state import STATE
 from core.state.types import ReasoningResult
-from core.task.task import Step
+from core.todo.todo import TodoItem
 from core.gui.handler import GUIHandler
 from core.prompt import GUI_REASONING_PROMPT, GUI_QUERY_FOCUSED_PROMPT, GUI_PIXEL_POSITION_PROMPT, GUI_REASONING_PROMPT_OMNIPARSER
 from core.vlm_interface import VLMInterface
@@ -16,7 +16,7 @@ from core.action.action_library import ActionLibrary
 from core.action.action_router import ActionRouter
 from core.context_engine import ContextEngine
 from core.event_stream.event_stream_manager import EventStreamManager
-from core.llm_interface import LLMInterface
+from core.llm import LLMInterface, LLMCallType
 from core.logger import logger
 
 class GUIModule:
@@ -66,13 +66,13 @@ class GUIModule:
     def get_gui_event_stream(self) -> str:
         return self.gui_event_stream_manager.get_stream().to_prompt_snapshot(include_summary=True)
 
-    async def perform_gui_task_step(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
+    async def perform_gui_task_step(self, step: Optional[TodoItem], session_id: str, next_action_description: str, parent_action_id: str) -> dict:
         """
         Perform a GUI task step. Keeps calling the action until the next action is not None. When the next action is not None, it returns the response.
         If next action is None, it means the task is complete, and it returns the response.
 
         Args:
-            step: The step to perform.
+            step: The current todo item (optional).
             session_id: The session ID.
             next_action_description: The next action description.
             parent_action_id: The parent action ID.
@@ -105,19 +105,27 @@ class GUIModule:
     # Private Methods
     # ===================================
 
-    async def _perform_gui_task_step_action(self, step: Step, session_id: str, next_action_description: str, parent_action_id: str) -> dict:
+    async def _perform_gui_task_step_action(self, step: Optional[TodoItem], session_id: str, next_action_description: str, parent_action_id: str) -> dict:
         """
         Perform a GUI task step action.
 
+        Reasoning is now integrated into action selection, reducing LLM calls.
+        New flow:
+        1. Take screenshot
+        2. Get image description (VLM call)
+        3. Select action with integrated reasoning (LLM call) → reasoning, element_to_find, action_name, parameters
+        4. If element_to_find is provided, get pixel position (VLM call)
+        5. Inject pixel position into parameters if needed
+        6. Execute action
+
         Args:
-            step: The step to perform.
+            step: The current todo item (optional).
             session_id: The session ID.
             next_action_description: The next action description.
             parent_action_id: The parent action ID.
         """
         try:
             query: str = next_action_description
-            reasoning: str = ""
             parent_id = parent_action_id
 
             # ===================================
@@ -139,30 +147,62 @@ class GUIModule:
                     "status": "error",
                     "message": "Failed to take screenshot"
                 }
-            
+
             # ===================================
-            # 3. Perform Reasoning
+            # 3. Get Image Description
             # ===================================
             if self.can_use_omniparser:
-                reasoning_result, action_search_query = await self.omniparser_flow(query=query, png_bytes=png_bytes)
+                image_description_list, annotated_image_bytes = await self._get_image_description_omniparser(png_bytes)
+                gui_state = "\n".join(image_description_list)
             else:
-                reasoning_result, action_search_query = await self.vlm_flow(query=query, png_bytes=png_bytes)
-
-            reasoning: str = reasoning_result.reasoning
+                gui_state = await self._get_image_description_vlm(png_bytes=png_bytes, query=query)
 
             # ===================================
-            # 4. Select Action
+            # 4. Select Action (with integrated reasoning)
             # ===================================
-            action_decision = await self.action_router.select_action_in_GUI(query=action_search_query, reasoning=reasoning, GUI_mode=True)
+            action_decision = await self.action_router.select_action_in_GUI(
+                query=query,
+                gui_state=gui_state,
+                GUI_mode=True
+            )
 
             if not action_decision:
                 raise ValueError("Action router returned no decision.")
 
             action_name = action_decision.get("action_name")
             action_params = action_decision.get("parameters", {})
+            reasoning = action_decision.get("reasoning", "")
+            element_to_find = action_decision.get("element_to_find", "")
+
+            logger.debug(f"[GUI REASONING] {reasoning}")
+            logger.debug(f"[GUI ELEMENT TO FIND] {element_to_find}")
 
             if not action_name:
                 raise ValueError("No valid action selected by the router.")
+
+            # Log reasoning to GUI event stream
+            if self.gui_event_stream_manager and reasoning:
+                self.set_gui_event_stream(reasoning)
+
+            # ===================================
+            # 5. Get Pixel Position (if needed)
+            # ===================================
+            if element_to_find and element_to_find.strip():
+                # Get pixel position for the element using VLM
+                pixel_positions = await self._get_pixel_position_vlm(
+                    image_bytes=png_bytes,
+                    element_to_find=element_to_find
+                )
+
+                # Inject pixel position into parameters for mouse actions
+                if pixel_positions and len(pixel_positions) > 0:
+                    first_position = pixel_positions[0]
+                    if "x" in first_position and "y" in first_position:
+                        # Only inject if action needs coordinates
+                        if action_name in ["mouse_click", "mouse_move", "mouse_drag"]:
+                            action_params["x"] = first_position["x"]
+                            action_params["y"] = first_position["y"]
+                            logger.debug(f"[GUI PIXEL] Injected coordinates: x={first_position['x']}, y={first_position['y']}")
 
             # Retrieve action
             action: Optional[Action] = self.action_library.retrieve_action(action_name)
@@ -171,17 +211,13 @@ class GUIModule:
                     f"Action '{action_name}' not found in the library. "
                     "Check DB connectivity or ensure the action is registered."
                 )
-            
-            # Determine parent action
-            if not parent_id:
-                parent_id = step.action_id
 
             # ===================================
-            # 5. Execute Action
+            # 6. Execute Action
             # ===================================
             action_output = await self.action_manager.execute_action(
                 action=action,
-                context=reasoning_result.action_query if reasoning_result.action_query else query,
+                context=element_to_find if element_to_find else query,
                 event_stream=self.get_gui_event_stream(),
                 parent_id=parent_id,
                 session_id=session_id,
@@ -273,14 +309,13 @@ class GUIModule:
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
             system_flags={
-                "policy": False, 
-                "gui_event_stream": False, 
-                "event_stream": False, 
-                "task_state": False, 
-                "conversation_history": False, 
-                "agent_info": False, 
-                "role_info": False, 
-                "agent_state": False, 
+                "policy": False,
+                "gui_event_stream": False,
+                "event_stream": False,
+                "task_state": False,
+                "agent_info": False,
+                "role_info": False,
+                "agent_state": False,
                 "base_instruction": False,
                 "environment": False,
             }
@@ -313,20 +348,37 @@ class GUIModule:
                 - reasoning: The model's reasoning output
                 - action_query: A refined query used for action selection
         """
-        # Build the system prompt using the current context configuration
+        # KV CACHING: System prompt is now STATIC only
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False, "gui_event_stream": True, "event_stream": False},
+            system_flags={"policy": False},
         )
-        # Format the user prompt with the incoming query
-        prompt = GUI_REASONING_PROMPT.format(gui_state=query)
+        # KV CACHING: Inject dynamic context into user prompt
+        prompt = GUI_REASONING_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            gui_event_stream=self.context_engine.get_gui_event_stream(),
+            gui_state=query,
+        )
+
+        # Get current task_id for session cache (if running in a task)
+        current_task_id = STATE.get_agent_property("current_task_id", "")
 
         # Attempt the LLM call and parsing up to (retries + 1) times
-        for attempt in range(retries + 1):            
-            response = await self.llm.generate_response_async(
-                system_prompt=system_prompt,
-                user_prompt=prompt,
-            )
+        for attempt in range(retries + 1):
+            # Use session cache if we're in a task context and session exists
+            if current_task_id and self.llm.has_session_cache(current_task_id, LLMCallType.GUI_REASONING):
+                response = await self.llm.generate_response_with_session_async(
+                    task_id=current_task_id,
+                    call_type=LLMCallType.GUI_REASONING,
+                    user_prompt=prompt,
+                    system_prompt_for_new_session=system_prompt,
+                )
+            else:
+                response = await self.llm.generate_response_async(
+                    system_prompt=system_prompt,
+                    user_prompt=prompt,
+                )
 
             try:
                 # Parse and validate the structured JSON response
@@ -336,7 +388,7 @@ class GUIModule:
                     self.set_gui_event_stream(reasoning_result.reasoning)
 
                 return reasoning_result
-            except ValueError as e:                
+            except ValueError as e:
                 raise RuntimeError("Failed to obtain valid reasoning from VLM") from e
 
     async def _get_pixel_position_vlm(self, image_bytes: bytes, element_to_find: str) -> List[Dict]:
@@ -347,15 +399,14 @@ class GUIModule:
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
             system_flags={
-                "policy": False, 
-                "gui_event_stream": False, 
-                "event_stream": False, 
-                "task_state": False, 
-                "conversation_history": False, 
-                "agent_info": False, 
-                "role_info": False, 
-                "agent_state": False, 
-                "base_instruction": False, 
+                "policy": False,
+                "gui_event_stream": False,
+                "event_stream": False,
+                "task_state": False,
+                "agent_info": False,
+                "role_info": False,
+                "agent_state": False,
+                "base_instruction": False,
                 "environment": False,
             }
         )
@@ -442,13 +493,17 @@ class GUIModule:
             - reasoning_result: The reasoning result.
             - item_index: The index of the item in the image.
         """
-        # Build the system prompt using the current context configuration
+        # KV CACHING: System prompt is now STATIC only
         system_prompt, _ = self.context_engine.make_prompt(
             user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False, "gui_event_stream": True, "event_stream": False},
+            system_flags={"policy": False},
         )
-        # Format the user prompt with the incoming query
-        prompt = GUI_REASONING_PROMPT_OMNIPARSER
+        # KV CACHING: Inject dynamic context into user prompt
+        prompt = GUI_REASONING_PROMPT_OMNIPARSER.format(
+            agent_state=self.context_engine.get_agent_state(),
+            task_state=self.context_engine.get_task_state(),
+            gui_event_stream=self.context_engine.get_gui_event_stream(),
+        )
 
         # Attempt the LLM call and parsing up to (retries + 1) times
         for attempt in range(retries + 1):            

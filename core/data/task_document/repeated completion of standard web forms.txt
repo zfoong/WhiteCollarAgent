@@ -76,7 +76,7 @@ context:
       - status (submitted/skipped/error),
       - short comment.
     - No more than one submission per row in this run.
-    - The final "send message" to the user includes:
+    - The final "send_message" to the user includes:
       - Number of rows in data,
       - Number of rows submitted successfully,
       - Number skipped or errored,
@@ -93,7 +93,7 @@ steps:
   name: Confirm form scope, data source, and mapping
   description: Make sure the agent knows which form to fill, which data source to use, which rows to process, and how each column maps to each form field.
   action_instruction: >
-    Use the "send message" action to restate and confirm:
+    Use the "send_message" action to restate and confirm:
     - Form URL: {form_url}.
     - Data source: file path (e.g., {data_file_path}) and format (CSV/TSV or similar).
     - Which rows to process:
@@ -103,9 +103,9 @@ steps:
     - Any success indicator after submission (e.g., a phrase like {success_message_snippet} or a URL pattern {success_url_pattern}).
     - Delay between submissions, if any, e.g., {delay_seconds}.
     - Safety cap {max_rows_per_run} if the dataset is large.
-    If any critical information is missing (form URL, data file path, or mapping), use "ask question" with a focused
+    If any critical information is missing (form URL, data file path, or mapping), use "send_message" with a focused
     question (for example, "Please provide column-to-form mapping like: Name -> 'Full Name', Email -> 'Email address'").
-    After clarification, send a short "send message" summarizing the final parameters so they are clearly recorded.
+    After clarification, send a short "send_message" summarizing the final parameters so they are clearly recorded.
   validation_instruction: >
     Confirm that:
     - {form_url} is non-empty.
@@ -113,7 +113,7 @@ steps:
     - {field_mapping} includes every required form field.
     - There is a clear definition of which rows to process.
     - There is at least a default success indicator (even if simple, such as "assume success unless an error message appears").
-    If any of these are unclear, call "ask question" again. Proceed only when the user has confirmed the core parameters.
+    If any of these are unclear, call "send_message" again. Proceed only when the user has confirmed the core parameters.
 
   name: Load and validate data source
   description: Use a simple script to load the data rows from the file, check required columns, and determine which rows are usable.
@@ -138,9 +138,9 @@ steps:
     Check the action result:
     - Status indicates success (no unhandled exceptions).
     - The script confirms that required columns exist.
-    - The number of rows selected for processing is greater than zero; if zero, send a "send message" explaining that no usable rows were found,
+    - The number of rows selected for processing is greater than zero; if zero, send a "send_message" explaining that no usable rows were found,
       and ask if the user wants to adjust required columns, row selection, or stop.
-    - If {max_rows_per_run} was applied, note this to the user in a "send message".
+    - If {max_rows_per_run} was applied, note this to the user in a "send_message".
     Proceed when there is a clear, non-empty set of rows to submit.
 
   name: Test single form submission
@@ -161,14 +161,14 @@ steps:
       "Form reported missing required field").
     If the test indicates a mapping problem (e.g., the page shows validation errors or required fields not filled):
       - Do not continue to full batch.
-      - Use "send message" to:
+      - Use "send_message" to:
         - Show the user the error message snippet and explain which field may be mis-mapped.
         - Ask them to adjust {field_mapping} or data, then re-run this step.
   validation_instruction: >
     Confirm that:
     - The form was reached successfully (no navigation error).
     - The result of the test row is clearly known (success or failure) based on the visible page state.
-    - If it failed due to mapping or missing data, the issue has been communicated to the user via "send message".
+    - If it failed due to mapping or missing data, the issue has been communicated to the user via "send_message".
     Only proceed to full batch submission if the test row is clearly successful (or if the user explicitly instructs to proceed despite minor issues).
 
   name: Submit remaining rows in batch
@@ -192,7 +192,7 @@ steps:
         - status: "submitted", "skipped", or "error",
         - note: empty on success or short error/observation.
       - If a serious repeated error occurs (e.g., server error for multiple rows in a row), pause:
-        - Use "send message" to inform the user,
+        - Use "send_message" to inform the user,
         - Ask if they want to continue or stop.
   validation_instruction: >
     After processing all rows:
@@ -223,7 +223,7 @@ steps:
   name: Close task and report to user
   description: Summarize the batch form submission outcome, point to the log file, and set the task status.
   action_instruction: >
-    Use "send message" to provide a concise final summary including:
+    Use "send_message" to provide a concise final summary including:
     - Form URL used: {form_url}.
     - Data source path: {data_file_path}.
     - Total rows in the source and how many were selected for processing.

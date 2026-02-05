@@ -67,7 +67,7 @@ steps:
   name: Confirm cleanup scope and policy
   description: Collect and confirm what to clean, where to clean, and what to do with matching files.
   action_instruction: >
-    Use the "send message" action to restate and confirm:
+    Use the "send_message" action to restate and confirm:
     - The root directory path(s) to scan.
     - Cleanup mode:
       - delete (remove files), or
@@ -80,7 +80,7 @@ steps:
     - Whether they want a dry-run (no changes, just log) or immediate actual cleanup.
     - Any safety cap (max files or total size).
     Ask the user to confirm or adjust these. If something critical is unclear (e.g., mode, threshold, or destination),
-    use "ask question" with a focused question. Once clarified, send a short "send message" summarizing the final agreed parameters.
+    use "send_message" with a focused question. Once clarified, send a short "send_message" summarizing the final agreed parameters.
   validation_instruction: >
     Ensure that:
     - At least one root directory path string is provided.
@@ -88,7 +88,7 @@ steps:
     - Size threshold is set to a reasonable positive value.
     - If move mode is chosen, a destination folder path is provided.
     - Dry-run vs actual cleanup is decided.
-    If any of these are missing or conflicting, use "ask question" again. Proceed only when the user has clearly confirmed the parameters.
+    If any of these are missing or conflicting, use "send_message" again. Proceed only when the user has clearly confirmed the parameters.
 
   name: Scan for candidate files and optionally perform dry-run
   description: Traverse the directories once to find files that match the cleanup criteria, optionally logging a dry-run without modifying anything.
@@ -143,7 +143,7 @@ steps:
     Check the script output from "create and run python script":
     - The status must indicate success (no unhandled exception).
     - The script must report the number of candidates and the log file path.
-    - If it reports zero candidates, send a brief "send message" to the user explaining that no files matched the filters and
+    - If it reports zero candidates, send a brief "send_message" to the user explaining that no files matched the filters and
       ask if they want to adjust thresholds or stop.
     - If a safety cap was reached, ensure this is mentioned in the summary to the user.
     For dry-run:
@@ -155,7 +155,7 @@ steps:
   description: If the user requested a dry-run first, optionally rerun the script to perform the real cleanup using the same parameters.
   action_instruction: >
     If dry_run was True:
-      - Use "send message" to:
+      - Use "send_message" to:
         - Tell the user that the dry-run has completed.
         - Provide a short summary: candidate count, approximate total size, and the log file path.
         - Ask whether to proceed with actual cleanup using the same rules.
@@ -188,7 +188,7 @@ steps:
   name: Close task and report to user
   description: Summarize what was done (or would have been done in dry-run), expose key log details, and mark task status.
   action_instruction: >
-    Use "send message" to provide a short, clear summary:
+    Use "send_message" to provide a short, clear summary:
     - Root directories scanned.
     - Cleanup mode (delete/move).
     - Size (and age, if used) thresholds.

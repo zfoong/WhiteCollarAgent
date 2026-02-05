@@ -79,7 +79,7 @@ steps:
   name: Confirm backup scope and policy
   description: Collect and confirm what to back up, where to back it up, and how to handle report PDFs and overwrite behavior.
   action_instruction: >
-    Use the "send message" action to restate and confirm:
+    Use the "send_message" action to restate and confirm:
     - Source root folder(s) {source_roots} to include in the backup.
     - Backup destination(s) {backup_destinations}, including whether they are local or network paths.
     - Backup mode:
@@ -92,8 +92,8 @@ steps:
     - Optional size/type filters (if the user wants to exclude very large or certain types of files).
     - Whether they want a dry-run first (listing/logging what would be copied) or to run the actual backup immediately.
     - Any safety cap (e.g., "stop and ask if more than {max_files} files or {max_total_size} GB").
-    Ask the user to confirm or adjust these. If critical items are unclear (e.g., destination or mode), use "ask question" with a focused
-    question. Once the user clarifies, send a short "send message" summarizing the final parameters so they are clear in the task history.
+    Ask the user to confirm or adjust these. If critical items are unclear (e.g., destination or mode), use "send_message" with a focused
+    question. Once the user clarifies, send a short "send_message" summarizing the final parameters so they are clear in the task history.
   validation_instruction: >
     Check that:
     - At least one {source_root} is specified.
@@ -101,7 +101,7 @@ steps:
     - Backup mode is clearly chosen ("mirror" or "copy_only").
     - The decision around report PDFs is known (e.g., "generate PDFs for all reports matching {pattern}" or "skip PDF generation").
     - Dry-run vs actual backup is decided.
-    If any of these are missing or inconsistent, use "ask question" again. Only proceed once the user confirms.
+    If any of these are missing or inconsistent, use "send_message" again. Only proceed once the user confirms.
 
   name: Save selected reports as PDF (if requested)
   description: Convert specified report files into PDF format before (or as part of) the backup, in a simple and direct way.
@@ -126,7 +126,7 @@ steps:
   validation_instruction: >
     If report PDFs were requested:
       - Ensure there is no error status from "convert_to_pdf" calls.
-      - If the script or actions fail repeatedly, send a short "send message" explaining which report(s) failed.
+      - If the script or actions fail repeatedly, send a short "send_message" explaining which report(s) failed.
     If there are only a few reports, it is sufficient to rely on action statuses and the final backup log; no extra scans are needed.
     If the user opted out of PDF generation, this step requires no validation beyond acknowledging that decision.
 
@@ -174,7 +174,7 @@ steps:
     Inspect the script output:
     - Ensure there is no unhandled exception (status should be success).
     - Confirm it printed a summary including counts and {backup_log_path}.
-    - If it reports zero files processed but the user expected more, use "send message" to explain and ask if exclude patterns
+    - If it reports zero files processed but the user expected more, use "send_message" to explain and ask if exclude patterns
       or paths need adjustment.
     - If a safety cap was triggered, make sure this is mentioned to the user.
     For dry-run:
@@ -198,7 +198,7 @@ steps:
   name: Close task and report to user
   description: Present the backup summary, including any PDF report work, and mark the task status appropriately.
   action_instruction: >
-    Use "send message" to provide a short, clear summary:
+    Use "send_message" to provide a short, clear summary:
     - Source root(s) {source_roots}.
     - Backup destination(s) {backup_destinations}.
     - Backup mode ({backup_mode}) and whether this was a dry-run or actual copy.

@@ -6,6 +6,8 @@ from typing import List
 import logging
 from pathlib import Path
 
+from core.action.action_framework.registry import install_all_action_requirements
+
 logger = logging.getLogger("ActionLoader")
 
 # Define default paths relative to the project root to scan for actions
@@ -85,3 +87,6 @@ def load_actions_from_directories(base_dir: str = None, paths_to_scan: List[str]
                          logger.error(f"Failed to load action script {file_path}: {e}", exc_info=True)
 
     logger.info(f"--- Action Discovery Complete. Processed {count} files. ---")
+
+    # Install all requirements from registered actions
+    install_all_action_requirements()

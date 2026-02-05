@@ -12,9 +12,12 @@ import ast
 from typing import Optional, List, Dict, Any, Tuple
 from core.action.action_library import ActionLibrary
 from core.context_engine import ContextEngine
+from core.state.agent_state import STATE
 
 from core.logger import logger
-from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT
+from core.llm import LLMCallType
+from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT, SELECT_ACTION_IN_SIMPLE_TASK_PROMPT
+from decorators.profiler import profile, OperationCategory
 
 
 def _is_visible_in_mode(action, GUI_mode: bool) -> bool:
@@ -58,6 +61,7 @@ class ActionRouter:
         self.vlm_interface = vlm_interface
         self.context_engine = context_engine
 
+    @profile("action_router_select_action", OperationCategory.ACTION_ROUTING)
     async def select_action(
         self,
         query: str,
@@ -82,7 +86,7 @@ class ActionRouter:
             Dict[str, Any]: Parsed decision containing ``action_name`` and
             ``parameters`` ready for execution or creation.
         """
-        conversation_mode_actions = ["send message", "ask question", "create and start task", "ignore"]
+        conversation_mode_actions = ["send_message", "task_start", "task_update_todos", "task_end", "ignore"]
         action_candidates = []
         
         for action in conversation_mode_actions:
@@ -97,12 +101,14 @@ class ActionRouter:
                 })
     
         # Build the instruction prompt for the LLM
+        # KV CACHING: Inject dynamic context into user prompt
         prompt = SELECT_ACTION_PROMPT.format(
+            event_stream=self.context_engine.get_event_stream(),
             query=query,
             action_candidates=self._format_candidates(action_candidates),
         )
 
-        decision = await self._prompt_for_decision(prompt)
+        decision = await self._prompt_for_decision(prompt, is_task=False)
 
         logger.debug(
             f"Action router selected action={decision.get('action_name')} "
@@ -111,90 +117,77 @@ class ActionRouter:
 
         return decision
 
+    @profile("action_router_select_action_in_task", OperationCategory.ACTION_ROUTING)
     async def select_action_in_task(
         self,
         query: str,
         action_type: Optional[str] = None,
         GUI_mode=False,
-        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
         When a task is running, this action selection will be used.
 
-        1. Retrieves top-k candidate action names from ChromaDB.
-        2. Builds a candidate list with searched and default action for the LLM.
-        3. Asks the LLM if any candidate is valid, or if a new action is needed.
-        4. If new action is needed, return an empty action name, and let the outer
-           loop create the action.
-        5. Otherwise, return the chosen existing action along with parameters.
-        
+        Reasoning is now integrated directly into the action selection prompt,
+        eliminating the need for a separate reasoning LLM call.
+
+        1. Gets compiled action list from task's action sets.
+        2. Builds a candidate list for the LLM.
+        3. LLM reasons about the current state and selects an action.
+        4. Returns the chosen action along with parameters and reasoning.
+
         Args:
             query: Task-level instruction for the next step.
             action_type: Optional action type hint supplied to the LLM.
             GUI_mode: Whether the user is interacting through a GUI, affecting
                 which actions are visible.
-            context: Serialized task context to embed in the prompt.
 
         Returns:
-            Dict[str, Any]: Decision payload with ``action_name`` and
-            normalized ``parameters`` for execution, or an empty ``action_name``
-            when a new action should be created.
+            Dict[str, Any]: Decision payload with ``action_name``, ``parameters``,
+            and ``reasoning`` for execution.
         """
         action_candidates = []
         action_name_candidates = []
-    
-        # List of filtered default actions when creating task
-        ignore_actions = ["create and start task", "ignore"]
-    
-        # Retrieve default actions (could be multiple)
-        default_actions = self.action_library.retrieve_default_action()
-    
-        for act in default_actions:
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
-        # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=5)
-        logger.info(f"ActionRouter found candidate actions: {candidate_names}")
-        for name in candidate_names:
-            act = self.action_library.retrieve_action(name)
-            if not act:
-                continue
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
-        # Dedupe names while preserving insertion order
-        action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
-    
+
+        # List of filtered actions
+        ignore_actions = ["ignore"]
+
+        # Get compiled action list from task's action sets
+        compiled_actions = self._get_current_task_compiled_actions()
+
+        # Use static compiled list - NO RAG SEARCH
+        action_candidates = self._build_candidates_from_compiled_list(
+            compiled_actions, GUI_mode, ignore_actions
+        )
+        logger.info(f"ActionRouter using compiled action list: {len(action_candidates)} actions")
+
         # Build the instruction prompt for the LLM
-        prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
+        # KV CACHING: Static/session-static content first, dynamic (event_stream) last
+        # Reasoning is now part of the action selection prompt (single LLM call)
+        #
+        # For session caching:
+        # - static_prompt: everything except event_stream (cached prefix)
+        # - full_prompt: includes event_stream (used for first call or non-cached)
+        static_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            event_stream="",  # Empty for static prompt
             query=query,
-            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
-            action_name_candidates=self._format_action_names(action_name_candidates),
+        )
+        full_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            event_stream=self.context_engine.get_event_stream(),
+            query=query,
+            action_candidates=self._format_candidates(action_candidates),
         )
 
         max_retries = 3
         for attempt in range(max_retries):
-            decision = await self._prompt_for_decision(prompt, is_task=True)
+            decision = await self._prompt_for_decision(
+                full_prompt,
+                is_task=True,
+                static_prompt=static_prompt,
+                call_type=LLMCallType.ACTION_SELECTION,
+            )
 
             selected_action_name = decision.get("action_name", "")
             if selected_action_name == "":
@@ -212,74 +205,162 @@ class ActionRouter:
         # 3. If we fail to find a valid action name after the retries, raise an error
         raise ValueError("Invalid selected action returned by LLM after retries.")
 
-    async def select_action_in_GUI(
-        self, 
+    @profile("action_router_select_action_in_simple_task", OperationCategory.ACTION_ROUTING)
+    async def select_action_in_simple_task(
+        self,
         query: str,
-        action_type: Optional[str] = None,
-        GUI_mode=False,
-        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
-        When a task is running, this action selection will be used.
+        Action selection for simple task mode - streamlined without todo workflow.
 
-        1. Retrieves top-k candidate action names from ChromaDB.
-        2. Builds a candidate list with searched and default action for the LLM.
-        3. Asks the LLM if any candidate is valid, or if a new action is needed.
-        4. If new action is needed, return an empty action name, and let the outer
-           loop create the action.
-        5. Otherwise, return the chosen existing action along with parameters.
-        
+        Reasoning is now integrated directly into the action selection prompt,
+        eliminating the need for a separate reasoning LLM call.
+
+        Simple tasks don't use todos and auto-end after delivering results.
+        This method excludes todo-related actions and uses a simpler prompt.
+
         Args:
             query: Task-level instruction for the next step.
-            action_type: Optional action type hint supplied to the LLM.
-            GUI_mode: Whether the user is interacting through a GUI, affecting
-                which actions are visible.
-            context: Serialized task context to embed in the prompt.
 
         Returns:
-            Dict[str, Any]: Decision payload with ``action_name`` and
-            normalized ``parameters`` for execution, or an empty ``action_name``
-            when a new action should be created.
+            Dict[str, Any]: Decision payload with ``action_name``, ``parameters``,
+            and ``reasoning`` for execution.
         """
         action_candidates = []
         action_name_candidates = []
-    
-        # List of filtered default actions when creating task
-        ignore_actions = ["create and start task", "ignore"]
-    
-        # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=50)
-        logger.info(f"ActionRouter found candidate actions: {candidate_names}")
-        for name in candidate_names:
-            act = self.action_library.retrieve_action(name)
-            if not act:
-                continue
-            if act.name in ignore_actions:
-                continue
-            if not _is_visible_in_mode(act, GUI_mode):
-                continue
-            action_candidates.append({
-                "name": act.name,
-                "description": act.description,
-                "type": act.action_type,
-                "input_schema": act.input_schema,
-                "output_schema": act.output_schema
-            })
-    
-        # Dedupe names while preserving insertion order
-        action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
-    
-        # Build the instruction prompt for the LLM
-        prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
+
+        # Exclude todo management and ignore actions for simple tasks
+        ignore_actions = ["ignore", "task_update_todos"]
+
+        # Get compiled action list from task's action sets
+        compiled_actions = self._get_current_task_compiled_actions()
+
+        # Use static compiled list - NO RAG SEARCH
+        action_candidates = self._build_candidates_from_compiled_list(
+            compiled_actions, GUI_mode=False, ignore_actions=ignore_actions
+        )
+        logger.info(f"ActionRouter (simple task) using compiled action list: {len(action_candidates)} actions")
+
+        # Build the instruction prompt using simple task prompt
+        # KV CACHING: Static/session-static content first, dynamic (event_stream) last
+        # Reasoning is now part of the action selection prompt (single LLM call)
+        #
+        # For session caching:
+        # - static_prompt: everything except event_stream (cached prefix)
+        # - full_prompt: includes event_stream (used for first call or non-cached)
+        static_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            event_stream="",  # Empty for static prompt
             query=query,
-            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
-            action_name_candidates=self._format_action_names(action_name_candidates),
+        )
+        full_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            event_stream=self.context_engine.get_event_stream(),
+            query=query,
+            action_candidates=self._format_candidates(action_candidates),
         )
 
         max_retries = 3
         for attempt in range(max_retries):
-            decision = await self._prompt_for_decision_gui(prompt=prompt, is_task=True)
+            decision = await self._prompt_for_decision(
+                full_prompt,
+                is_task=True,
+                static_prompt=static_prompt,
+                call_type=LLMCallType.ACTION_SELECTION,
+            )
+
+            selected_action_name = decision.get("action_name", "")
+            if selected_action_name == "":
+                return decision
+
+            selected_action = self.action_library.retrieve_action(selected_action_name)
+            if selected_action is not None and _is_visible_in_mode(selected_action, GUI_mode=False):
+                decision["parameters"] = self._ensure_parameters(decision.get("parameters"))
+                return decision
+
+            logger.warning(
+                f"Received invalid action name '{selected_action_name}' during simple task selection attempt {attempt + 1}"
+            )
+
+        raise ValueError("Invalid selected action returned by LLM after retries.")
+
+    @profile("action_router_select_action_in_GUI", OperationCategory.ACTION_ROUTING)
+    async def select_action_in_GUI(
+        self,
+        query: str,
+        gui_state: str = "",
+        action_type: Optional[str] = None,
+        GUI_mode=False,
+    ) -> Dict[str, Any]:
+        """
+        GUI-specific action selection when a task is running.
+
+        Reasoning is now integrated directly into the action selection prompt,
+        eliminating the need for a separate reasoning LLM call. The prompt also
+        outputs an 'element_to_find' for pixel position lookup.
+
+        1. Gets compiled action list from task's action sets.
+        2. Builds a candidate list for the LLM.
+        3. LLM reasons about the screen state, selects an action, and identifies
+           the UI element to interact with (if applicable).
+        4. Returns the decision with action, parameters, reasoning, and element_to_find.
+
+        Args:
+            query: Task-level instruction for the next step.
+            gui_state: Description of the current screen state (from VLM/OmniParser).
+            action_type: Optional action type hint supplied to the LLM.
+            GUI_mode: Whether the user is interacting through a GUI, affecting
+                which actions are visible.
+
+        Returns:
+            Dict[str, Any]: Decision payload with ``action_name``, ``parameters``,
+            ``reasoning``, and ``element_to_find`` for execution.
+        """
+        action_candidates = []
+        action_name_candidates = []
+
+        # List of filtered actions
+        ignore_actions = ["ignore"]
+
+        # Get compiled action list from task's action sets
+        compiled_actions = self._get_current_task_compiled_actions()
+
+        # Use static compiled list - NO RAG SEARCH
+        action_candidates = self._build_candidates_from_compiled_list(
+            compiled_actions, GUI_mode, ignore_actions
+        )
+        logger.info(f"ActionRouter (GUI) using compiled action list: {len(action_candidates)} actions")
+
+        # Build the instruction prompt for the LLM
+        # KV CACHING: Static/session-static content first, dynamic (gui_event_stream) last
+        # Reasoning is now part of the action selection prompt (single LLM call)
+        #
+        # For session caching:
+        # - static_prompt: everything except gui_event_stream (cached prefix)
+        # - full_prompt: includes gui_event_stream (used for first call or non-cached)
+        static_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            gui_event_stream="",  # Empty for static prompt
+            gui_state=gui_state,
+            query=query,
+            action_candidates=self._format_candidates(action_candidates),
+        )
+        full_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
+            agent_state=self.context_engine.get_agent_state(),
+            gui_event_stream=self.context_engine.get_gui_event_stream(),
+            gui_state=gui_state,
+            query=query,
+            action_candidates=self._format_candidates(action_candidates),
+        )
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            decision = await self._prompt_for_decision_gui(
+                prompt=full_prompt,
+                is_task=True,
+                static_prompt=static_prompt,
+            )
 
             selected_action_name = decision.get("action_name", "")
             if selected_action_name == "":
@@ -301,16 +382,98 @@ class ActionRouter:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _prompt_for_decision(self, prompt: str, is_task: bool = False) -> Dict[str, Any]:
+    async def _prompt_for_decision(
+        self,
+        prompt: str,
+        is_task: bool = False,
+        static_prompt: Optional[str] = None,
+        call_type: str = LLMCallType.ACTION_SELECTION,
+    ) -> Dict[str, Any]:
+        """
+        Prompt the LLM for an action decision with session caching support.
+
+        For BytePlus session caching:
+        - First call: Send full prompt (static_prompt + event_stream)
+        - Subsequent calls: Send only delta events (new events since last call)
+
+        Args:
+            prompt: The full prompt (used for non-session calls or first call)
+            is_task: Whether this is a task context (enables session caching)
+            static_prompt: The static parts of the prompt without event_stream
+                          (used for session cache creation)
+            call_type: The type of LLM call for session cache keying
+        """
         max_retries = 3
         last_error: Optional[Exception] = None
         current_prompt = prompt
+
+        # Get current task_id for session cache (if running in a task)
+        current_task_id = STATE.get_agent_property("current_task_id", "") if is_task else ""
+
         for attempt in range(max_retries):
+            # KV CACHING: System prompt is now STATIC only
+            # Dynamic content (event_stream) is handled separately for session caching
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": True, "task_state": not is_task, "policy": False},
+                system_flags={"agent_info": not is_task, "policy": False},
             )
-            raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+
+            raw_response = None
+
+            # Use session cache if we're in a task context AND session is registered
+            # Session is only registered for complex tasks (not simple tasks)
+            if current_task_id and is_task:
+                has_session = self.llm_interface.has_session_cache(current_task_id, call_type)
+
+                if has_session:
+                    # Session is registered (complex task) - use session caching
+                    # Check if we've synced events before (i.e., made at least one LLM call)
+                    from core.event_stream.event_stream_manager import EventStreamManager
+                    event_stream_manager: EventStreamManager = self.context_engine.state_manager.event_stream_manager
+                    stream = event_stream_manager.get_stream()
+                    has_synced_before = stream.has_session_sync(call_type) if stream else False
+
+                    if has_synced_before:
+                        # We've made calls before - send only delta events
+                        delta_events, has_delta = self.context_engine.get_event_stream_delta(call_type)
+
+                        if has_delta:
+                            # Send only the new events
+                            logger.info(f"[SESSION CACHE] Sending delta events for {call_type}")
+                            raw_response = await self.llm_interface.generate_response_with_session_async(
+                                task_id=current_task_id,
+                                call_type=call_type,
+                                user_prompt=delta_events,
+                                system_prompt_for_new_session=system_prompt,
+                            )
+                            # Mark events as synced after successful call
+                            self.context_engine.mark_event_stream_synced(call_type)
+                        else:
+                            # No new events - this could mean summarization happened
+                            logger.info(f"[SESSION CACHE] No delta events, resetting cache for {call_type}")
+                            self.llm_interface.end_session_cache(current_task_id, call_type)
+                            self.context_engine.reset_event_stream_sync(call_type)
+                            # Fall through to first-call path
+                            has_synced_before = False
+
+                    if not has_synced_before:
+                        # First call with session - send full prompt to establish session
+                        logger.info(f"[SESSION CACHE] Creating new session for {call_type} (first call)")
+                        raw_response = await self.llm_interface.generate_response_with_session_async(
+                            task_id=current_task_id,
+                            call_type=call_type,
+                            user_prompt=current_prompt,  # Full prompt with event_stream
+                            system_prompt_for_new_session=system_prompt,
+                        )
+                        # Mark events as synced after successful session creation
+                        self.context_engine.mark_event_stream_synced(call_type)
+                else:
+                    # No session registered (simple task) - use prefix cache / regular response
+                    raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+            else:
+                # Not in task context - use regular response
+                raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+
             decision, parse_error = self._parse_action_decision(raw_response)
             if decision is not None:
                 decision.setdefault("parameters", {})
@@ -329,22 +492,104 @@ class ActionRouter:
             raise last_error
         raise ValueError("Unable to parse LLM decision")
         
-    async def _prompt_for_decision_gui(self, prompt: str = "", image_bytes: Optional[bytes] = None, is_task: bool = False) -> Dict[str, Any]:
+    async def _prompt_for_decision_gui(
+        self,
+        prompt: str = "",
+        image_bytes: Optional[bytes] = None,
+        is_task: bool = False,
+        static_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Prompt the LLM for a GUI action decision with session caching support.
+
+        For BytePlus session caching:
+        - First call: Send full prompt (static_prompt + gui_event_stream)
+        - Subsequent calls: Send only delta events (new events since last call)
+
+        Note: VLM calls with image_bytes don't use session caching.
+
+        Args:
+            prompt: The full prompt (used for non-session calls or first call)
+            image_bytes: Optional screenshot bytes for VLM calls
+            is_task: Whether this is a task context (enables session caching)
+            static_prompt: The static parts of the prompt without gui_event_stream
+                          (used for session cache creation)
+        """
         max_retries = 3
         last_error: Optional[Exception] = None
+        current_prompt = prompt
+        call_type = LLMCallType.GUI_ACTION_SELECTION
+
+        # Get current task_id for session cache (if running in a task)
+        current_task_id = STATE.get_agent_property("current_task_id", "") if is_task else ""
+
         for attempt in range(max_retries):
+            # KV CACHING: System prompt is now STATIC only
+            # Dynamic content (gui_event_stream) is handled separately for session caching
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"role_info": not is_task, "agent_info": not is_task, "conversation_history": not is_task, "event_stream": False, "gui_event_stream": not is_task, "task_state": not is_task, "policy": False},
+                system_flags={"role_info": not is_task, "agent_info": not is_task, "policy": False},
             )
+
+            raw_response = None
+
             if image_bytes:
+                # VLM calls don't use session cache (independent calls with images)
                 raw_response = await self.vlm_interface.generate_response_async(
                     image_bytes,
                     system_prompt=system_prompt,
-                    user_prompt=prompt,
-                ) 
+                    user_prompt=current_prompt,
+                )
+            elif current_task_id and is_task:
+                # Use session cache if we're in a task context AND session is registered
+                # Session is only registered for complex tasks (not simple tasks)
+                has_session = self.llm_interface.has_session_cache(current_task_id, call_type)
+
+                if has_session:
+                    # Session is registered (complex task) - use session caching
+                    from core.event_stream.event_stream_manager import EventStreamManager
+                    event_stream_manager: EventStreamManager = self.context_engine.state_manager.event_stream_manager
+                    stream = event_stream_manager.get_stream()
+                    has_synced_before = stream.has_session_sync(call_type) if stream else False
+
+                    if has_synced_before:
+                        # We've made calls before - send only delta events
+                        delta_events, has_delta = self.context_engine.get_event_stream_delta(call_type)
+
+                        if has_delta:
+                            logger.info(f"[SESSION CACHE] Sending delta events for {call_type}")
+                            raw_response = await self.llm_interface.generate_response_with_session_async(
+                                task_id=current_task_id,
+                                call_type=call_type,
+                                user_prompt=delta_events,
+                                system_prompt_for_new_session=system_prompt,
+                            )
+                            self.context_engine.mark_event_stream_synced(call_type)
+                        else:
+                            # No new events - invalidate and recreate session
+                            logger.info(f"[SESSION CACHE] No delta events, resetting cache for {call_type}")
+                            self.llm_interface.end_session_cache(current_task_id, call_type)
+                            self.context_engine.reset_event_stream_sync(call_type)
+                            has_synced_before = False
+
+                    if not has_synced_before:
+                        # First call with session - send full prompt
+                        logger.info(f"[SESSION CACHE] Creating new session for {call_type} (first call)")
+                        raw_response = await self.llm_interface.generate_response_with_session_async(
+                            task_id=current_task_id,
+                            call_type=call_type,
+                            user_prompt=current_prompt,  # Full prompt with gui_event_stream
+                            system_prompt_for_new_session=system_prompt,
+                        )
+                        self.context_engine.mark_event_stream_synced(call_type)
+                else:
+                    # No session registered (simple task) - use prefix cache / regular response
+                    logger.info(f"[PREFIX CACHE] Using regular response for {call_type} (simple task)")
+                    raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             else:
-                raw_response = await self.llm_interface.generate_response_async(system_prompt, prompt)
+                # Not in task context - use regular response
+                raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
+
             decision, parse_error = self._parse_action_decision(raw_response)
             if decision is not None:
                 decision.setdefault("parameters", {})
@@ -436,12 +681,7 @@ class ActionRouter:
             return "[]"
         return json.dumps(names, indent=2, ensure_ascii=False)
 
-    def _format_reasoning(self, context: str | list | dict | None) -> str:
-        if context is None:
-            return ""
-        if isinstance(context, (list, dict)):
-            return json.dumps(context, indent=2, ensure_ascii=False)
-        return str(context)
+    # NOTE: _format_reasoning was removed - reasoning is now integrated into action selection
 
     def _format_event_stream(self, event_stream: str | list | dict | None) -> str:
         if not event_stream:
@@ -454,4 +694,60 @@ class ActionRouter:
         if isinstance(parameters, dict):
             return parameters
         return {}
+
+    def _build_candidates_from_compiled_list(
+        self,
+        compiled_actions: List[str],
+        GUI_mode: bool,
+        ignore_actions: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Build action candidate list from pre-compiled action names.
+
+        This method is used when the task has a static action list (from action sets),
+        eliminating the need for RAG-based action retrieval.
+
+        Args:
+            compiled_actions: Pre-compiled list of action names from task.compiled_actions
+            GUI_mode: Whether to filter for GUI mode visibility
+            ignore_actions: List of action names to exclude
+
+        Returns:
+            List of action candidate dictionaries for the LLM prompt
+        """
+        ignore_actions = ignore_actions or []
+        candidates = []
+
+        for name in compiled_actions:
+            if name in ignore_actions:
+                continue
+
+            act = self.action_library.retrieve_action(name)
+            if not act:
+                continue
+
+            if not _is_visible_in_mode(act, GUI_mode):
+                continue
+
+            candidates.append({
+                "name": act.name,
+                "description": act.description,
+                "type": act.action_type,
+                "input_schema": act.input_schema,
+                "output_schema": act.output_schema
+            })
+
+        return candidates
+
+    def _get_current_task_compiled_actions(self) -> List[str]:
+        """
+        Get the compiled action list from the current task.
+
+        Returns:
+            List of action names if task has compiled_actions, otherwise empty list
+        """
+        task = STATE.current_task
+        if task and hasattr(task, 'compiled_actions') and task.compiled_actions:
+            return task.compiled_actions
+        return []
         

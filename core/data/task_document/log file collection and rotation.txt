@@ -72,7 +72,7 @@ steps:
   name: Confirm log scope and rotation policy
   description: Clarify which logs to manage, where they are located, and what rotation/retention rules to apply.
   action_instruction: >
-    Use the "send message" action to restate and confirm:
+    Use the "send_message" action to restate and confirm:
       - The log root directories {log_root_paths} to scan (e.g., {log_root_1}, {log_root_2}).
       - The log patterns to include (e.g., ["*.log", "*.out"]) and any patterns or paths to exclude.
       - The rotation triggers:
@@ -87,9 +87,9 @@ steps:
       - Compression preference (e.g., "zip" archives) and naming pattern such as {log_name}_{date_time}.zip.
       - Whether this run is a dry-run ({dry_run} = true/false).
       - Any safety caps (e.g., {max_files} files, {max_total_size_mb} MB).
-    If any critical detail (roots, thresholds, retention, or archive location) is missing or unclear, use "ask question"
+    If any critical detail (roots, thresholds, retention, or archive location) is missing or unclear, use "send_message"
     with a short, focused question (for example, "Should we delete archives older than {retention_days} days, or keep all archives?").
-    Once clarified, send a brief "send message" summarizing the final parameters so they are explicit in the task history.
+    Once clarified, send a brief "send_message" summarizing the final parameters so they are explicit in the task history.
   validation_instruction: >
     Confirm that:
       - At least one root directory {log_root} is specified.
@@ -97,7 +97,7 @@ steps:
       - A retention policy is defined (by count or by days).
       - An archive destination {archive_root} is known (even if in "archive_only" mode).
       - Dry-run vs actual run is clearly decided.
-    If any of these is missing, use "ask question" again. Proceed only after the user confirms the configuration.
+    If any of these is missing, use "send_message" again. Proceed only after the user confirms the configuration.
 
   name: Ensure archive directory exists
   description: Prepare the archive destination location so that rotated logs can be moved or compressed there without errors.
@@ -111,7 +111,7 @@ steps:
     Validate that:
       - "create folder" or "list folder" returns a success status for {archive_root}.
       - No error message indicates permission or path issues.
-    If archive creation/access fails, notify the user via "send message" and ask whether to:
+    If archive creation/access fails, notify the user via "send_message" and ask whether to:
       - Use a different {archive_root}, or
       - Run in a mode that does not archive (if acceptable).
     Do not proceed to rotation until a usable archive location is available or the user explicitly agrees to skip archiving.
@@ -171,7 +171,7 @@ steps:
         - Total candidates.
         - Per-action counts.
         - The manifest path {log_rotation_manifest}.
-    If zero candidates were found, send a short "send message" explaining that no logs matched the current policy and
+    If zero candidates were found, send a short "send_message" explaining that no logs matched the current policy and
     ask if the user wants to adjust thresholds or stop.
     If safety caps were triggered, ensure this is clearly noted for the final summary.
 
@@ -179,7 +179,7 @@ steps:
   description: If the user requested a dry-run first, optionally rerun the script with the same parameters but dry_run set to false.
   action_instruction: >
     If {dry_run} was true in the previous step:
-      - Use "send message" to tell the user:
+      - Use "send_message" to tell the user:
         - Dry-run completed.
         - Candidate counts, approximate total size, and location of {log_rotation_manifest}.
         - Ask if they want to proceed with actual rotation and archival using the same policy.
@@ -208,7 +208,7 @@ steps:
   name: Close task and report to user
   description: Summarize what was done (or would be done in dry-run), provide the manifest location, and mark task status.
   action_instruction: >
-    Use "send message" to provide a short summary including:
+    Use "send_message" to provide a short summary including:
       - The log roots {log_root_paths} that were processed.
       - Whether this was a dry-run or actual rotation.
       - The key rotation/retention rules:

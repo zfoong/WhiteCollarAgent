@@ -72,7 +72,7 @@ steps:
   name: Confirm scraping parameters
   description: Make sure URLs, output format, and basic table selection rules are clearly defined before scraping.
   action_instruction: >
-    Use the "send message" action to restate what is needed from the user and to confirm or fill in:
+    Use the "send_message" action to restate what is needed from the user and to confirm or fill in:
     - {url_list}: one or more web page URLs to scrape.
     - {output_format}: "csv", "xlsx", or "both" (default to "csv" if unspecified).
     - {output_directory}: where to store the exported tables (default to ./tables_output_{date_time}).
@@ -83,15 +83,15 @@ steps:
     - Export granularity: separate file per table vs. combined file per URL.
     - Optional maximum tables per page (e.g., {max_tables_per_page}) to avoid exporting dozens of small tables unintentionally.
     - Whether to add a "source_url" column to each table.
-    If any of these are missing or unclear (e.g., no URLs, or ambiguous format), use "ask question" to request a focused clarification.
-    Once the user responds, send a short "send message" summarizing the final agreed parameters so they are fixed in the task history.
+    If any of these are missing or unclear (e.g., no URLs, or ambiguous format), use "send_message" to request a focused clarification.
+    Once the user responds, send a short "send_message" summarizing the final agreed parameters so they are fixed in the task history.
   validation_instruction: >
     Check that:
     - {url_list} is non-empty and each {url} looks like a valid HTTP/HTTPS URL.
     - {output_format} is resolved to one of: "csv", "xlsx", or "both".
     - {output_directory} is defined (explicitly or default).
     - Table selection is at least "all" if the user gave nothing more specific.
-    If any of these are missing or invalid, call "ask question" again with a narrow question and do not proceed until confirmed.
+    If any of these are missing or invalid, call "send_message" again with a narrow question and do not proceed until confirmed.
 
   name: Run table scraping and export script
   description: Fetch each URL, detect HTML tables, and export them into CSV/XLSX files plus a log in one efficient script.
@@ -148,7 +148,7 @@ steps:
       - A summary with counts (URLs processed, tables exported).
       - The {output_directory} and {log_file_path}.
     - If the script reports zero exported tables for all URLs:
-      - Use "send message" to inform the user that no tables were found or all fetches failed.
+      - Use "send_message" to inform the user that no tables were found or all fetches failed.
       - Ask whether they want to adjust URLs or stop, rather than proceeding as if successful.
 
   name: Validate exported files
@@ -160,7 +160,7 @@ steps:
       - Open the first few lines of {log_file_path} to confirm it is readable and structured (e.g., header + rows).
       - Optionally count lines in the log (excluding header) to confirm that the number of entries matches the reported exported tables plus any fetch/no-table statuses.
     If there is a clear mismatch (e.g., summary says 10 tables exported but log has 0 entries):
-      - Use "send message" to inform the user that there is an inconsistency.
+      - Use "send_message" to inform the user that there is an inconsistency.
       - Optionally rerun the scraping step once with corrected code or parameters.
       - If the problem persists and is not easily fixable, plan to "mark task error" with a brief explanation.
   # No separate validation_instruction beyond this simple consistency check.
@@ -168,7 +168,7 @@ steps:
   name: Close task and report to user
   description: Summarize the scraping results, provide the output and log locations, and mark the task status.
   action_instruction: >
-    Use "send message" to provide a short, structured summary:
+    Use "send_message" to provide a short, structured summary:
     - List {url_list} (or a truncated version if very long).
     - Indicate:
       - How many URLs were successfully fetched.

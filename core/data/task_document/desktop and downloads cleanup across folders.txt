@@ -72,7 +72,7 @@ steps:
   name: Confirm cleanup scope and rules
   description: Collect and confirm which folders to clean and how items should be organized (by type, date, project), as well as any exclusions and safety options.
   action_instruction: >
-    Use "send message" to summarize the needed inputs and current assumptions:
+    Use "send_message" to summarize the needed inputs and current assumptions:
     - Desktop path and Downloads path, plus any other folders the user wants included.
     - The primary organization method: by type, by date, by project, or a simple combination (e.g., type + date).
     - Whether to organize only top-level items or also include one or more subfolder levels.
@@ -81,14 +81,14 @@ steps:
     - Target root for organized subfolders (stay under Desktop/Downloads vs move into a dedicated “Organized” or “Archive” folder).
     - Whether this run should be a dry-run preview or apply moves immediately.
     - Any cap on number of items to move.
-    Ask the user to confirm or correct. If something critical is still ambiguous (e.g., whether project rules or date-based grouping are needed), use "ask question" with a focused prompt. Once clarified, send a short "send message" recapping the final rules so they are explicit.
+    Ask the user to confirm or correct. If something critical is still ambiguous (e.g., whether project rules or date-based grouping are needed), use "send_message" with a focused prompt. Once clarified, send a short "send_message" recapping the final rules so they are explicit.
   validation_instruction: >
     Ensure that:
     - At least one cleanup target folder is clearly defined (e.g., Desktop, Downloads).
     - At least one organization method is chosen and understandable.
     - Any exclusions are noted.
     - Dry-run vs real move is decided.
-    If any of these is missing, call "ask question" to fill the gap before proceeding.
+    If any of these is missing, call "send_message" to fill the gap before proceeding.
 
   name: Scan and classify items
   description: In a single pass, list items in the selected folders, decide which are clutter, and assign each clutter item to a target group based on the chosen rules.
@@ -121,7 +121,7 @@ steps:
     Check the action’s status and stdout:
     - Ensure the script ran without unhandled exceptions.
     - Confirm that at least one root folder was found and scanned.
-    - If zero clutter items were identified, send a brief "send message" explaining that nothing matched the cleanup rules and ask if the user wants to adjust or stop.
+    - If zero clutter items were identified, send a brief "send_message" explaining that nothing matched the cleanup rules and ask if the user wants to adjust or stop.
     If there are clearly identified clutter items and the grouping looks reasonable, proceed.
 
   name: Create target folders and move items
@@ -157,26 +157,26 @@ steps:
     - Confirm the script completed without unhandled exceptions.
     - Confirm that a log file path is printed.
     - Note the counts of moved/skipped/errored items.
-    If the script failed entirely, send a "send message" explaining the error and decide whether to retry with a fixed script or "mark task error" if not reasonable to fix in this run.
+    If the script failed entirely, send a "send_message" explaining the error and decide whether to retry with a fixed script or "mark task error" if not reasonable to fix in this run.
 
   name: Overall validate cleanup results
   description: Use the log and summary output to verify the cleanup meets the definition_of_done without extra complex verification passes.
   action_instruction: >
     Based on the script’s stdout and the log file:
     - If this was a dry-run:
-      - Use "send message" to show the user a brief sample of planned moves and ask whether they want to re-run the move step without dry_run.
+      - Use "send_message" to show the user a brief sample of planned moves and ask whether they want to re-run the move step without dry_run.
       - If they approve, rerun the previous step with dry_run=false and then re-check counts.
     - If moves were actually performed:
       - Optionally use "shell view" or a small "create and run python script" to inspect the log and confirm:
         - The number of log entries matches the number of processed clutter items reported.
         - Status values are only from a small, expected set ("moved", "skipped_excluded", "error").
       - Ensure that no unexpected statuses appear and error cases are relatively small or understandable (e.g., permission issues).
-    If the results align with the definition_of_done (items moved, no deletions, log available), proceed to final reporting. If not, briefly explain any major discrepancies in a "send message" and consider whether a limited retry is needed or "mark task error" is appropriate.
+    If the results align with the definition_of_done (items moved, no deletions, log available), proceed to final reporting. If not, briefly explain any major discrepancies in a "send_message" and consider whether a limited retry is needed or "mark task error" is appropriate.
 
   name: Close task and report to user
   description: Summarize what was cleaned and how it was organized, provide the log location, and set the task status.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
     - Which root folders were cleaned (Desktop, Downloads, etc.).
     - The organization rule(s) applied (by type, by date, by project).
     - Whether the run was a dry-run or actual move.

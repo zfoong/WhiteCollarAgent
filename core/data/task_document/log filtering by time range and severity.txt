@@ -56,7 +56,7 @@ steps:
   name: Confirm log scope and filter criteria
   description: Make sure the agent understands what logs to look at, which time range to filter on, and which severity levels to include.
   action_instruction: >
-    Use the "send message" action to clearly restate and confirm:
+    Use the "send_message" action to clearly restate and confirm:
     - The log location:
       - A root directory {log_root_directory}, and/or
       - Specific log files {log_file_paths}.
@@ -69,15 +69,15 @@ steps:
     - How severity will be detected (e.g., as a token like "ERROR" or "[ERROR]" in each line).
     - The desired output file path or name {output_log_file}, or that a default will be used.
     Ask the user to correct or fill in any missing critical pieces. If a key detail is still unclear
-    (e.g., timestamp format, or how to interpret the time range), use "ask question" with a focused question such as
-    "What timestamp format does your log use?" Once clarified, send a short "send message" summarizing the final parameters.
+    (e.g., timestamp format, or how to interpret the time range), use "send_message" with a focused question such as
+    "What timestamp format does your log use?" Once clarified, send a short "send_message" summarizing the final parameters.
   validation_instruction: >
     Verify that:
     - There is at least one known log source (directory and/or explicit file list).
     - A valid time filter is defined (either specific {start_time}/{end_time} or a clear {relative_time_window}).
     - At least one severity level is specified in {severity_levels}.
     - A timestamp format {timestamp_format} is provided or a reasonable default is agreed upon.
-    If any mandatory element is missing, repeat a targeted "ask question". Proceed only once the user confirms the final settings.
+    If any mandatory element is missing, repeat a targeted "send_message". Proceed only once the user confirms the final settings.
 
   name: Identify log files to process
   description: Determine which log files to read based on the confirmed directory, file patterns, and explicit file paths.
@@ -101,7 +101,7 @@ steps:
   validation_instruction: >
     Check that the script ran successfully and that:
     - At least one log file path was found and listed in stdout, unless user expects zero.
-    - If zero files are found, send a "send message" explaining that no logs matched the pattern or paths,
+    - If zero files are found, send a "send_message" explaining that no logs matched the pattern or paths,
       and ask if they want to adjust {log_root_directory}, {log_file_pattern}, or {log_file_paths}.
     Proceed only when there is a non-empty list of log files to filter.
 
@@ -143,7 +143,7 @@ steps:
     - The script status indicates success with no unhandled exception.
     - stdout shows non-zero "lines read" and either zero or more "lines written" as expected.
     - The output path {output_log_file} is clearly mentioned.
-    If "lines written" is zero, send a short "send message" explaining that no entries matched the time/severity filter and asking
+    If "lines written" is zero, send a short "send_message" explaining that no entries matched the time/severity filter and asking
     whether the user wants to adjust {start_time}, {end_time}, {relative_time_window}, {severity_levels}, or {timestamp_format}.
 
   name: Overall validate filtered output
@@ -162,7 +162,7 @@ steps:
   name: Close task and report to user
   description: Summarize the filtering results to the user and mark the task status.
   action_instruction: >
-    Use "send message" to give a concise summary including:
+    Use "send_message" to give a concise summary including:
     - The log scope (directory {log_root_directory}, file pattern {log_file_pattern}, and any specific {log_file_paths}).
     - The time filter used (final concrete {start_time}–{end_time}).
     - The severity filter {severity_levels}.

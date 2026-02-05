@@ -66,7 +66,7 @@ steps:
   name: Confirm files, formats, and normalization rules
   description: Ensure all inputs, outputs, and normalization preferences are clearly defined before running conversions.
   action_instruction: >
-    Use "send message" to restate and confirm:
+    Use "send_message" to restate and confirm:
     - Input file paths (e.g., {source_file_1}, {source_file_2}).
     - Target format for each file or a default {target_format} (e.g., "csv", "xlsx").
     - Output directory {output_directory}.
@@ -82,15 +82,15 @@ steps:
     - Overwrite policy for existing outputs (overwrite, add suffix, or skip).
     - Whether they want a dry-run first (inspect only) or proceed directly to conversion.
     Ask the user to correct or fill any missing critical details. If something remains unclear
-    (e.g., target format or overwrite behavior), use "ask question" with a focused question.
-    Once clarified, send a short "send message" summarizing the final parameters so they are explicit in the task history.
+    (e.g., target format or overwrite behavior), use "send_message" with a focused question.
+    Once clarified, send a short "send_message" summarizing the final parameters so they are explicit in the task history.
   validation_instruction: >
     Confirm that:
     - At least one input file path {source_file} is provided.
     - A valid target format (e.g., "csv" or "xlsx") is specified or defaulted.
     - An output directory {output_directory} is chosen.
     - Overwrite policy is defined (if not specified, default to adding a suffix like "_converted").
-    If any of these are missing or conflicting, use "ask question" again and only proceed after clear confirmation.
+    If any of these are missing or conflicting, use "send_message" again and only proceed after clear confirmation.
 
   name: Run batch conversion script (dry-run or actual)
   description: Use a single Python script to read all inputs, optionally detect encoding/delimiters, apply header normalization, and either preview or write outputs and logs.
@@ -141,7 +141,7 @@ steps:
     - Ensure the script finished without an unhandled exception.
     - Confirm that it reports the log file path {log_file_path}.
     - Note the counts per status (converted / would_convert / skipped_existing / missing / error).
-    If the script reports that no files were processed successfully (all missing or errors), use "send message" to explain this briefly
+    If the script reports that no files were processed successfully (all missing or errors), use "send_message" to explain this briefly
     and ask the user whether to adjust parameters or stop. If it is a dry-run, ask whether to proceed with an actual conversion
     using the same parameters.
 
@@ -149,7 +149,7 @@ steps:
   description: If a dry-run was performed, optionally rerun the same script with dry_run=false to generate real outputs.
   action_instruction: >
     If dry_run was True:
-      - Use "send message" to:
+      - Use "send_message" to:
         - Inform the user that the dry-run finished and show a short summary:
           - Files detected.
           - Target formats.
@@ -183,7 +183,7 @@ steps:
   name: Close task and report to user
   description: Summarize the conversions, present key details about outputs and logs, and mark the task status.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
     - Input files processed (list or count).
     - Target format(s) used.
     - Key normalization choices (delimiter, encoding, header normalization).

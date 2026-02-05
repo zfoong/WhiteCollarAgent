@@ -46,7 +46,7 @@ context:
       - then apply any user-provided overrides.
     - Avoid complex heuristics; only guess obvious mappings (e.g., case-insensitive label matches or simple underscores/space normalization).
     - Switch to GUI mode only when ready to fill a specific form, and perform the minimal sequence of clicks/keystrokes needed.
-    - If a field is required but missing in the source, ask the user once via "ask question" or leave it empty with a note in the summary.
+    - If a field is required but missing in the source, ask the user once via "send_message" or leave it empty with a note in the summary.
     - Optional: write a small log file via "create text file" capturing the final field->value mapping used for each form.
 
   deadline: {time_left} left until deadline {deadline}
@@ -76,7 +76,7 @@ steps:
   name: Confirm data source and target form
   description: Make sure the structured source, target form, and record to use are clearly defined and agreed with the user.
   action_instruction: >
-    Use "send message" to restate what is needed:
+    Use "send_message" to restate what is needed:
     - {source_type} and {source_location} (e.g., JSON file at {source_file_path}, or API at {api_url}).
     - Whether the source contains one record or multiple; if multiple, how to identify the correct record (e.g., by email or {record_id}).
     - The target form context:
@@ -84,8 +84,8 @@ steps:
     - Whether the agent is allowed to submit the form automatically or should stop after filling for user review.
     - Optional field mapping overrides (if the user wants specific keys to map to specific fields).
     Ask the user to confirm or provide missing details. If a critical part is unclear (e.g., which record to use or whether to submit),
-    use "ask question" with a focused prompt (e.g., "Which record (by email or ID) should I use for the form at {form_url}?").
-    Once clarified, send a brief "send message" listing:
+    use "send_message" with a focused prompt (e.g., "Which record (by email or ID) should I use for the form at {form_url}?").
+    Once clarified, send a brief "send_message" listing:
     - {source_location}, chosen {record_id} or description, and {form_identifier}.
 
   validation_instruction: >
@@ -93,7 +93,7 @@ steps:
     - {source_location} is specified.
     - There is a clear record selection strategy (single record or chosen {record_id}/{record_index}).
     - {form_identifier} is given and the user has indicated whether submission is allowed.
-    If any of these are missing, call "ask question" again. Only proceed when these are concrete.
+    If any of these are missing, call "send_message" again. Only proceed when these are concrete.
 
   name: Load and normalize structured data
   description: Use a single Python script to load the structured source and produce a normalized contact/profile dictionary for the chosen record.
@@ -120,7 +120,7 @@ steps:
     - Status shows success, not an unhandled exception.
     - The summary in stdout shows the expected record (e.g., correct email or name).
     - At least core fields (e.g., name + one contact method such as email or phone) are present.
-    If loading or parsing fails, briefly explain via "send message" and either:
+    If loading or parsing fails, briefly explain via "send_message" and either:
     - Ask the user for a different {source_location}/{source_type}, or
     - "mark task error" if the source cannot be parsed in this session.
 
@@ -167,7 +167,7 @@ steps:
         - Clear any existing content if appropriate (especially for new entries; be careful for existing profiles).
         - Type the corresponding value.
       - If any required field has no value from the source:
-        - Option 1: ask the user via "ask question" once (e.g., "What is the postal code for {full_name}?") and then fill it.
+        - Option 1: ask the user via "send_message" once (e.g., "What is the postal code for {full_name}?") and then fill it.
         - Option 2 (if user prefers no prompts): leave the field blank and plan to mention it in the summary.
       - If the user authorized submission and this is not a dry-run:
         - Click the submit/save button.
@@ -179,7 +179,7 @@ steps:
     - Visually (via GUI event feedback) confirm that fields appear filled with the expected values.
     - If a confirmation or success message appears after submission (e.g., "Profile updated"), treat this as success.
     - If the page displays validation errors (missing required fields or format issues), either:
-      - Correct them using available data or with a single clarifying "ask question" to the user, or
+      - Correct them using available data or with a single clarifying "send_message" to the user, or
       - Leave them and mention them in the final summary.
     No extra CLI validation is required beyond obvious GUI confirmation.
 
@@ -198,7 +198,7 @@ steps:
   name: Close task and report to user
   description: Provide a concise summary of what was done, note any missing data or manual steps needed, and mark task status.
   action_instruction: >
-    Use "send message" to summarize:
+    Use "send_message" to summarize:
     - Which source was used ({source_location} and, if applicable, {record_id} or key attribute).
     - Which form or forms were filled ({form_identifier}).
     - Whether the form(s) were submitted or left for user review.

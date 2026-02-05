@@ -61,7 +61,7 @@ steps:
   name: Confirm invoice/receipt parameters
   description: Clarify what to generate (invoice or receipt), for whom, and with which data and format, using minimal back-and-forth.
   action_instruction: >
-    Use "send message" to summarize and ask the user to confirm or provide:
+    Use "send_message" to summarize and ask the user to confirm or provide:
     - Document type: invoice or receipt.
     - Client details: {client_name}, {client_address}, and any extra identifiers (email, tax ID) they care about.
     - Issuer details: {issuer_name}, {issuer_address}, and any extra identifiers.
@@ -72,7 +72,7 @@ steps:
     - Output format(s): "pdf", "docx", or both.
     - Output directory: {output_directory} (default to a simple workspace directory like ./invoices or ./receipts).
     - Whether they have a specific layout/template (e.g., "simple table layout" or a template file at {template_file_path}) or are fine with a simple standard layout.
-    If any core piece is missing (like line items or client details), use "ask question" with a focused prompt, then restate the final, agreed parameters with another short "send message" so they are explicit in the history.
+    If any core piece is missing (like line items or client details), use "send_message" with a focused prompt, then restate the final, agreed parameters with another short "send_message" so they are explicit in the history.
   validation_instruction: >
     Ensure the following are clearly defined before proceeding:
     - Document type (invoice/receipt).
@@ -80,7 +80,7 @@ steps:
     - Client and issuer names.
     - Currency and document number.
     - At least one output format (pdf/docx).
-    If any of these are unclear or missing, ask again using "ask question". Proceed once the user’s confirmation is explicit.
+    If any of these are unclear or missing, ask again using "send_message". Proceed once the user’s confirmation is explicit.
 
   name: Compute totals and normalize line item data
   description: Turn the user’s line items into a clean, consistent internal representation with correct totals, subtotals, and taxes/discounts.
@@ -104,7 +104,7 @@ steps:
     Check the script output:
     - Confirm that there are no exceptions and status indicates success.
     - Verify that subtotal and grand_total values look reasonable (e.g., not negative unless explicitly expected).
-    - If any line item cannot be parsed (e.g., invalid numbers), use "send message" to explain which item failed and ask the user to correct it or confirm how to handle it (e.g., skip or fix values) before rerunning this step.
+    - If any line item cannot be parsed (e.g., invalid numbers), use "send_message" to explain which item failed and ask the user to correct it or confirm how to handle it (e.g., skip or fix values) before rerunning this step.
 
   name: Generate invoice/receipt document content
   description: Build a clean, structured text layout for the invoice/receipt using either a simple built-in template structure or a user-specified template, ready to be passed to a file creation action.
@@ -155,14 +155,14 @@ steps:
     After creation:
     - Check the returned status fields from "create word file" and/or "create pdf file" to ensure success.
     - Confirm that the returned path(s) match the expected naming pattern and directory.
-    - If file creation fails (e.g., invalid path or permissions), send a short "send message" describing the issue and either:
+    - If file creation fails (e.g., invalid path or permissions), send a short "send_message" describing the issue and either:
       - Retry with a simpler path/name, or
       - Ask the user for an alternative {output_directory} before trying again.
 
   name: Close task and report to user
   description: Provide the user with a concise summary of the generated invoice(s)/receipt(s), including file locations and key amounts, and mark the task status.
   action_instruction: >
-    Use "send message" to summarize:
+    Use "send_message" to summarize:
     - Document type (invoice/receipt).
     - Client and issuer names.
     - Invoice/receipt number and issue date (and due date if present).

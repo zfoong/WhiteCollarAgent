@@ -19,6 +19,7 @@ from core.models.types import InterfaceType
 from core.google_gemini_client import GeminiClient
 from core.logger import logger
 from core.state.agent_state import STATE
+from core.llm import get_cache_metrics, get_cache_config
 
 class VLMInterface:
     _CODE_BLOCK_RE = re.compile(r"^```(?:\w+)?\s*|\s*```$", re.MULTILINE)
@@ -167,8 +168,13 @@ class VLMInterface:
         )
 
 
-    # ───────────────────── Provider helpers ─────────────────────    
-    def _openai_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
+    # ───────────────────── Provider helpers ─────────────────────
+    def _openai_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> Dict[str, Any]:
+        """OpenAI vision request with automatic prompt caching metrics.
+
+        OpenAI's prompt caching is automatic for prompts ≥1024 tokens.
+        Returns cached_tokens in usage.prompt_tokens_details.cached_tokens.
+        """
         img_b64 = base64.b64encode(image_bytes).decode()
         messages: list[Dict[str, Any]] = []
         if sys:
@@ -189,11 +195,29 @@ class VLMInterface:
             max_tokens=2048,
         )
         content = response.choices[0].message.content.strip()
-        total_tokens = response.usage.prompt_tokens + response.usage.completion_tokens
+        token_count_input = response.usage.prompt_tokens
+        token_count_output = response.usage.completion_tokens
+        total_tokens = token_count_input + token_count_output
+
+        # Extract cached tokens from prompt_tokens_details (OpenAI automatic caching)
+        cached_tokens = 0
+        prompt_tokens_details = getattr(response.usage, "prompt_tokens_details", None)
+        if prompt_tokens_details:
+            cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0) or 0
+
+        # Record cache metrics
+        config = get_cache_config()
+        metrics = get_cache_metrics()
+        if cached_tokens > 0:
+            logger.info(f"[CACHE] OpenAI VLM cache hit: {cached_tokens}/{token_count_input} tokens from cache")
+            metrics.record_hit("openai", "automatic_vlm", cached_tokens=cached_tokens, total_tokens=token_count_input)
+        elif sys and len(sys) >= config.min_cache_tokens:
+            metrics.record_miss("openai", "automatic_vlm", total_tokens=token_count_input)
 
         return {
             "tokens_used": total_tokens or 0,
-            "content": content or ""
+            "content": content or "",
+            "cached_tokens": cached_tokens,
         }
     
     def _ollama_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
@@ -217,18 +241,36 @@ class VLMInterface:
             "content": content or ""
         }
     
-    def _gemini_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
+    def _gemini_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> Dict[str, Any]:
+        """Gemini vision request with implicit caching metrics.
+
+        Gemini's implicit caching is automatic (since May 2025).
+        Returns cachedContentTokenCount in usageMetadata when cache is used.
+        """
         if not self._gemini_client:
             raise RuntimeError("Gemini client was not initialised.")
 
-        content = self._gemini_client.generate_multimodal(
+        result = self._gemini_client.generate_multimodal(
             self.model,
             text=usr,
             image_bytes=image_bytes,
             system_prompt=sys,
             temperature=self.temperature,
         )
-        return content
+
+        # Record cache metrics
+        cached_tokens = result.get("cached_tokens", 0)
+        token_count_input = result.get("prompt_tokens", 0)
+        config = get_cache_config()
+        metrics = get_cache_metrics()
+
+        if cached_tokens > 0:
+            logger.info(f"[CACHE] Gemini VLM implicit cache hit: {cached_tokens}/{token_count_input} tokens from cache")
+            metrics.record_hit("gemini", "implicit_vlm", cached_tokens=cached_tokens, total_tokens=token_count_input)
+        elif sys and len(sys) >= config.min_cache_tokens:
+            metrics.record_miss("gemini", "implicit_vlm", total_tokens=token_count_input)
+
+        return result
 
     def _byteplus_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
         img_b64 = base64.b64encode(image_bytes).decode()
@@ -278,11 +320,17 @@ class VLMInterface:
 
         return ""
 
-    def _anthropic_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
+    def _anthropic_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> Dict[str, Any]:
+        """Anthropic vision request with ephemeral caching metrics.
+
+        Anthropic's prompt caching uses cache_control markers on system prompt.
+        Cache hits are reported in cache_read_input_tokens.
+        """
         if not self._anthropic_client:
             raise RuntimeError("Anthropic client was not initialised.")
 
         img_b64 = base64.b64encode(image_bytes).decode()
+        config = get_cache_config()
 
         # Detect media type from image bytes (default to jpeg)
         media_type = "image/jpeg"
@@ -316,7 +364,18 @@ class VLMInterface:
         }
 
         if sys:
-            message_kwargs["system"] = sys
+            # Use caching if system prompt is long enough
+            if len(sys) >= config.min_cache_tokens:
+                # Format system as list of content blocks with cache_control
+                message_kwargs["system"] = [
+                    {
+                        "type": "text",
+                        "text": sys,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            else:
+                message_kwargs["system"] = sys
 
         # Always pass temperature for Anthropic (their default is 1.0, not 0.0)
         message_kwargs["temperature"] = self.temperature
@@ -332,10 +391,29 @@ class VLMInterface:
         content = content.strip()
 
         # Token usage from Anthropic response
-        total_tokens = response.usage.input_tokens + response.usage.output_tokens
+        token_count_input = response.usage.input_tokens
+        token_count_output = response.usage.output_tokens
+        total_tokens = token_count_input + token_count_output
+
+        # Cache metrics from Anthropic response
+        cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
+        cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+        cached_tokens = cache_creation + cache_read
+
+        # Record cache metrics
+        metrics = get_cache_metrics()
+        if cache_read > 0:
+            logger.info(f"[CACHE] Anthropic VLM cache hit: {cache_read}/{token_count_input} tokens from cache")
+            metrics.record_hit("anthropic", "ephemeral_vlm", cached_tokens=cache_read, total_tokens=token_count_input)
+        elif cache_creation > 0:
+            logger.info(f"[CACHE] Anthropic VLM cache created: {cache_creation} tokens cached")
+            metrics.record_miss("anthropic", "ephemeral_vlm", total_tokens=token_count_input)
+        elif sys and len(sys) >= config.min_cache_tokens:
+            metrics.record_miss("anthropic", "ephemeral_vlm", total_tokens=token_count_input)
 
         return {
             "tokens_used": total_tokens or 0,
-            "content": content or ""
+            "content": content or "",
+            "cached_tokens": cached_tokens,
         }
 

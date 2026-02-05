@@ -71,7 +71,7 @@ steps:
   name: Confirm repository and change range
   description: Ensure the agent knows which repository to inspect, what range of commits to summarize, and any filters or detail preferences.
   action_instruction: >
-    Use "send message" to restate and confirm:
+    Use "send_message" to restate and confirm:
     - Repository path: {repo_path}.
     - Range spec: one of:
       - Last {max_commits} commits, or
@@ -81,16 +81,16 @@ steps:
     - Optional: Filters (author {author_filter}, paths {component_paths}).
     - Optional: Detail level {detail_level} and output format {output_format}.
     Ask the user to confirm or clarify any missing items. If a critical item is missing
-    (e.g., how many commits or what date range), use "ask question" with a focused prompt such as:
+    (e.g., how many commits or what date range), use "send_message" with a focused prompt such as:
     "Should I summarize the last {default_max_commits} commits on the current branch of {repo_path}?"
-    Once the user confirms, send a short "send message" that records the final agreed parameters using placeholders
+    Once the user confirms, send a short "send_message" that records the final agreed parameters using placeholders
     like {repo_path}, {range}, {filters}, and {max_commits} in the text so they are explicit in the task history.
   validation_instruction: >
     Ensure that:
     - {repo_path} is provided and appears to be a valid local path string.
     - A range strategy is decided: either {max_commits} or {since_date}/{until_date} or {from_ref}..{to_ref}.
     - If none is explicitly provided, default to a safe choice (e.g., last {default_max_commits} commits)
-      but only after confirming this default with the user via "send message".
+      but only after confirming this default with the user via "send_message".
     Proceed only when these parameters are clear.
 
   name: Collect commit history via CLI
@@ -117,7 +117,7 @@ steps:
     Check the "shell exec" output:
     - return_code == 0 and stdout is non-empty.
     - If return_code != 0 or stdout is empty:
-      - Use "send message" to explain that git log failed, including a short excerpt from stderr.
+      - Use "send_message" to explain that git log failed, including a short excerpt from stderr.
       - Ask the user to confirm {repo_path} or adjust range/filters (e.g., invalid ref or branch).
       - If the issue cannot be resolved (e.g., not a git repo), use "mark task error" with a brief explanation.
     Proceed only if valid log text is available.
@@ -161,14 +161,14 @@ steps:
     - Print to stdout:
       - {summary_file_path},
       - number of commits summarized,
-      - a short 2–3 line overview that can be reused directly in the final "send message".
+      - a short 2–3 line overview that can be reused directly in the final "send_message".
   validation_instruction: >
     Check the script result:
     - status indicates success (no unhandled exception).
     - stdout mentions a {summary_file_path}.
-    - Summary file is expected to be non-empty; if the script prints an indication of zero commits, notify the user via "send message".
+    - Summary file is expected to be non-empty; if the script prints an indication of zero commits, notify the user via "send_message".
     If the script fails:
-    - Use "send message" to explain that summarization failed, include a short error note, and decide
+    - Use "send_message" to explain that summarization failed, include a short error note, and decide
       whether to quickly fix the script and retry once, or call "mark task error" if not reasonable.
 
   name: Overall validate summarization

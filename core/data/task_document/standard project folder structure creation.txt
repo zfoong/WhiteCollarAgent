@@ -51,7 +51,7 @@ steps:
   name: Confirm project root and structure
   description: Ensure that the project root, standard folder structure, and classification rules are clearly defined and agreed with the user.
   action_instruction: >
-    Use the "send message" action to restate the needed parameters and the current understanding:
+    Use the "send_message" action to restate the needed parameters and the current understanding:
     - {project_root}: the main directory where the project lives.
     - Standard folder structure: either a named template {project_type} (e.g., "software", "data") or an explicit list
       of subfolders under {project_root} (e.g., ["docs", "src", "assets", "tests", "build", "archive"]).
@@ -64,9 +64,9 @@ steps:
     - Destination for uncategorized files (e.g., {project_root}/misc).
     - Whether a dry-run is desired (only log moves without changing the file system).
     Ask the user to confirm or correct these values. If any critical part is missing or ambiguous (for example, the exact
-    subfolder list or how to handle uncategorized files), use "ask question" with a focused question such as
+    subfolder list or how to handle uncategorized files), use "send_message" with a focused question such as
     "Please confirm the subfolder list under {project_root}" or "Where should uncategorized files go?".
-    Once everything is clear, send a short "send message" summarizing:
+    Once everything is clear, send a short "send_message" summarizing:
     - {project_root}
     - Final subfolder list
     - Key classification rules
@@ -78,7 +78,7 @@ steps:
     - At least one concrete classification rule is defined (for example, mapping extensions to subfolders).
     - Destination for uncategorized files is either defined or explicitly stated as “leave in place”.
     - Dry-run vs actual move has been decided.
-    If any of these are missing, call "ask question" again and do not proceed until the user has confirmed them.
+    If any of these are missing, call "send_message" again and do not proceed until the user has confirmed them.
 
   name: Create standard folder structure
   description: Create the standard subfolders under {project_root} if they do not already exist.
@@ -96,7 +96,7 @@ steps:
     Check the action output:
     - The script must finish without unhandled exceptions.
     - Confirm that each intended subfolder appears in the summary as “created” or “already exists”.
-    If there are errors (for example, permissions or invalid path), inform the user via "send message" and either:
+    If there are errors (for example, permissions or invalid path), inform the user via "send_message" and either:
     - Adjust {project_root} or {subfolder_list} as per user input, then retry, or
     - If the root is unusable, use "mark task error" with a brief explanation.
 
@@ -145,7 +145,7 @@ steps:
     - Confirm the script completed successfully.
     - Note the counts of moved, unchanged/no_rule, and error entries.
     - Ensure that {log_file_path} is reported.
-    If the script failed completely (for example, due to a path error), inform the user with a brief "send message" and either
+    If the script failed completely (for example, due to a path error), inform the user with a brief "send_message" and either
     retry after correcting the issue or use "mark task error" if it is not fixable.
     For heavy error counts, mention this in the final summary so the user can review the log.
 
@@ -166,13 +166,13 @@ steps:
     - The log appears to cover all processed files (counts are consistent with the script summary).
     - Key subfolders (e.g., src, docs, assets) exist and are not empty if files of those types existed originally.
     - Any errors recorded in the log are noted for the final report.
-    If something looks clearly incorrect or incomplete, inform the user via "send message" and, if they request,
+    If something looks clearly incorrect or incomplete, inform the user via "send_message" and, if they request,
     rerun the classification/move step or stop and "mark task error" with an explanation.
 
   name: Close task and report to user
   description: Summarize the new project structure and file moves, provide the log location, and set the final task status.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
     - {project_root} and a short description of the standard structure created.
     - Whether this was a dry-run or actual move.
     - Count of total files scanned, files moved, unchanged/no_rule files, and error cases (if any).

@@ -74,7 +74,7 @@ steps:
   name: Confirm documents and summary preferences
   description: Clarify which documents to summarize and how the summary should look, using a single concise exchange with the user.
   action_instruction: >
-    Use "send message" to confirm:
+    Use "send_message" to confirm:
     - Whether the user will provide a directory {input_directory} that contains all documents
       or a list of explicit file paths {file_paths}.
     - Desired summary length (e.g., “1 paragraph per file”, “about 1 page total”, or {summary_length}).
@@ -85,14 +85,14 @@ steps:
       - Both.
     - Preferred output file type (e.g., .txt, .md, or .docx) and path {summary_output_file}, or accept a default.
     - Any specific focus (e.g., “only summarize decisions and action items”).
-    Ask a focused "ask question" only if some critical point (like source location) is unclear, then restate the final
-    parameters back to the user in a short "send message" to lock them in the task context.
+    Ask a focused "send_message" only if some critical point (like source location) is unclear, then restate the final
+    parameters back to the user in a short "send_message" to lock them in the task context.
   validation_instruction: >
     Confirm that:
     - There is at least one valid-looking source location: {input_directory} or at least one {file_path}.
     - Summary length and format preferences are known (or sensible defaults chosen, e.g., short bullet summary).
     - Output format and path are decided or have a reasonable default.
-    If any of these are still ambiguous, call "ask question" once more; otherwise proceed.
+    If any of these are still ambiguous, call "send_message" once more; otherwise proceed.
 
   name: Inspect and prepare source documents
   description: Check which documents are actually present and determine their types with minimal overhead.
@@ -104,13 +104,13 @@ steps:
       - Identify which are text-like formats supported directly by summarization tools (.txt, .md, .docx).
       - Note any .pdf files; these may require "read pdf file" if they are to be summarized.
       - Ignore clearly unsupported types unless the user has a special request.
-    If the directory is empty or no usable documents are found, use "send message" to inform the user and ask whether they
+    If the directory is empty or no usable documents are found, use "send_message" to inform the user and ask whether they
     want to point to a different directory or cancel.
   validation_instruction: >
     Ensure:
     - At least one suitable document is available (.txt, .md, .docx, or .pdf).
     - You have a clear list {documents_to_summarize} of files to process.
-    If no suitable documents are found, explain this with "send message" and either request new inputs or "mark task cancel"
+    If no suitable documents are found, explain this with "send_message" and either request new inputs or "mark task cancel"
     if the user chooses not to proceed.
 
   name: Summarize documents using built-in summarization actions
@@ -186,7 +186,7 @@ steps:
   name: Close task and report to user
   description: Inform the user of what was summarized, where the summary is stored, and any important notes, then mark the task appropriately.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
     - List the main source location(s): {input_directory} or {file_paths}.
     - State whether the summaries are:
       - Per-document,

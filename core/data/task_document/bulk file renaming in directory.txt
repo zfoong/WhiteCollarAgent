@@ -56,7 +56,7 @@ steps:
   name: Confirm scope and rules
   description: Ensure all necessary information to perform the renaming is clearly defined and confirmed by the user.
   action_instruction: >
-    Use the "send message" action to briefly list the required inputs and show the current understanding of the request:
+    Use the "send_message" action to briefly list the required inputs and show the current understanding of the request:
     - Root directory path(s).
     - Whether to include subfolders.
     - Naming rules (prefix, suffix, simple replacements, timestamp yes/no and format).
@@ -64,8 +64,8 @@ steps:
     - Collision handling choice (append counter vs. skip).
     - Whether a dry-run preview is desired or should proceed directly with renaming.
     Ask the user to confirm or correct any missing or ambiguous parts. If a critical detail remains unclear
-    (e.g., what to do with collisions, or whether to preserve extensions), use the "ask question" action with a focused
-    question. Once the user answer is received, restate the final parameters in a short "send message" so they are explicit
+    (e.g., what to do with collisions, or whether to preserve extensions), use the "send_message" action with a focused
+    question. Once the user answer is received, restate the final parameters in a short "send_message" so they are explicit
     in the task history.
   validation_instruction: >
     Check that:
@@ -73,7 +73,7 @@ steps:
     - There is a non-empty naming rule set (at least one of prefix, suffix, replacement, or timestamp).
     - Recursion preference is decided.
     - A default collision strategy is chosen (if the user does not care, use "append counter").
-    If any of these are missing, call "ask question" again. Only proceed when the user has clearly confirmed the final rules.
+    If any of these are missing, call "send_message" again. Only proceed when the user has clearly confirmed the final rules.
 
   name: Scan directories and collect target files
   description: Verify the root directories exist and collect the list of files to be processed, using a single efficient traversal.
@@ -98,8 +98,8 @@ steps:
   validation_instruction: >
     Check the script status in the action output:
     - It must indicate success (no unhandled exceptions).
-    - Confirm at least one root directory was valid; if any root is invalid, send a "send message" telling the user which root(s) were skipped and decide whether to continue or cancel.
-    - If zero files are found, send a concise "send message" explaining that no files matched the filters and ask the user if they want to adjust filters or stop.
+    - Confirm at least one root directory was valid; if any root is invalid, send a "send_message" telling the user which root(s) were skipped and decide whether to continue or cancel.
+    - If zero files are found, send a concise "send_message" explaining that no files matched the filters and ask the user if they want to adjust filters or stop.
     Proceed only when there is a clear, non-empty set of target files agreed upon.
 
   name: Rename files in one pass and log results
@@ -134,7 +134,7 @@ steps:
     - Ensure the script finished without unhandled exceptions.
     - Confirm that a log file path is mentioned in stdout and that its location is reasonable.
     - Note the counts of renamed, skipped, and error cases from stdout.
-    If the script failed globally (e.g., a coding error or permission error), explain briefly to the user with "send message"
+    If the script failed globally (e.g., a coding error or permission error), explain briefly to the user with "send_message"
     and decide whether to retry with a corrected script or "mark task error" if it cannot reasonably be fixed.
 
   name: Overall validate renaming task
@@ -142,7 +142,7 @@ steps:
   action_instruction: >
     Use the information from the rename script’s stdout and the log file to perform a simple, final validation:
     - If the operation was a dry-run:
-      - Confirm with the user (via "send message") whether they want to rerun without dry_run; if so, repeat the previous step with dry_run=false.
+      - Confirm with the user (via "send_message") whether they want to rerun without dry_run; if so, repeat the previous step with dry_run=false.
     - If renaming was actually performed:
       - Optionally use "create and run python script" or "shell view" to:
         - Open the log file.
@@ -156,7 +156,7 @@ steps:
   name: Close task and report to user
   description: Summarize the outcome, provide the log file location, and mark the task status.
   action_instruction: >
-    Use "send message" to send a concise final summary including:
+    Use "send_message" to send a concise final summary including:
     - The root directory path(s) processed.
     - The naming rules actually applied (prefix, suffix, key replacements, timestamp usage).
     - Whether it was a dry-run or a real rename.

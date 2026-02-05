@@ -2,11 +2,11 @@
 core.internal_action_interface
 
 This interface contains all the agent actions calling to the agent
-framework internal functions. Most functions are not implemented yet.
+framework internal functions.
 """
 
-from typing import Dict, Any, Optional
-from core.llm_interface import LLMInterface
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
+from core.llm import LLMInterface, LLMCallType
 from core.vlm_interface import VLMInterface
 from core.task.task_manager import TaskManager
 from core.task.task import Task
@@ -18,6 +18,10 @@ from pathlib import Path
 from core.config import AGENT_WORKSPACE_ROOT
 import mss, mss.tools, os
 
+if TYPE_CHECKING:
+    from core.context_engine import ContextEngine
+
+
 class InternalActionInterface:
     """
     Provides static/class methods so it can be used without instantiation.
@@ -25,200 +29,339 @@ class InternalActionInterface:
     via actions.
     """
 
-    # Class-level references for LLM
+    # Class-level references
     llm_interface: Optional[LLMInterface] = None
     task_manager: Optional[TaskManager] = None
     state_manager: Optional[StateManager] = None
     vlm_interface: Optional[VLMInterface] = None
+    context_engine: Optional["ContextEngine"] = None
 
     @classmethod
-    def initialize(cls, llm_interface: LLMInterface,
-                   task_manager: TaskManager, state_manager: StateManager,
-                   vlm_interface: VLMInterface | None = None):
+    def initialize(
+        cls,
+        llm_interface: LLMInterface,
+        task_manager: TaskManager,
+        state_manager: StateManager,
+        vlm_interface: Optional[VLMInterface] = None,
+        context_engine: Optional["ContextEngine"] = None,
+    ):
         """
         Register the shared interfaces that actions depend on.
 
         This must be called once at application startup so later static calls can
         access the language model, task manager, state manager, and optional
         vision model without creating new instances.
-
-        Args:
-            llm_interface: Core large language model interface for text
-                generation and reasoning.
-            task_manager: Orchestrates task creation, execution, and state
-                updates.
-            state_manager: Persists session state and provides access to event
-                streams and agent properties.
-            vlm_interface: Optional vision-language model interface used for
-                image understanding and screen descriptions.
         """
         cls.llm_interface = llm_interface
         cls.task_manager = task_manager
         cls.state_manager = state_manager
         cls.vlm_interface = vlm_interface
+        cls.context_engine = context_engine
 
     # ─────────────────────── LLM Access for Actions ───────────────────────
+
     @classmethod
     def use_llm(cls, prompt: str, system_message: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Generate a response from the configured LLM.
-
-        Args:
-            prompt: User or agent prompt sent to the language model.
-            system_message: Optional system instructions to steer the response
-                style or constraints.
-
-        Returns:
-            A mapping containing the key ``"llm_response"`` with the model
-            output.
-
-        Raises:
-            RuntimeError: If the interface has not been initialised with an
-                :class:`LLMInterface`.
-        """
+        """Generate a response from the configured LLM."""
         if cls.llm_interface is None:
             raise RuntimeError("InternalActionInterface not initialized with LLMInterface.")
         response = cls.llm_interface.generate_response(prompt, system_message)
         return {"llm_response": response}
-    
+
     @classmethod
-    def describe_image(cls, image_path: str, prompt: str | None = None) -> str:
-        """
-        Produce a textual description for an image using the VLM.
-
-        Args:
-            image_path: Absolute path to the image to describe.
-            prompt: Optional user prompt to guide the vision-language model.
-
-        Returns:
-            A natural-language description returned by the VLM.
-
-        Raises:
-            RuntimeError: If no :class:`VLMInterface` was configured during
-                initialization.
-        """
+    def describe_image(cls, image_path: str, prompt: Optional[str] = None) -> str:
+        """Produce a textual description for an image using the VLM."""
         if cls.vlm_interface is None:
             raise RuntimeError("InternalActionInterface not initialized with VLMInterface.")
         return cls.vlm_interface.describe_image(image_path, user_prompt=prompt)
-    
+
     # ─────────────────────── GUI Actions ───────────────────────
-    
+
     @classmethod
-    def describe_screen(cls) -> dict[str, str]:
-        """
-        Capture the current virtual desktop and describe it with the VLM.
-
-        The screen is saved to a timestamped PNG inside the agent workspace and
-        then passed to the vision model for summarisation.
-
-        Returns:
-            A mapping with the VLM description under ``"description"`` and the
-            saved screenshot path under ``"file_path"``.
-
-        Raises:
-            RuntimeError: If no :class:`VLMInterface` is available.
-        """
+    def describe_screen(cls) -> Dict[str, str]:
+        """Capture the current virtual desktop and describe it with the VLM."""
         if cls.vlm_interface is None:
             raise RuntimeError("InternalActionInterface not initialised with VLMInterface.")
-    
+
         temp_dir = Path(AGENT_WORKSPACE_ROOT)
-        ts       = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
         img_path = os.path.join(temp_dir, f"viewscreen_{ts}.png")
-    
+
         with mss.mss() as sct:
-            shot = sct.grab(sct.monitors[0])          # full virtual desktop
+            shot = sct.grab(sct.monitors[0])
             mss.tools.to_png(shot.rgb, shot.size, output=img_path)
-    
-        description = cls.describe_image(img_path)    # default VLM prompt
+
+        description = cls.describe_image(img_path)
         return {"description": description, "file_path": img_path}
 
     @staticmethod
-    async def do_chat(
-        message: str,
-    ) -> None:
-        """
-        Record an agent-authored chat message and publish it to the event stream.
-
-        Args:
-            message: Text content the agent wants to send to the user or log.
-
-        Raises:
-            RuntimeError: If the state manager has not been configured.
-        """
+    async def do_chat(message: str) -> None:
+        """Record an agent-authored chat message to the event stream."""
         if InternalActionInterface.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with StateManager.")
-
         InternalActionInterface.state_manager.record_agent_message(message)
-
-        event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
-        event_stream_manager.log(
-            "agent",
-            message,
-            display_message=message
-        )
-        InternalActionInterface.state_manager.bump_event_stream()
 
     @staticmethod
     def do_ignore():
-        """
-        Note that the agent chose to ignore the latest user input.
-        """
+        """Note that the agent chose to ignore the latest user input."""
         logger.debug("[Agent Action] Ignoring user message.")
 
     # ───────────────── CLI and GUI mode ─────────────────
+
     @staticmethod
     def switch_to_CLI_mode():
         STATE.update_gui_mode(False)
-    
+
     @staticmethod
     def switch_to_GUI_mode():
         STATE.update_gui_mode(True)
 
     # ───────────────── Task Management ─────────────────
-    @classmethod
-    async def do_create_and_run_task(cls, task_name: str, task_description: str) -> str:
-        """
-        Create a new task and immediately start it.
 
-        The task metadata is persisted and registered as the active task for the
-        current session.
+    @classmethod
+    def do_create_task(
+        cls,
+        task_name: str,
+        task_description: str,
+        task_mode: str = "complex",
+    ) -> Dict[str, Any]:
+        """
+        Create a new task with automatic action set selection.
+
+        The action sets are automatically selected by an LLM based on the task
+        description. This supports custom action sets and MCP tools dynamically.
 
         Args:
             task_name: Short name for the task.
             task_description: Detailed description of the work to perform.
+            task_mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work.
 
         Returns:
-            The created task identifier.
-
-        Raises:
-            RuntimeError: If task or state managers have not been initialised.
+            Dictionary with task_id, action_sets, and action_count.
         """
         if cls.task_manager is None or cls.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with Task/State managers.")
-            
-        task_id = await cls.task_manager.create_task(task_name, task_description)
 
-        await cls.task_manager.start_task()
-        wf: Optional[Task] = cls.task_manager.get_task()
-        cls.state_manager.add_to_active_task(wf)
-        return task_id
+        # Clear the event stream from any previous task before starting new one
+        # This prevents old events from polluting the new task's context
+        cls.state_manager.event_stream_manager.clear_all()
+        logger.info(f"[TASK] Cleared event stream for new task: {task_name}")
+
+        # Step 1: Automatically select action sets via LLM
+        selected_sets = cls._select_action_sets_via_llm(task_name, task_description)
+        logger.info(f"[TASK] Auto-selected action sets for '{task_name}': {selected_sets}")
+
+        # Step 2: Create task with selected action sets
+        task_id = cls.task_manager.create_task(
+            task_name, task_description, mode=task_mode, action_sets=selected_sets
+        )
+        task: Optional[Task] = cls.task_manager.get_task()
+        cls.state_manager.add_to_active_task(task)
+
+        # Create session caches for complex tasks only (expensive operation, skip for simple tasks)
+        if task_mode == "complex" and cls.llm_interface and cls.context_engine:
+            try:
+                # Generate the static system prompt for the session
+                system_prompt, _ = cls.context_engine.make_prompt(
+                    user_flags={"query": False, "expected_output": False},
+                    system_flags={"policy": False},
+                )
+                # Create a session cache for EACH call type so they don't pollute each other's KV cache
+                for call_type in [
+                    LLMCallType.REASONING,
+                    LLMCallType.ACTION_SELECTION,
+                    LLMCallType.GUI_REASONING,
+                    LLMCallType.GUI_ACTION_SELECTION,
+                ]:
+                    cache_id = cls.llm_interface.create_session_cache(task_id, call_type, system_prompt)
+                    if cache_id:
+                        logger.debug(f"[TASK] Created session cache {cache_id} for task {task_id}:{call_type}")
+            except Exception as e:
+                logger.warning(f"[TASK] Failed to create session caches for task {task_id}: {e}")
+
+        return {
+            "task_id": task_id,
+            "action_sets": task.action_sets if task else [],
+            "action_count": len(task.compiled_actions) if task else 0,
+        }
+
+    @classmethod
+    def _select_action_sets_via_llm(cls, task_name: str, task_description: str) -> List[str]:
+        """
+        Make LLM call to automatically select action sets based on task description.
+
+        This dynamically discovers available action sets from the registry,
+        supporting custom actions and MCP tools.
+
+        Args:
+            task_name: Short name for the task.
+            task_description: Detailed description of the task.
+
+        Returns:
+            List of action set names selected by the LLM.
+        """
+        import json
+        from core.action.action_set import action_set_manager
+        from core.prompt import ACTION_SET_SELECTION_PROMPT
+
+        # If no LLM interface, fall back to empty list (core-only)
+        if cls.llm_interface is None:
+            logger.warning("[TASK] No LLM interface available, using core-only action sets")
+            return []
+
+        try:
+            # Step 1: Get available action sets dynamically from registry
+            available_sets = action_set_manager.list_all_sets()
+
+            # DEBUG: Log all discovered action sets and their actions
+            logger.info("[ACTION_SETS] ========== Available Action Sets ==========")
+            for set_name, set_desc in available_sets.items():
+                actions_in_set = action_set_manager.get_actions_in_set(set_name)
+                logger.info(f"[ACTION_SETS] {set_name}: {set_desc}")
+                logger.info(f"[ACTION_SETS]   Actions ({len(actions_in_set)}): {actions_in_set}")
+            logger.info("[ACTION_SETS] ============================================")
+
+            # Format sets for prompt (exclude 'core' since it's always included)
+            sets_text = "\n".join(
+                f"- {name}: {desc}"
+                for name, desc in available_sets.items()
+                if name != "core"
+            )
+
+            if not sets_text:
+                # No additional sets available beyond core
+                return []
+
+            # Step 2: Build the prompt
+            prompt = ACTION_SET_SELECTION_PROMPT.format(
+                task_name=task_name,
+                task_description=task_description,
+                available_sets=sets_text
+            )
+
+            # Step 3: Call LLM (use a simpler call for this quick decision)
+            response = cls.llm_interface.generate_response(
+                user_prompt=prompt,
+                system_prompt="You are a helpful assistant that selects action sets for tasks. Return only valid JSON.",
+            )
+
+            # Step 4: Parse the JSON response
+            # Clean up the response (remove markdown code blocks if present)
+            response = response.strip()
+            if response.startswith("```"):
+                # Remove markdown code block markers
+                lines = response.split("\n")
+                response = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+            selected_sets = json.loads(response)
+
+            # Validate that it's a list of strings
+            if not isinstance(selected_sets, list):
+                logger.warning(f"[TASK] LLM returned non-list for action sets: {selected_sets}")
+                return []
+
+            # Filter to only valid set names
+            valid_set_names = set(available_sets.keys())
+            valid_selected = [s for s in selected_sets if isinstance(s, str) and s in valid_set_names and s != "core"]
+
+            # DEBUG: Log selection result
+            logger.info(f"[ACTION_SETS] LLM raw response: {selected_sets}")
+            logger.info(f"[ACTION_SETS] Valid selected sets: {valid_selected}")
+
+            # Log what actions will be available
+            total_actions = []
+            for set_name in ["core"] + valid_selected:
+                actions_in_set = action_set_manager.get_actions_in_set(set_name)
+                total_actions.extend(actions_in_set)
+            logger.info(f"[ACTION_SETS] Total actions for task: {len(set(total_actions))} from sets: {['core'] + valid_selected}")
+
+            return valid_selected
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"[TASK] Failed to parse LLM response for action sets: {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"[TASK] Failed to select action sets via LLM: {e}")
+            return []
+
+    @classmethod
+    def update_todos(cls, todos: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Update the todo list for the current task.
+
+        Args:
+            todos: List of todo dictionaries with content, status, and
+                   optional active_form.
+
+        Returns:
+            Status and the updated todo list.
+        """
+        if cls.task_manager is None:
+            raise RuntimeError("InternalActionInterface not initialized with TaskManager.")
+
+        updated_todos = cls.task_manager.update_todos(todos)
+
+        # Emit [todos] event to event stream for session caching optimization
+        # Format: [ ] Pending | [>] In Progress | [x] Completed
+        cls._emit_todos_event(updated_todos)
+
+        return {"status": "ok", "todos": updated_todos}
+
+    @classmethod
+    def _emit_todos_event(cls, todos: List[Dict[str, Any]]) -> None:
+        """
+        Emit a [todos] event to the event stream showing current todo status.
+
+        Format:
+        HH:MM:SS [todos]:
+          [ ] Item1
+          [>] Item2
+          [x] Item3
+
+        This enables session caching by keeping todos in the dynamic event stream
+        rather than as a separate prompt component.
+        """
+        if cls.state_manager is None:
+            return
+
+        todo_lines = []
+        for todo in todos:
+            status = todo.get("status", "pending")
+            content = todo.get("content", "")
+
+            # Determine checkbox based on status
+            if status == "completed":
+                checkbox = "[x]"
+            elif status == "in_progress":
+                checkbox = "[>]"
+            else:
+                checkbox = "[ ]"
+
+            todo_lines.append(f"  {checkbox} {content}")
+
+        if todo_lines:
+            todos_str = "\n" + "\n".join(todo_lines)
+        else:
+            todos_str = "(no todos)"
+
+        # Log to event stream with kind="todos"
+        cls.state_manager.event_stream_manager.log(
+            kind="todos",
+            message=todos_str,
+            severity="INFO",
+        )
+        cls.state_manager.bump_event_stream()
 
     @classmethod
     async def mark_task_completed(cls, message: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Mark the current session task as completed.
-
-        If no session is active, returns an error payload instead of raising.
-
-        Args:
-            message: Optional completion note to store alongside the task.
-
-        Returns:
-            A status dictionary indicating success or failure and the relevant
-            task id.
-        """
+        """Mark the current session task as completed."""
         try:
+            # Get task_id before marking as completed (task will be cleared)
+            task_id = cls._get_current_task_id()
             ok = await cls.task_manager.mark_task_completed(message=message)
+            # End session cache if task was successfully completed
+            if ok and task_id:
+                cls._end_task_session_cache(task_id)
             return {"status": "ok" if ok else "error"}
         except Exception as e:
             logger.error(f"[InternalActions] mark_task_completed failed: {e}", exc_info=True)
@@ -226,20 +369,14 @@ class InternalActionInterface:
 
     @classmethod
     async def mark_task_cancel(cls, reason: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Cancel the current session task.
-
-        If no session is active, returns an error payload instead of raising.
-
-        Args:
-            reason: Optional explanation of why the task was cancelled.
-
-        Returns:
-            A status dictionary indicating success or failure and the relevant
-            task id.
-        """
+        """Cancel the current session task."""
         try:
+            # Get task_id before marking as cancelled (task will be cleared)
+            task_id = cls._get_current_task_id()
             ok = await cls.task_manager.mark_task_cancel(reason=reason)
+            # End session cache if task was successfully cancelled
+            if ok and task_id:
+                cls._end_task_session_cache(task_id)
             return {"status": "ok" if ok else "error"}
         except Exception as e:
             logger.error(f"[InternalActions] mark_task_cancel failed: {e}", exc_info=True)
@@ -247,50 +384,125 @@ class InternalActionInterface:
 
     @classmethod
     async def mark_task_error(cls, message: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Mark the current session task as failed.
-
-        If no session is active, returns an error payload instead of raising.
-
-        Args:
-            message: Optional error detail to store alongside the task.
-
-        Returns:
-            A status dictionary indicating success or failure and the relevant
-            task id.
-        """
+        """Mark the current session task as failed."""
         try:
+            # Get task_id before marking as error (task will be cleared)
+            task_id = cls._get_current_task_id()
             ok = await cls.task_manager.mark_task_error(message=message)
+            # End session cache if task was successfully marked as error
+            if ok and task_id:
+                cls._end_task_session_cache(task_id)
             return {"status": "ok" if ok else "error"}
         except Exception as e:
             logger.error(f"[InternalActions] mark_task_error failed: {e}", exc_info=True)
             return {"status": "error", "error": str(e)}
 
     @classmethod
-    async def start_next_step(
-        cls,
-        *,
-        update_plan: bool = False,
-    ) -> Dict[str, Any]:
-        """
-        Advance the active task to its next step.
+    def _get_current_task_id(cls) -> Optional[str]:
+        """Get the current task ID from the task manager."""
+        if cls.task_manager:
+            task = cls.task_manager.get_task()
+            if task:
+                return task.id
+        return None
 
-        When ``update_plan`` is True, the planner is asked to refresh the plan
-        before moving forward.
+    @classmethod
+    def _end_task_session_cache(cls, task_id: str) -> None:
+        """End ALL session caches for a task (all call types)."""
+        if cls.llm_interface:
+            try:
+                cls.llm_interface.end_all_session_caches(task_id)
+                logger.debug(f"[TASK] Ended all session caches for task {task_id}")
+            except Exception as e:
+                logger.warning(f"[TASK] Failed to end session caches for task {task_id}: {e}")
+
+    # ───────────────── Action Set Management ─────────────────
+
+    @classmethod
+    def add_action_sets(cls, sets_to_add: List[str]) -> Dict[str, Any]:
+        """
+        Add action sets to the current task.
 
         Args:
-            update_plan: Whether to replan the task before starting the next
-                step.
+            sets_to_add: List of action set names to add.
 
         Returns:
-            A status dictionary indicating success and the planner result, or an
-            error payload when no task is active.
+            Dictionary with success status and updated set information.
         """
+        if cls.task_manager is None:
+            raise RuntimeError("InternalActionInterface not initialized with TaskManager.")
+
+        result = cls.task_manager.add_action_sets(sets_to_add)
+
+        # Invalidate session cache - action list has changed
+        cls._invalidate_action_selection_caches()
+
+        return result
+
+    @classmethod
+    def remove_action_sets(cls, sets_to_remove: List[str]) -> Dict[str, Any]:
+        """
+        Remove action sets from the current task.
+
+        Args:
+            sets_to_remove: List of action set names to remove.
+
+        Returns:
+            Dictionary with success status and updated set information.
+        """
+        if cls.task_manager is None:
+            raise RuntimeError("InternalActionInterface not initialized with TaskManager.")
+
+        result = cls.task_manager.remove_action_sets(sets_to_remove)
+
+        # Invalidate session cache - action list has changed
+        cls._invalidate_action_selection_caches()
+
+        return result
+
+    @classmethod
+    def _invalidate_action_selection_caches(cls) -> None:
+        """
+        Invalidate action selection session caches when action sets change.
+
+        When action sets are added or removed, the cached prompt becomes stale
+        because the <actions> section has changed. This method clears the
+        session caches for both CLI and GUI action selection.
+        """
+        task_id = cls._get_current_task_id()
+        if not task_id or not cls.llm_interface:
+            return
+
         try:
-            result = await cls.task_manager.start_next_step(
-                replan=update_plan,
-            )
-            return {"status": "ok", "result": result}
+            # End action selection caches (both CLI and GUI)
+            cls.llm_interface.end_session_cache(task_id, LLMCallType.ACTION_SELECTION)
+            cls.llm_interface.end_session_cache(task_id, LLMCallType.GUI_ACTION_SELECTION)
+
+            # Also reset event stream sync points
+            if cls.context_engine:
+                cls.context_engine.reset_event_stream_sync(LLMCallType.ACTION_SELECTION)
+                cls.context_engine.reset_event_stream_sync(LLMCallType.GUI_ACTION_SELECTION)
+
+            logger.info(f"[CACHE] Invalidated action selection caches for task {task_id} due to action set change")
         except Exception as e:
-            logger.error(f"[InternalActions] start_next_step failed: {e}", exc_info=True)
-            return {"status": "error", "error": str(e)}
+            logger.warning(f"[CACHE] Failed to invalidate caches for task {task_id}: {e}")
+
+    @classmethod
+    def list_action_sets(cls) -> Dict[str, Any]:
+        """
+        List all available action sets and their descriptions.
+
+        Returns:
+            Dictionary with available sets and current task's active sets.
+        """
+        from core.action.action_set import action_set_manager
+
+        available_sets = action_set_manager.list_all_sets()
+        current_sets = []
+        if cls.task_manager:
+            current_sets = cls.task_manager.get_action_sets()
+
+        return {
+            "available_sets": available_sets,
+            "current_sets": current_sets,
+        }

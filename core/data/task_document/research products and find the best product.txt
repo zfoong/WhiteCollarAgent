@@ -60,7 +60,7 @@ context:
     - The comparison table file at {output_table_path} exists in the workspace and has one row per considered product with the key columns populated where possible.
     - Prices and ratings look reasonable (no obviously bogus values like negative prices or 100/5 ratings).
     - A recommendation is clearly stated and justified against the user’s criteria (budget, rating preferences, etc.).
-    - The final "send message" to the user includes:
+    - The final "send_message" to the user includes:
       - The recommended product (and maybe 1–2 strong alternatives).
       - Basic reasoning (price vs rating vs key attributes).
       - The path to the table for deeper review.
@@ -75,7 +75,7 @@ steps:
   name: Confirm research scope and criteria
   description: Clarify what type of product the user wants, their budget, and how they define “best” so that search and comparison remain focused.
   action_instruction: >
-    Use the "send message" action to summarize and confirm:
+    Use the "send_message" action to summarize and confirm:
     - {product_category} and optional {use_case}.
     - {max_budget} and {currency}, or state that there is no strict budget.
     - Preference hints: {preferred_brands}, brands to avoid, {min_review_score}, {min_review_count}.
@@ -84,15 +84,15 @@ steps:
     - Any specific sites to prioritize or avoid.
     - Preferred table format ({output_table_format}: "csv" or "markdown").
     Ask the user to confirm or adjust these details. If any critical item is missing (e.g., unsure product type or budget), use
-    "ask question" with a single focused question (e.g., "Do you have a maximum budget for {product_category}?").
-    Once clarified, restate the final agreed criteria in a short "send message" so they are recorded in the task history.
+    "send_message" with a single focused question (e.g., "Do you have a maximum budget for {product_category}?").
+    Once clarified, restate the final agreed criteria in a short "send_message" so they are recorded in the task history.
   validation_instruction: >
     Proceed only when:
     - {product_category} is clearly defined.
     - Budget constraints (or “no budget limit”) are explicitly stated.
     - There is at least a loose idea of required quality (e.g., "4.0+ rating" or "good overall reviews").
     - The user’s region or availability constraints are at least roughly understood.
-    If anything remains ambiguous, use "ask question" again before searching.
+    If anything remains ambiguous, use "send_message" again before searching.
 
   name: Discover candidate products via web search
   description: Use a small number of targeted web searches to collect URLs of promising product pages for the given product scope and criteria.
@@ -115,7 +115,7 @@ steps:
     - You have at least {min_candidates} and at most {max_candidates} candidate URLs.
     - URLs appear to be product pages (based on titles/snippets like "Buy", "Price", "Reviews").
     If you cannot find enough candidates:
-    - Use "send message" to explain the limitation and ask the user if they want to relax constraints (budget, region, etc.) or continue with fewer products.
+    - Use "send_message" to explain the limitation and ask the user if they want to relax constraints (budget, region, etc.) or continue with fewer products.
 
   name: Extract product details and build comparison table
   description: Visit each candidate product page, extract key information (name, price, rating, availability, basic attributes), and save a comparison table in the workspace.
@@ -154,7 +154,7 @@ steps:
     Check the script result:
     - Status should be success (no unhandled exception).
     - Confirm that {output_table_path} is mentioned in stdout or is as expected.
-    - If very few products produced valid price/rating data, note this in a "send message" to the user and continue, but be clear about the limitation.
+    - If very few products produced valid price/rating data, note this in a "send_message" to the user and continue, but be clear about the limitation.
     You do not need a second script pass; rely on basic sanity checks (e.g., no absurd prices) and move on.
 
   name: Analyze table and select best product
@@ -184,12 +184,12 @@ steps:
     Ensure the script:
     - Produces at least one candidate in the final ranking; if not, fall back to the lowest-price product with valid data.
     - Prints a clearly identified best product and its basic details.
-    If no reasonable candidate can be ranked (e.g., almost all fields missing), send a "send message" to the user explaining that data was too sparse to choose confidently, but still mention any product with the most available information.
+    If no reasonable candidate can be ranked (e.g., almost all fields missing), send a "send_message" to the user explaining that data was too sparse to choose confidently, but still mention any product with the most available information.
 
   name: Close task and report recommendation
   description: Present the results to the user, give them access to the table, and finalize the task status.
   action_instruction: >
-    Use "send message" to provide a concise, user-facing summary that includes:
+    Use "send_message" to provide a concise, user-facing summary that includes:
     - Product scope ({product_category}, {use_case} if any).
     - Quick description of what was done (sites searched, roughly how many products inspected).
     - The recommended best product:

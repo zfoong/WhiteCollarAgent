@@ -3,22 +3,21 @@
 core.agent_base
 
 Generic, extensible agent that serves every role-specific AI worker.
-This is a vanilla “base agent”, can be launched by instantiating **AgentBase**
+This is a vanilla "base agent", can be launched by instantiating **AgentBase**
 with default arguments; specialised agents simply subclass and override
 or extend the protected hooks.
 
 White Collar Agent is an open-source, light version of AI agent developed by CraftOS.
 Here are the core features:
-- Planning
+- Todo-based task tracking
 - Can switch between CLI/GUI mode
-- Contain task document for few-shot examples
 
 Main agent cycle:
 - Receive query from user
 - Reply or create task
 - Task cycle:
-    - Planning
-    - Action
+    - Action selection and execution
+    - Update todos
     - Repeat until completion
 """
 
@@ -37,9 +36,9 @@ if TYPE_CHECKING:
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
 from core.action.action_router import ActionRouter
-from core.tui_interface import TUIInterface
+from core.tui import TUIInterface
 from core.internal_action_interface import InternalActionInterface
-from core.llm_interface import LLMInterface
+from core.llm import LLMInterface, LLMCallType
 from core.vlm_interface import VLMInterface
 from core.database_interface import DatabaseInterface
 from core.logger import logger
@@ -47,13 +46,13 @@ from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from core.trigger import Trigger, TriggerQueue
-from core.prompt import STEP_REASONING_PROMPT
+# STEP_REASONING_PROMPT removed - reasoning is now integrated into action selection
 from core.state.types import ReasoningResult
 from core.task.task_manager import TaskManager
-from core.task.task_planner import TaskPlanner
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.gui.gui_module import GUIModule
 from core.gui.handler import GUIHandler
+from decorators.profiler import profile, profile_loop, OperationCategory
 
 
 @dataclass
@@ -120,14 +119,6 @@ class AgentBase:
         
         # action & task layers
         self.action_library = ActionLibrary(self.llm, db_interface=self.db_interface)
-        
-        self.task_docs_path = "core/data/task_document"
-        if self.task_docs_path:
-            try:
-                stats = self.db_interface.ingest_task_documents_from_folder(self.task_docs_path)
-                logger.debug(f"[TASKDOC SYNC] folder={self.task_docs_path} → {stats}")
-            except Exception:
-                logger.error("[TASKDOC SYNC] Failed to ingest task documents", exc_info=True)
 
         self.triggers = TriggerQueue(llm=self.llm)
 
@@ -143,10 +134,7 @@ class AgentBase:
         )
         self.action_router = ActionRouter(self.action_library, self.llm, self.vlm, self.context_engine)
 
-        self.task_planner = TaskPlanner(llm_interface=self.llm, db_interface=self.db_interface, fewshot_top_k=1, context_engine=self.context_engine)
         self.task_manager = TaskManager(
-            self.task_planner,
-            self.triggers,
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
             state_manager=self.state_manager,
@@ -157,6 +145,7 @@ class AgentBase:
             self.task_manager,
             self.state_manager,
             vlm_interface=self.vlm,
+            context_engine=self.context_engine,
         )
 
         GUIHandler.gui_module: GUIModule = GUIModule(
@@ -217,6 +206,7 @@ class AgentBase:
     # =====================================
     # Agent Turn
     # =====================================
+    @profile_loop
     async def react(self, trigger: Trigger) -> None:
         """
         This is the main agent cycle. It executes a full agent turn in response to an incoming trigger.
@@ -302,19 +292,17 @@ class AgentBase:
         self, trigger_data: TriggerData, session_id: str
     ) -> dict:
         """
-        Handle GUI mode task step execution.
-        
+        Handle GUI mode task execution.
+
         Returns:
             Dictionary with action_output, new_session_id, and event_stream_summary
         """
-        current_step = self.state_manager.get_current_step()
-        # if current_step is None:
-        #     raise ValueError("No current step found in StateManager")
+        current_todo = self.state_manager.get_current_todo()
 
         logger.debug("[GUI MODE] Entered GUI mode.")
-        
+
         gui_response = await GUIHandler.gui_module.perform_gui_task_step(
-            step=current_step,
+            step=current_todo,
             session_id=session_id,
             next_action_description=trigger_data.query,
             parent_action_id=trigger_data.parent_id,
@@ -333,18 +321,23 @@ class AgentBase:
             "event_stream_summary": event_stream_summary,
         }
 
+    @profile("agent_select_action", OperationCategory.AGENT_LOOP)
     async def _select_action(self, trigger_data: TriggerData) -> tuple[dict, str]:
         """
         Select an action based on current task state.
-        
+
         Returns:
             Tuple of (action_decision, reasoning) where reasoning is empty string
             for non-task contexts.
         """
         is_running_task = self.state_manager.is_running_task()
-        
+
         if is_running_task:
-            return await self._select_action_in_task(trigger_data.query)
+            # Check task mode - simple tasks use streamlined action selection
+            if self.task_manager.is_simple_task():
+                return await self._select_action_in_simple_task(trigger_data.query)
+            else:
+                return await self._select_action_in_task(trigger_data.query)
         else:
             logger.debug(f"[AGENT QUERY] {trigger_data.query}")
             action_decision = await self.action_router.select_action(query=trigger_data.query)
@@ -352,26 +345,70 @@ class AgentBase:
                 raise ValueError("Action router returned no decision.")
             return action_decision, ""
 
+    @profile("agent_select_action_in_task", OperationCategory.AGENT_LOOP)
     async def _select_action_in_task(self, query: str) -> tuple[dict, str]:
         """
         Select action when running within a task context.
-        
+
+        Reasoning is now integrated into the action selection prompt,
+        so this method directly calls the action router without a separate
+        reasoning step.
+
         Returns:
             Tuple of (action_decision, reasoning)
         """
-        reasoning_result = await self._perform_reasoning(query=query)
-        logger.debug(f"[AGENT QUERY] {reasoning_result.action_query}")
-        
+        # Single LLM call - reasoning is integrated into action selection
         action_decision = await self.action_router.select_action_in_task(
-            query=reasoning_result.action_query,
-            reasoning=reasoning_result.reasoning,
+            query=query,
             GUI_mode=STATE.gui_mode,
         )
-        
+
         if not action_decision:
             raise ValueError("Action router returned no decision.")
-        
-        return action_decision, reasoning_result.reasoning
+
+        # Extract reasoning from the action decision (now included in response)
+        reasoning = action_decision.get("reasoning", "")
+        logger.debug(f"[AGENT REASONING] {reasoning}")
+
+        # Log reasoning to event stream
+        if self.event_stream_manager and reasoning:
+            self.event_stream_manager.log(
+                "agent reasoning",
+                reasoning,
+                severity="DEBUG",
+                display_message=None,
+            )
+            self.state_manager.bump_event_stream()
+
+        return action_decision, reasoning
+
+    @profile("agent_select_action_in_simple_task", OperationCategory.AGENT_LOOP)
+    async def _select_action_in_simple_task(self, query: str) -> tuple[dict, str]:
+        """
+        Select action for simple task mode - lighter weight than complex task.
+
+        Reasoning is now integrated into the action selection prompt.
+        Simple tasks use streamlined prompts and no todo workflow.
+        They auto-end after delivering results.
+
+        Returns:
+            Tuple of (action_decision, reasoning)
+        """
+        # Single LLM call - reasoning is integrated into action selection
+        action_decision = await self.action_router.select_action_in_simple_task(
+            query=query,
+        )
+
+        if not action_decision:
+            raise ValueError("Action router returned no decision.")
+
+        # Extract reasoning from the action decision (now included in response)
+        reasoning = action_decision.get("reasoning", "")
+        logger.debug(f"[AGENT REASONING - SIMPLE TASK] {reasoning}")
+
+        # Don't log to event stream for simple tasks (efficiency)
+
+        return action_decision, reasoning
 
     async def _retrieve_and_prepare_action(
         self, action_decision: dict, initial_parent_id: str | None
@@ -395,15 +432,12 @@ class AgentBase:
                 "Check DB connectivity or ensure the action is registered."
             )
         
-        # Determine parent action ID
+        # Use provided parent ID or None
         parent_id = initial_parent_id
-        if not parent_id and self.state_manager.is_running_task():
-            current_step = self.state_manager.get_current_step()
-            if current_step and current_step.action_id:
-                parent_id = current_step.action_id
-        
+
         return action, action_params, parent_id or None
 
+    @profile("agent_execute_action", OperationCategory.AGENT_LOOP)
     async def _execute_action(
         self,
         action: Action,
@@ -533,65 +567,11 @@ class AgentBase:
         # No limits close or reached
         return True
 
-    async def _perform_reasoning(self, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
-        """
-        Perform LLM-based reasoning on a user query to guide action selection.
+    # NOTE: _perform_reasoning method was removed.
+    # Reasoning is now integrated directly into action selection prompts,
+    # reducing the number of LLM calls from 2N to N for N action cycles.
 
-        This function calls an asynchronous LLM API, validates its structured JSON
-        response, and retries if the output is malformed.
-
-        Args:
-            query (str): The raw user query from the user.
-            retries (int): Number of retry attempts if the LLM returns invalid JSON.
-
-        Returns:
-            ReasoningResult: A validated reasoning result containing:
-                - reasoning: The model's reasoning output
-                - action_query: A refined query used for action selection
-        """
-
-        # Build the system prompt using the current context configuration
-        system_prompt, _ = self.context_engine.make_prompt(
-            user_flags={"query": False, "expected_output": False},
-            system_flags={"policy": False},
-        )
-
-        # Format the user prompt with the incoming query
-        prompt = STEP_REASONING_PROMPT
-
-        # Track the last parsing/validation error for meaningful failure reporting
-        last_error: Exception | None = None
-
-        # Attempt the LLM call and parsing up to (retries + 1) times
-        for attempt in range(retries + 1):
-            # Await the asynchronous LLM call (non-blocking)
-            response = await self.llm.generate_response_async(
-                system_prompt=system_prompt,
-                user_prompt=prompt,
-            )
-
-            try:
-                # Parse and validate the structured JSON response
-                reasoning_result = self._parse_reasoning_response(response)
-
-                if self.event_stream_manager and log_reasoning_event:
-                    self.event_stream_manager.log(
-                        "agent reasoning",
-                        reasoning_result.reasoning,
-                        severity="DEBUG",
-                        display_message=None,
-                    )
-                    self.state_manager.bump_event_stream()
-
-                return reasoning_result
-
-            except ValueError as e:
-                # Capture the error and retry if attempts remain
-                last_error = e
-
-        # All retries exhausted — fail fast with a clear error
-        raise RuntimeError("Failed to obtain valid reasoning from LLM") from last_error
-
+    @profile("agent_create_new_trigger", OperationCategory.TRIGGER)
     async def _create_new_trigger(self, new_session_id, action_output, STATE):
         """
         Schedule a follow-up trigger when a task is ongoing.
@@ -612,15 +592,6 @@ class AgentBase:
                 # Nothing to schedule if no task is running
                 return
 
-            # Resolve current step for parent action ID
-            parent_action_id = None
-            try:
-                current_step = self.state_manager.get_current_step()
-                if current_step:
-                    parent_action_id = current_step.action_id
-            except Exception as e:
-                logger.error(f"[TRIGGER] Failed to get current step for session {new_session_id}: {e}", exc_info=True)
-
             # Delay logic
             fire_at_delay = 0.0
             try:
@@ -638,10 +609,9 @@ class AgentBase:
                     Trigger(
                         fire_at=fire_at,
                         priority=5,
-                        next_action_description="Perform the next best action for the task based on the plan and event stream",
+                        next_action_description="Perform the next best action for the task based on the todos and event stream",
                         session_id=new_session_id,
                         payload={
-                            "parent_action_id": parent_action_id,
                             "gui_mode": STATE.gui_mode,
                         },
                     )
@@ -726,7 +696,7 @@ class AgentBase:
         self.state_manager.reset()
         self.event_stream_manager.clear_all()
 
-        return "Agent state reset. Starting fresh." 
+        return "Agent state reset. Starting fresh."
 
     def _parse_reasoning_response(self, response: str) -> ReasoningResult:
         """

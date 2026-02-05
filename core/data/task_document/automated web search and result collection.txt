@@ -33,7 +33,7 @@ context:
       grouped or easily filterable by query.
     - Optionally deduplicate across queries by URL when {deduplicate_across_queries} is true, keeping the first occurrence and noting the queries that matched.
     - Use "create text file" once to write the final formatted list to {output_file_path} in markdown or CSV.
-    - Use "send message" once at the end to summarize outcome and share the file path; avoid unnecessary intermediate chatter.
+    - Use "send_message" once at the end to summarize outcome and share the file path; avoid unnecessary intermediate chatter.
   deadline: {time_left} left until deadline {deadline}
   definition_of_done(check during final validation step):
     - All queries confirmed with the user have been processed or clearly reported as failed.
@@ -41,7 +41,7 @@ context:
     - The output file {output_file_path} exists in the workspace and contains:
       - For each entry: query, title, url, and snippet.
       - Basic structure consistent with the chosen {output_format}.
-    - The final "send message" includes:
+    - The final "send_message" includes:
       - List of queries actually searched.
       - Count of results per query.
       - Path to the output file.
@@ -57,22 +57,22 @@ steps:
   name: Confirm queries and parameters
   description: Ensure the list of queries and basic options (results limit, output format, file path) are clearly defined before searching.
   action_instruction: >
-    Use the "send message" action to restate the current understanding of the task:
+    Use the "send_message" action to restate the current understanding of the task:
     - Queries: {queries}
     - Max results per query: {max_results_per_query} (default 10 if not provided)
     - Output format: {output_format} ("markdown" or "csv"; default "markdown")
     - Output file path: {output_file_path} (default something like "web_search_results_{date_time}.md" in the workspace)
     - Deduplicate across queries by URL: {deduplicate_across_queries} (true/false; default false)
     Ask the user to confirm or adjust these values. If any required input (e.g., queries) is missing or unclear,
-    use the "ask question" action with a short, focused question (e.g., "Please provide one or more search queries to run.").
-    Once clarified, send one more brief "send message" with the final confirmed parameters for the record.
+    use the "send_message" action with a short, focused question (e.g., "Please provide one or more search queries to run.").
+    Once clarified, send one more brief "send_message" with the final confirmed parameters for the record.
   validation_instruction: >
     Confirm that:
     - There is at least one non-empty query string in {queries}.
     - {max_results_per_query} is a positive integer or can be set to a default (e.g., 10).
     - {output_format} is either "markdown" or "csv", or can be safely defaulted to "markdown".
     - {output_file_path} is a valid-looking path string in the workspace (or a reasonable default can be used).
-    If any of these are missing or invalid, ask the user once more using "ask question" and update values before proceeding.
+    If any of these are missing or invalid, ask the user once more using "send_message" and update values before proceeding.
 
   name: Execute web searches and collect results
   description: Run the web searches for all confirmed queries and collect basic fields (query, title, url, snippet).
@@ -97,7 +97,7 @@ steps:
     Keep the collection in memory, ready for serialization to file.
   validation_instruction: >
     Verify that:
-    - The search action(s) returned without error; if an error is reported (e.g., network issue), send a short "send message"
+    - The search action(s) returned without error; if an error is reported (e.g., network issue), send a short "send_message"
       explaining that searches failed and ask the user whether to retry or stop.
     - For each query, check that you have at least zero to {max_results_per_query} entries; zero is allowed but should be noted.
     - If all queries returned zero results, prepare to mention this in the final summary rather than continuing silently.
@@ -121,7 +121,7 @@ steps:
     - The "create text file" action reports success (status indicates success).
     - The path returned matches {output_file_path} (or is clearly communicated).
     - The content length is non-trivial (not empty if there were any results).
-    If file creation fails (e.g., invalid path), send a short "send message" explaining the issue and, if reasonable,
+    If file creation fails (e.g., invalid path), send a short "send_message" explaining the issue and, if reasonable,
     adjust the path (e.g., simplify the filename) and retry once before giving up.
 
   name: Overall validate search collection
@@ -138,7 +138,7 @@ steps:
   name: Close task and report to user
   description: Summarize what was done, where results are saved, and mark the task status accordingly.
   action_instruction: >
-    Use "send message" to send a concise summary including:
+    Use "send_message" to send a concise summary including:
     - The list of queries that were actually searched.
     - The value of {max_results_per_query}.
     - The total number of results collected (and, if easy, a per-query breakdown).

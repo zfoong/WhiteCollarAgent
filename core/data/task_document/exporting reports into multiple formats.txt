@@ -66,7 +66,7 @@ steps:
   name: Confirm source and formats
   description: Ensure the agent knows where the report content comes from, which formats to generate, and basic naming/output preferences.
   action_instruction: >
-    Use the "send message" action to confirm:
+    Use the "send_message" action to confirm:
     - The source content:
       - Either a file path {source_file_path} (e.g., .md, .docx, .txt),
       - Or text that the user wants treated as the report content.
@@ -78,8 +78,8 @@ steps:
       - Spreadsheet columns (e.g., Section, Summary).
       - Whether to add a date/time suffix to filenames (e.g., _{date_YYYYMMDD}).
     If any key detail is missing (e.g., which formats, source file path, or output_basename),
-    use the "ask question" action with a short, specific question (for example,
-    "Which formats do you want? (pdf, slides, spreadsheet)"). Once clarified, send a brief "send message"
+    use the "send_message" action with a short, specific question (for example,
+    "Which formats do you want? (pdf, slides, spreadsheet)"). Once clarified, send a brief "send_message"
     that summarizes the final parameters so they are clearly recorded.
   validation_instruction: >
     Confirm that:
@@ -87,7 +87,7 @@ steps:
     - There is at least one requested format.
     - {output_basename} is non-empty.
     - {output_directory} is known or a default has been accepted.
-    If any of these are not confirmed, ask again using "ask question" and do not proceed until they are clear.
+    If any of these are not confirmed, ask again using "send_message" and do not proceed until they are clear.
 
   name: Normalize source content to canonical Markdown
   description: Convert the source content into a single canonical Markdown file {canonical_md_path} that will be used for all exports.
@@ -109,7 +109,7 @@ steps:
     - The normalization actions return a success status.
     - {canonical_md_path} is set and points to an existing file path within {output_directory}.
     - The file is non-empty (for example, by using "shell exec" to get its size or "shell view" to inspect its head).
-    If normalization fails (file not found, unreadable, or empty content), send a short "send message" explaining the issue
+    If normalization fails (file not found, unreadable, or empty content), send a short "send_message" explaining the issue
     and either ask for a corrected source or "mark task error" if it cannot be recovered.
 
   name: Export PDF from canonical Markdown
@@ -128,7 +128,7 @@ steps:
     If PDF was requested:
       - Confirm the PDF action reports success.
       - Optionally use "shell exec" or "shell view" to verify that {pdf_file_path} exists and has a non-zero size.
-    If PDF creation fails, log the error reason (for the log file in a later step) and notify the user via "send message"
+    If PDF creation fails, log the error reason (for the log file in a later step) and notify the user via "send_message"
     that the PDF could not be produced while other formats may still succeed.
 
   name: Export slides and spreadsheet via script
@@ -189,7 +189,7 @@ steps:
   name: Close task and report to user
   description: Inform the user which exports were created, where they are stored, and mark the task status appropriately.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
       - Report title: {report_title}.
       - Source used: {source_file_path} or inline content.
       - Output directory: {output_directory}.

@@ -73,7 +73,7 @@ steps:
   name: Confirm form target and responses
   description: Collect and confirm the target form location and the exact answers or template to use, along with submission count and method preferences.
   action_instruction: >
-    Use "send message" to confirm:
+    Use "send_message" to confirm:
     - The form target (e.g., {form_url} or a description of a local/app form).
     - Whether the form is public or requires an existing logged-in session.
     - The response data:
@@ -87,7 +87,7 @@ steps:
       - Maximum total submissions,
       - Whether this should be a dry-run or actual submission.
     If any of these are missing or unclear (e.g., multiple templates but no mapping, unknown number of submissions),
-    use "ask question" with a precise query such as:
+    use "send_message" with a precise query such as:
     - "Please provide the form URL {form_url} you want me to submit."
     - "Please confirm the mapping between form fields and your answers (e.g., field name → answer)."
   validation_instruction: >
@@ -96,7 +96,7 @@ steps:
     - There is a complete answer set for at least one submission.
     - The number of submissions is either 1, {number_of_submissions}, or clearly tied to the length of a response list.
     - A method preference (HTTP vs GUI) is recorded or a simple default is chosen (e.g., HTTP first).
-    If any critical piece is missing, repeat "ask question" once more; only proceed once the user has confirmed the final parameters.
+    If any critical piece is missing, repeat "send_message" once more; only proceed once the user has confirmed the final parameters.
 
   name: Inspect form and choose submission method
   description: For web forms, inspect the form HTML to decide whether HTTP-based submission is feasible; otherwise plan for GUI-based filling.
@@ -123,7 +123,7 @@ steps:
     - Confirm that the form or its submit endpoint can be reasonably identified (method and action URL).
     - If that is not possible, or if the form looks dynamic/JS heavy, choose GUI mode.
     - If the form clearly supports simple HTTP POST/GET, choose HTTP mode.
-    Record the chosen method in a short "send message" so the decision is visible in the task history.
+    Record the chosen method in a short "send_message" so the decision is visible in the task history.
 
   name: Submit form responses (HTTP mode)
   description: When HTTP mode is chosen, submit one or multiple responses by sending requests directly to the form endpoint and logging results.
@@ -159,7 +159,7 @@ steps:
       - Ensure the reported number of submissions matches {number_of_submissions} or the inferred count.
       - Confirm that the log file path {log_file_path} is present.
       - Note any submissions with non-2xx/3xx codes as failures.
-    If all submissions failed (e.g., 4xx/5xx), send a "send message" to the user explaining this and suggest switching to GUI mode or checking authentication.
+    If all submissions failed (e.g., 4xx/5xx), send a "send_message" to the user explaining this and suggest switching to GUI mode or checking authentication.
 
   name: Submit form responses (GUI mode)
   description: When GUI mode is chosen or HTTP submission fails, fill and submit the form using GUI interaction for one or more submissions.
@@ -181,7 +181,7 @@ steps:
     Validate GUI submissions by:
     - Confirming visually (via the event stream and/or screenshot descriptions) that a success or thank-you message appears.
     - Checking that each intended submission produced at least one logged entry in {log_file_path}.
-    If multiple submissions are requested and the UI clearly disallows duplicate submissions or throttles them, inform the user via "send message" and stop further submissions to avoid issues.
+    If multiple submissions are requested and the UI clearly disallows duplicate submissions or throttles them, inform the user via "send_message" and stop further submissions to avoid issues.
 
   name: Overall validate submissions
   description: Check the log and high-level results against the definition_of_done, without unnecessary extra passes.
@@ -198,7 +198,7 @@ steps:
   name: Close task and report to user
   description: Summarize what was done (or would have been done), surface the log location, and mark the task appropriately.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
     - Target form: {form_url} or equivalent description.
     - Method used: HTTP, GUI, or dry-run only.
     - Number of submissions attempted, number successful, number failed.

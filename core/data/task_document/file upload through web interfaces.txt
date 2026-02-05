@@ -49,15 +49,15 @@ steps:
   name: Confirm upload scope and mapping
   description: Clarify which files should be uploaded, to which web form(s), and to which fields, and ensure authentication/navigation expectations are understood.
   action_instruction: >
-    Use "send message" to restate and confirm:
+    Use "send_message" to restate and confirm:
     - {upload_url} or a brief description of where the upload form lives in the app.
     - The list of files (or patterns) to upload, e.g., {file_paths} or all files under {local_root_directory} matching {file_pattern}.
     - How each file or file group maps to upload fields or sections, e.g., {file_path} -> {field_label_or_description}.
     - Whether the user is already logged into the site or if a login step is required.
     - Any constraints (maximum file size, maximum count) and whether duplicates should be skipped or replaced.
-    If any of these are missing or ambiguous (for example, unclear field mapping), use "ask question" with a focused question
+    If any of these are missing or ambiguous (for example, unclear field mapping), use "send_message" with a focused question
     (e.g., "Should {resume.pdf} be attached to the 'Resume' field on {upload_url}?").
-    Once clarified, send a short "send message" summarizing the final agreed input parameters for this task.
+    Once clarified, send a short "send_message" summarizing the final agreed input parameters for this task.
   validation_instruction: >
     Confirm that:
     - {upload_url} is provided and looks like a valid web entry point.
@@ -81,7 +81,7 @@ steps:
     Ensure:
     - At least one file has been validated and is ready for upload.
     - Any missing or invalid files are known and can be reported later.
-    If no valid files remain, send a short "send message" explaining that no files are available to upload under the given criteria and ask whether to adjust paths/patterns or end the task.
+    If no valid files remain, send a short "send_message" explaining that no files are available to upload under the given criteria and ask whether to adjust paths/patterns or end the task.
 
   name: Open web form and attach files
   description: Use the browser UI to navigate to the upload form at {upload_url}, then attach each validated file to its mapped upload field.
@@ -101,7 +101,7 @@ steps:
     - Each intended upload field shows the correct filename or file indicator.
     - No unintended or extra files are attached.
     If any attachment appears incorrect (wrong field/file), correct it immediately (remove/clear field and reattach).
-    If the form or upload fields are not visible or appear broken, use "send message" to inform the user and ask for updated instructions or an alternative URL.
+    If the form or upload fields are not visible or appear broken, use "send_message" to inform the user and ask for updated instructions or an alternative URL.
 
   name: Submit upload form and confirm success
   description: Submit the web form to complete the uploads and confirm that each file has been accepted by the web application.
@@ -139,7 +139,7 @@ steps:
   name: Close task and report to user
   description: Summarize which files were uploaded where, mention any errors or skips, and mark the task status.
   action_instruction: >
-    Use "send message" to provide a concise summary:
+    Use "send_message" to provide a concise summary:
     - Target upload location(s): {upload_url} and/or page names.
     - Files attempted and their final statuses (e.g., N uploaded, M skipped, K failed).
     - Any notable errors or common reasons for skips (e.g., missing file, site validation error).

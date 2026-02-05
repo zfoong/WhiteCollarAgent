@@ -79,7 +79,7 @@ steps:
   name: Confirm inventory scope and output preferences
   description: Clarify what directory tree(s) to scan, how deep to go, and which report format to generate.
   action_instruction: >
-    Use the "send message" action to restate and confirm the key parameters:
+    Use the "send_message" action to restate and confirm the key parameters:
     - Root directory path(s), e.g., {root_directory_1}, {root_directory_2}.
     - Whether to include subdirectories (recursive: true/false).
     - Desired output format: "csv" (default), "md", or "json".
@@ -89,15 +89,15 @@ steps:
     - Whether to compute a simple aggregate summary (true/false).
     - Any safety cap on files listed (e.g., "stop after {max_files} files").
     Ask the user to confirm or adjust these. If any critical detail is unclear (root path or format),
-    use the "ask question" action with a focused question, e.g., "Which directory should I inventory?" or
-    "Do you prefer CSV, Markdown, or JSON for the report?". Once answers are received, send a short "send message"
+    use the "send_message" action with a focused question, e.g., "Which directory should I inventory?" or
+    "Do you prefer CSV, Markdown, or JSON for the report?". Once answers are received, send a short "send_message"
     summarizing the final agreed parameters so they are recorded in the task history.
   validation_instruction: >
     Ensure that:
     - At least one root directory string {root_directory} is provided.
     - A valid output format has been chosen ("csv", "md", or "json"; default to "csv" if user does not care).
     - Recursion preference is known (treat as true by default if user does not object).
-    If any of these are missing, use "ask question" once more. Proceed only after the user has clearly confirmed the scope and format.
+    If any of these are missing, use "send_message" once more. Proceed only after the user has clearly confirmed the scope and format.
 
   name: Generate file inventory and summary via script
   description: Traverse the directory tree(s) once, collect file metadata, and write an inventory file (and optional summary) to the workspace.
@@ -155,7 +155,7 @@ steps:
     Check the action output:
     - The script status should indicate success (no unhandled traceback).
     - stdout should mention the inventory_file_path and the total number of files listed.
-    - If no files matched the filters and the user expected a non-empty result, send a short "send message" explaining that
+    - If no files matched the filters and the user expected a non-empty result, send a short "send_message" explaining that
       the inventory is empty and suggest verifying the filters or path. The inventory file may still exist with only a header.
     - Optionally, if needed, use a quick follow-up "create and run python script" or "shell view" to:
       - Confirm the inventory file exists at {inventory_file_path}.
@@ -178,7 +178,7 @@ steps:
   name: Close task and report to user
   description: Summarize the inventory results for the user, provide paths to the report file(s), and mark the task status.
   action_instruction: >
-    Use the "send message" action to provide a concise summary, for example:
+    Use the "send_message" action to provide a concise summary, for example:
     - Root directory/ies processed: {root_directory_1}, {root_directory_2}, ...
     - Recursion: {recursive_flag}.
     - Output format: {output_format}.

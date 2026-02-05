@@ -73,7 +73,7 @@ steps:
   name: Confirm conversion scope and settings
   description: Make sure the agent has clear, user-confirmed parameters for what to convert, to which format, where to store outputs, and how to treat originals.
   action_instruction: >
-    Use the "send message" action to briefly restate and confirm:
+    Use the "send_message" action to briefly restate and confirm:
     - Source root paths: {source_directory_list}.
     - Whether to include subdirectories ({recursive}: true/false).
     - Target format {target_format} (e.g., "jpeg", "png", "webp").
@@ -88,8 +88,8 @@ steps:
     - Dry-run vs actual conversion ({dry_run}).
     - Optional safety caps {max_files} and {max_total_bytes}.
     Ask the user to confirm or correct these. If any critical item is missing or unclear
-    (for example, {target_format} or {output_directory} for separate output), use "ask question"
-    with a focused question. Once clarified, send a concise "send message" summarizing the final agreed parameters so they are recorded.
+    (for example, {target_format} or {output_directory} for separate output), use "send_message"
+    with a focused question. Once clarified, send a concise "send_message" summarizing the final agreed parameters so they are recorded.
   validation_instruction: >
     Confirm that:
     - {source_directory_list} is non-empty and contains at least one path string.
@@ -97,7 +97,7 @@ steps:
     - Output policy is decided and, if "separate_output_directory" is used, {output_directory} is provided.
     - Retention policy is known; if not specified, default to "keep_originals".
     - Dry-run vs actual conversion is explicitly decided.
-    If any of these are missing, call "ask question" again. Proceed only after the user confirms the final configuration.
+    If any of these are missing, call "send_message" again. Proceed only after the user confirms the final configuration.
 
   name: Run batch conversion script
   description: Use a single Python script to scan source directories, convert images, and write a log describing what happened for each file.
@@ -160,7 +160,7 @@ steps:
     Validate the script run by checking:
     - The action status is success (no unhandled exception at the top level).
     - stdout contains a clear summary with counts and the {log_file_path}.
-    - If total_candidates is zero, send a "send message" to inform the user that no images matched the filters and ask if they want to adjust parameters or stop.
+    - If total_candidates is zero, send a "send_message" to inform the user that no images matched the filters and ask if they want to adjust parameters or stop.
     - If max_files or max_total_bytes limits were reached, make sure this is mentioned in the script summary so you can relay it to the user.
     Proceed to final validation and reporting only if the script completed in a reasonable way (even with some per-file errors).
 
@@ -174,7 +174,7 @@ steps:
     - Compare these counts with the summary reported in the previous step’s stdout:
       - total_candidates should match the log entries.
       - converted_count and error_count should be consistent.
-    If there is a major mismatch (e.g., log has many fewer lines than expected), send a short "send message" to the user describing the discrepancy and either:
+    If there is a major mismatch (e.g., log has many fewer lines than expected), send a short "send_message" to the user describing the discrepancy and either:
       - Rerun the conversion step (if simple and safe), or
       - Explain the limitation and plan to "mark task error" if accurate logging cannot be guaranteed.
     If counts line up and there is no sign of a systemic problem, move on to final reporting.
@@ -183,7 +183,7 @@ steps:
   name: Close task and report to user
   description: Summarize the batch conversion results, provide key details and log location, and mark the task status accordingly.
   action_instruction: >
-    Use "send message" to provide a concise final summary including:
+    Use "send_message" to provide a concise final summary including:
     - Task name: Batch image format conversion.
     - Source roots: {source_directory_list}.
     - Target format: {target_format}.

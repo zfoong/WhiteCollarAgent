@@ -57,4 +57,4 @@ steps:
 
   name: Deliver summary
   description: Share the results concisely with the user with human readable format.
-  action_instruction: Use "send message" (or include in a larger task’s messaging) to report the location, temperature with units, and condition summary. Remove temporary scripts unless the user requests to keep them.
+  action_instruction: Use "send_message" (or include in a larger task’s messaging) to report the location, temperature with units, and condition summary. Remove temporary scripts unless the user requests to keep them.

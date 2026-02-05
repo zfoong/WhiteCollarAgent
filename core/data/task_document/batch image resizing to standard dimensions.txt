@@ -72,7 +72,7 @@ steps:
   name: Confirm image resize scope and settings
   description: Confirm which folders, size rules, aspect ratio mode, and output behavior to use before processing.
   action_instruction: >
-    Use the "send message" action to restate the planned configuration and request confirmation:
+    Use the "send_message" action to restate the planned configuration and request confirmation:
     - List {input_directories} that will be scanned.
     - Ask the user to choose the target size strategy:
       - Fixed size {target_width} x {target_height}, or
@@ -85,8 +85,8 @@ steps:
     - Ask whether images smaller than the target should be resized or left unchanged.
     - Ask whether they want a dry-run first (log only, no changes).
     - Ask if they want a maximum number of images to process (e.g., stop after {max_files}).
-    If anything essential is unclear (e.g., size strategy or output mode), use "ask question" with a focused question.
-    Once clarified, send a short "send message" summarizing the final agreed parameters so they are recorded.
+    If anything essential is unclear (e.g., size strategy or output mode), use "send_message" with a focused question.
+    Once clarified, send a short "send_message" summarizing the final agreed parameters so they are recorded.
   validation_instruction: >
     Before proceeding, ensure:
     - At least one {input_directory} is specified.
@@ -94,7 +94,7 @@ steps:
     - An aspect ratio mode is chosen.
     - An output mode is chosen, and {output_directory} is set if needed.
     - Dry-run vs actual resize is decided.
-    If any of these are missing, call "ask question" again. Proceed only once the user has explicitly confirmed.
+    If any of these are missing, call "send_message" again. Proceed only once the user has explicitly confirmed.
 
   name: Resize images (or dry-run) with a single script
   description: Traverse the directories, identify image files, and either compute or perform the resize operations in one pass, logging all actions.
@@ -147,17 +147,17 @@ steps:
     Check the "create and run python script" output:
     - The status should indicate success (no unhandled exceptions).
     - The stdout summary should show counts for processed/resized/skipped/errors and provide {resize_log_path}.
-    - If zero images were processed, send a short "send message" explaining that no files matched the filters and ask the user
+    - If zero images were processed, send a short "send_message" explaining that no files matched the filters and ask the user
       whether they want to adjust parameters or stop.
     - For dry-run, ensure statuses like "would_resize" appear in the log (no actual changes expected).
     If the script fails globally (e.g., library installation issue or directory access error), briefly explain this to the user
-    via "send message" and decide whether to retry with a minor fix or treat it as a task error.
+    via "send_message" and decide whether to retry with a minor fix or treat it as a task error.
 
   name: (Optional) Run actual resize after dry-run
   description: If a dry-run was performed, optionally rerun the script with the same parameters to do the real resizing.
   action_instruction: >
     If dry_run was True and the script completed:
-      - Use "send message" to:
+      - Use "send_message" to:
         - Inform the user the dry-run is complete.
         - Include key numbers (how many images would be resized and approximate coverage) and the {resize_log_path}.
         - Ask explicitly if they want to proceed with actual resizing using the same parameters.
@@ -184,7 +184,7 @@ steps:
   name: Close task and report to user
   description: Provide a concise summary of the batch resize operation (or dry-run), expose the log path, and mark the task status.
   action_instruction: >
-    Use "send message" to summarize:
+    Use "send_message" to summarize:
     - Directories processed ({input_directories}).
     - Size strategy (e.g., {target_width} x {target_height} or max edge {max_edge_px}).
     - Aspect ratio mode and output mode (in_place vs to_folder with {output_directory}).
