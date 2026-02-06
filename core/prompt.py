@@ -317,6 +317,8 @@ This is the list of action candidates, each including descriptions and input sch
 
 {agent_state}
 
+{task_state}
+
 <objective>
 Here is your goal:
 {query}
@@ -392,6 +394,8 @@ Current screen state (screenshot description or parsed elements):
 {gui_state}
 </gui_state>
 
+{task_state}
+
 <objective>
 You are a GUI agent. You are given a goal and your event stream, with screenshots. You need to reason about the current state and perform the next action to complete the task.
 Here is your goal:
@@ -459,6 +463,8 @@ Return ONLY a valid JSON object:
 </actions>
 
 {agent_state}
+
+{task_state}
 
 <objective>
 SIMPLE TASK - Execute quickly:
@@ -1167,8 +1173,94 @@ Element to find: {element_to_find}
 Analyze the image and generate the JSON list.
 """
 
-# --- Action Set Selection ---
-# Used by InternalActionInterface.do_create_task() to automatically select action sets
+# --- Combined Skills and Action Sets Selection ---
+# Used by InternalActionInterface.do_create_task() to select both in one LLM call
+SKILLS_AND_ACTION_SETS_SELECTION_PROMPT = """
+<objective>
+You are selecting a skill and action sets for a task. This is a two-part selection:
+1. First, select ONE relevant skill (instruction module that guides how to perform work)
+2. Then, select action sets (tools the agent needs), considering what the selected skill recommends
+</objective>
+
+<task_information>
+Task Name: {task_name}
+Task Description: {task_description}
+</task_information>
+
+<available_skills>
+{available_skills}
+</available_skills>
+
+<available_action_sets>
+{available_sets}
+</available_action_sets>
+
+<instructions>
+**Step 1 - Select ONE Skill:**
+- Review the task description carefully
+- Select AT MOST ONE skill that best matches this specific task
+- ONLY select one skill - do NOT select multiple skills
+- If no skills are relevant, leave the skills array empty
+- Note: Some skills recommend certain action sets (shown as "recommends: [...]")
+
+**Step 2 - Select Action Sets:**
+- The 'core' set is ALWAYS included automatically - do NOT include it
+- Include action sets recommended by the selected skill
+- Add any additional sets needed based on task requirements:
+  - File work → 'file_operations'
+  - Web browsing/searching → 'web_research'
+  - PDFs/documents → 'document_processing'
+  - GUI automation → 'gui_interaction'
+  - Running commands → 'shell'
+- Select ONLY the sets needed (fewer is better for performance)
+</instructions>
+
+<output_format>
+Return ONLY a valid JSON object with:
+- "skills": array with at most ONE skill name (or empty if no match)
+- "action_sets": array of action set names
+
+Example with skill:
+{{"skills": ["code-review"], "action_sets": ["file_operations"]}}
+
+Example without skill:
+{{"skills": [], "action_sets": ["web_research"]}}
+</output_format>
+"""
+
+# --- Skill Selection (Legacy - kept for reference) ---
+SKILL_SELECTION_PROMPT = """
+<objective>
+You are selecting skills for a task. Skills provide specialized instructions that help the agent perform specific types of work more effectively.
+</objective>
+
+<task_information>
+Task Name: {task_name}
+Task Description: {task_description}
+</task_information>
+
+<available_skills>
+{available_skills}
+</available_skills>
+
+<instructions>
+- Review the task description carefully
+- Select skills that directly help with this specific task
+- If no skills are relevant, return an empty list []
+- Only select skills that provide clear value for this task
+- Multiple skills can be selected if they complement each other
+</instructions>
+
+<output_format>
+Return ONLY a valid JSON array of skill names (strings), with no additional text or explanation:
+["skill_name_1", "skill_name_2"]
+
+If no skills are needed, return an empty array:
+[]
+</output_format>
+"""
+
+# --- Action Set Selection (Legacy - kept for reference) ---
 ACTION_SET_SELECTION_PROMPT = """
 <objective>
 You are selecting action sets for a task. Based on the task description, choose which action sets the agent will need to complete this task.

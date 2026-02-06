@@ -1,0 +1,7 @@
+{
+    "global_skills_dir": "~/.whitecollar/skills",
+    "project_skills_dir": ".whitecollar/skills",
+    "auto_load": true,
+    "enabled_skills": [],
+    "disabled_skills": []
+}
