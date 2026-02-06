@@ -227,16 +227,20 @@ class ActionRegistry:
         logical_name = meta.name
 
         # 1. Extract source code for the main implementation
-        try:
-            # getsource returns the raw code, including indentation
-            raw_code = inspect.getsource(main_impl.handler)
-            # dedent removes leading common whitespace to make it clean
-            dedented_code = textwrap.dedent(raw_code)
-            # Strip decorator from the code
-            main_code_str = _strip_decorator(dedented_code)
-        except Exception as e:
-            logger.error(f"Could not extract source for action '{logical_name}': {e}")
-            main_code_str = f"# Error extracting source code: {e}"
+        # Check for stored source code first (used by MCP handlers which are dynamically created)
+        if hasattr(main_impl.handler, '_mcp_source_code'):
+            main_code_str = main_impl.handler._mcp_source_code
+        else:
+            try:
+                # getsource returns the raw code, including indentation
+                raw_code = inspect.getsource(main_impl.handler)
+                # dedent removes leading common whitespace to make it clean
+                dedented_code = textwrap.dedent(raw_code)
+                # Strip decorator from the code
+                main_code_str = _strip_decorator(dedented_code)
+            except Exception as e:
+                logger.error(f"Could not extract source for action '{logical_name}': {e}")
+                main_code_str = f"# Error extracting source code: {e}"
 
 
         # 2. Build the base JSON structure with required hardcoded fields
@@ -265,18 +269,23 @@ class ActionRegistry:
             # Skip the implementation we used for the main code block so it's not redundant
             if impl == main_impl:
                 continue
-            
-            try:
-                override_raw = inspect.getsource(impl.handler)
-                override_dedented = textwrap.dedent(override_raw)
-                # Strip decorator from the override code
-                override_code_str = _strip_decorator(override_dedented)
-                
-                action_json["platform_overrides"][platform_key] = {
-                    "code": override_code_str
-                }
-            except Exception as e:
+
+            # Check for stored source code first (used by MCP handlers)
+            if hasattr(impl.handler, '_mcp_source_code'):
+                override_code_str = impl.handler._mcp_source_code
+            else:
+                try:
+                    override_raw = inspect.getsource(impl.handler)
+                    override_dedented = textwrap.dedent(override_raw)
+                    # Strip decorator from the override code
+                    override_code_str = _strip_decorator(override_dedented)
+                except Exception as e:
                     logger.warning(f"Could not extract override source for {logical_name} on {platform_key}: {e}")
+                    continue
+
+            action_json["platform_overrides"][platform_key] = {
+                "code": override_code_str
+            }
 
         # Clean up empty overrides dict if unused
         if not action_json["platform_overrides"]:

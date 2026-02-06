@@ -1,0 +1,25 @@
+{
+  "mcp_servers": [
+    {
+      "name": "filesystem",
+      "description": "Read, write, and manage files and directories",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "env": {},
+      "enabled": true,
+      "action_set_name": "mcp_filesystem"
+    },
+    {
+      "name": "memory",
+      "description": "Knowledge graph for storing and retrieving entities and relations",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {},
+      "enabled": true,
+      "action_set_name": "mcp_memory"
+    }
+  ],
+  "auto_connect": true
+}

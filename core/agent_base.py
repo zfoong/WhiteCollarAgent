@@ -53,6 +53,7 @@ from core.event_stream.event_stream_manager import EventStreamManager
 from core.gui.gui_module import GUIModule
 from core.gui.handler import GUIHandler
 from decorators.profiler import profile, profile_loop, OperationCategory
+from pathlib import Path
 
 
 @dataclass
@@ -758,6 +759,86 @@ class AgentBase:
         return self.llm.is_initialized
 
     # =====================================
+    # MCP Integration
+    # =====================================
+
+    async def _initialize_mcp(self) -> None:
+        """
+        Initialize MCP (Model Context Protocol) client and register tools as actions.
+
+        This method:
+        1. Loads MCP configuration from core/config/mcp_config.json
+        2. Connects to enabled MCP servers
+        3. Discovers tools from each connected server
+        4. Registers tools as actions in the ActionRegistry
+
+        MCP tools become available as action sets (e.g., mcp_filesystem) that
+        can be selected during task creation.
+        """
+        try:
+            from core.mcp.mcp_client import mcp_client
+            from core.config import PROJECT_ROOT
+
+            config_path = PROJECT_ROOT / "core" / "config" / "mcp_config.json"
+
+            if not config_path.exists():
+                logger.info(f"[MCP] No MCP config found at {config_path}, skipping MCP initialization")
+                return
+
+            logger.info(f"[MCP] Loading config from {config_path}")
+
+            # Initialize MCP client (loads config and connects to servers)
+            await mcp_client.initialize(config_path)
+
+            # Log connection status before registering
+            status = mcp_client.get_status()
+            connected_count = sum(1 for s in status.get("servers", {}).values() if s.get("connected"))
+            total_servers = len(status.get("servers", {}))
+            logger.info(f"[MCP] Connected to {connected_count}/{total_servers} servers")
+
+            for server_name, server_info in status.get("servers", {}).items():
+                if server_info.get("connected"):
+                    logger.info(
+                        f"[MCP] Server '{server_name}': {server_info['tool_count']} tools available"
+                    )
+
+            # Register MCP tools as actions
+            tool_count = mcp_client.register_tools_as_actions()
+
+            if tool_count > 0:
+                logger.info(
+                    f"[MCP] Successfully registered {tool_count} MCP tools as actions"
+                )
+            else:
+                # Provide more detailed diagnostics
+                if not mcp_client.servers:
+                    logger.warning("[MCP] No MCP servers connected - check if Node.js/npx is installed")
+                else:
+                    for name, server in mcp_client.servers.items():
+                        if not server.is_connected:
+                            logger.warning(f"[MCP] Server '{name}' failed to connect")
+                        elif not server.tools:
+                            logger.warning(f"[MCP] Server '{name}' connected but has no tools")
+
+        except ImportError as e:
+            logger.warning(f"[MCP] MCP module not available: {e}")
+        except Exception as e:
+            import traceback
+            logger.warning(f"[MCP] Failed to initialize MCP: {e}")
+            logger.debug(f"[MCP] Traceback: {traceback.format_exc()}")
+
+    async def _shutdown_mcp(self) -> None:
+        """Gracefully disconnect from all MCP servers."""
+        try:
+            from core.mcp.mcp_client import mcp_client
+            await mcp_client.disconnect_all()
+            logger.info("[MCP] Disconnected from all MCP servers")
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"[MCP] Error during MCP shutdown: {e}")
+
+    # =====================================
     # Lifecycle
     # =====================================
 
@@ -771,11 +852,17 @@ class AgentBase:
                 initialization.
             api_key: Optional API key presented in the TUI for convenience.
         """
+        # Initialize MCP client and register tools
+        await self._initialize_mcp()
 
-        # Allow the TUI to present provider/api-key configuration before chat starts.
-        cli = TUIInterface(
-            self,
-            default_provider=provider or self.llm.provider,
-            default_api_key=api_key,
-        )
-        await cli.start()
+        try:
+            # Allow the TUI to present provider/api-key configuration before chat starts.
+            cli = TUIInterface(
+                self,
+                default_provider=provider or self.llm.provider,
+                default_api_key=api_key,
+            )
+            await cli.start()
+        finally:
+            # Gracefully shutdown MCP connections
+            await self._shutdown_mcp()
