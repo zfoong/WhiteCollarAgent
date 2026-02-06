@@ -220,18 +220,21 @@ class ContextEngine:
 
     def get_task_state(self) -> str:
         """
-        Get the current task and todo list for inclusion in user prompts.
+        Get the current task state for inclusion in user prompts.
 
-        For simple tasks, omits the todo section since simple tasks don't use todos.
+        KV CACHING OPTIMIZATION:
+        - This method returns STATIC content only (task name, instruction, mode, skills)
+        - Todos are NOT included here - they are in the event stream via _emit_todos_event()
+        - This ensures KV cache hits since task state doesn't change during execution
         """
         current_task: Optional[Task] = STATE.current_task
 
         if current_task:
-            # Check if this is a simple task (no todos needed)
+            # Check if this is a simple task
             is_simple = getattr(current_task, "mode", "complex") == "simple"
 
             if is_simple:
-                # Simple task - streamlined output without todos
+                # Simple task - streamlined output
                 return (
                     "<current_task>\n"
                     f"Task: {current_task.name} [SIMPLE MODE]\n"
@@ -240,30 +243,58 @@ class ContextEngine:
                     "</current_task>"
                 )
 
-            # Complex task - include full todo list
+            # Complex task - static info only (todos are in event stream)
             lines = [
                 "<current_task>",
                 f"Task: {current_task.name}",
                 f"Instruction: {current_task.instruction}",
-                "",
-                "Todos:",
+                "Mode: Complex task - use todos in event stream to track progress",
             ]
 
-            if current_task.todos:
-                for todo in current_task.todos:
-                    if todo.status == "completed":
-                        checkbox = "[x]"
-                    elif todo.status == "in_progress":
-                        checkbox = "[>]"
-                    else:
-                        checkbox = "[ ]"
-                    lines.append(f"{checkbox} {todo.content}")
-            else:
-                lines.append("(no todos yet - use 'task_update_todos' to add items)")
+            # Add skill instructions if present (static for task duration)
+            skill_instructions = self.get_skill_instructions()
+            if skill_instructions:
+                lines.append("")
+                lines.append(skill_instructions)
 
             lines.append("</current_task>")
             return "\n".join(lines)
         return "<current_task>\n(no active task)\n</current_task>"
+
+    def get_skill_instructions(self) -> str:
+        """
+        Get instructions from skills selected for the current task.
+
+        Returns:
+            Formatted skill instructions string, or empty string if no skills.
+        """
+        current_task: Optional[Task] = STATE.current_task
+
+        if not current_task:
+            return ""
+
+        selected_skills = getattr(current_task, "selected_skills", [])
+        if not selected_skills:
+            return ""
+
+        try:
+            from core.skill.skill_manager import skill_manager
+            instructions = skill_manager.get_skill_instructions(selected_skills)
+
+            if not instructions:
+                return ""
+
+            return (
+                "<active_skills>\n"
+                "Follow these skill instructions for this task:\n\n"
+                f"{instructions}\n"
+                "</active_skills>"
+            )
+        except ImportError:
+            return ""
+        except Exception as e:
+            logger.warning(f"[SKILLS] Failed to get skill instructions: {e}")
+            return ""
 
     def get_agent_state(self) -> str:
         """

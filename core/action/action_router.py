@@ -167,14 +167,18 @@ class ActionRouter:
         # For session caching:
         # - static_prompt: everything except event_stream (cached prefix)
         # - full_prompt: includes event_stream (used for first call or non-cached)
+        # Note: task_state includes skill instructions and is session-static (doesn't change during task)
+        task_state = self.context_engine.get_task_state()
         static_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
+            task_state=task_state,
             event_stream="",  # Empty for static prompt
             query=query,
             action_candidates=self._format_candidates(action_candidates),
         )
         full_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
+            task_state=task_state,
             event_stream=self.context_engine.get_event_stream(),
             query=query,
             action_candidates=self._format_candidates(action_candidates),
@@ -248,14 +252,18 @@ class ActionRouter:
         # For session caching:
         # - static_prompt: everything except event_stream (cached prefix)
         # - full_prompt: includes event_stream (used for first call or non-cached)
+        # Note: task_state includes skill instructions and is session-static (doesn't change during task)
+        task_state = self.context_engine.get_task_state()
         static_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
+            task_state=task_state,
             event_stream="",  # Empty for static prompt
             query=query,
             action_candidates=self._format_candidates(action_candidates),
         )
         full_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
+            task_state=task_state,
             event_stream=self.context_engine.get_event_stream(),
             query=query,
             action_candidates=self._format_candidates(action_candidates),
@@ -339,8 +347,11 @@ class ActionRouter:
         # For session caching:
         # - static_prompt: everything except gui_event_stream (cached prefix)
         # - full_prompt: includes gui_event_stream (used for first call or non-cached)
+        # Note: task_state includes skill instructions and is session-static (doesn't change during task)
+        task_state = self.context_engine.get_task_state()
         static_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
+            task_state=task_state,
             gui_event_stream="",  # Empty for static prompt
             gui_state=gui_state,
             query=query,
@@ -348,6 +359,7 @@ class ActionRouter:
         )
         full_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
+            task_state=task_state,
             gui_event_stream=self.context_engine.get_gui_event_stream(),
             gui_state=gui_state,
             query=query,
