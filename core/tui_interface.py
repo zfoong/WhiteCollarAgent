@@ -416,8 +416,6 @@ class _CraftApp(App):
     }
 
     #chat-log, #action-log {
-        text-wrap: wrap;
-        text-overflow: fold;
         overflow-x: hidden;
         min-width: 0;  /* enable reflow instead of clamped min-content width */
         background: #000000;
@@ -448,7 +446,6 @@ class _CraftApp(App):
     #status-bar {
         height: 1;
         min-height: 1;
-        text-wrap: nowrap;
         overflow: hidden;
         text-style: bold;
         color: #a0a0a0;
@@ -941,15 +938,6 @@ class _CraftApp(App):
     async def on_mount(self) -> None:  # pragma: no cover - UI lifecycle
         self.query_one("#chat-panel").border_title = "Chat"
         self.query_one("#action-panel").border_title = "Action"
-
-        # Runtime safeguard: enforce wrapping on the logs even if CSS/props vary by version
-        chat_log = self.query_one("#chat-log", _ConversationLog)
-        action_log = self.query_one("#action-log", _ConversationLog)
-
-        chat_log.styles.text_wrap = "wrap"
-        action_log.styles.text_wrap = "wrap"
-        chat_log.styles.text_overflow = "fold"
-        action_log.styles.text_overflow = "fold"
 
         self.set_interval(0.1, self._flush_pending_updates)
         self.set_interval(0.2, self._tick_status_marquee)
