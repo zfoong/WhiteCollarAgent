@@ -51,4 +51,4 @@ def send_message(input_data: dict) -> dict:
     fire_at_delay = 10800 if wait_for_user_reply else 0
     # Return 'success' for test compatibility, but keep 'ok' in production if needed
     status = 'success' if simulated_mode else 'ok'
-    return {'status': status, 'fire_at_delay': fire_at_delay}
+    return {'status': status, 'fire_at_delay': fire_at_delay, 'wait_for_user_reply': wait_for_user_reply}

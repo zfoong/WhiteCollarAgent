@@ -206,12 +206,12 @@ TextLog {
 }
 
 /* Settings sections */
-#section-models, #section-mcp {
+#section-models, #section-mcp, #section-skills {
     height: auto;
     padding: 1 0;
 }
 
-#section-models.-hidden, #section-mcp.-hidden {
+#section-models.-hidden, #section-mcp.-hidden, #section-skills.-hidden {
     display: none;
 }
 
@@ -408,11 +408,185 @@ TextLog {
 }
 
 /* Overlay layer for modals */
-#mcp-env-overlay {
+#mcp-env-overlay, #skill-detail-overlay {
     layer: overlay;
     width: 100%;
     height: 100%;
     background: rgba(0, 0, 0, 0.8);
     align: center middle;
+}
+
+/* Skills section */
+#skills-list {
+    height: auto;
+    max-height: 15;
+    margin: 1 0;
+    border: solid #2a2a2a;
+    background: #0a0a0a;
+    padding: 1;
+}
+
+.skill-row {
+    height: 1;
+    margin-bottom: 1;
+}
+
+.skill-desc {
+    width: 1fr;
+    color: #666666;
+    padding-left: 1;
+}
+
+.skill-toggle-btn {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    background: #333333;
+    color: #00cc00;
+    border: none;
+}
+
+.skill-toggle-btn:hover {
+    background: #00cc00;
+    color: #000000;
+}
+
+.skill-toggle-btn.-disabled {
+    color: #ff4f18;
+}
+
+.skill-toggle-btn.-disabled:hover {
+    background: #ff4f18;
+    color: #ffffff;
+}
+
+.skill-view-btn {
+    width: auto;
+    min-width: 18;
+    height: 1;
+    background: #1a1a1a;
+    color: #ff4f18;
+    border: none;
+    text-align: left;
+}
+
+.skill-view-btn:hover {
+    background: #ff4f18;
+    color: #ffffff;
+}
+
+.skill-empty {
+    color: #666666;
+    text-style: italic;
+}
+
+#skills-title {
+    color: #ffffff;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#skills-hint {
+    color: #666666;
+    text-style: italic;
+    margin-top: 1;
+}
+
+/* Skill Detail Viewer */
+#skill-detail-viewer {
+    width: 80;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    border: solid #ff4f18;
+    background: #0a0a0a;
+    padding: 2 3;
+    layout: vertical;
+}
+
+#skill-detail-header {
+    height: auto;
+}
+
+#skill-detail-title-row {
+    height: 1;
+    margin-bottom: 1;
+}
+
+#skill-detail-title {
+    color: #ff4f18;
+    text-style: bold;
+    width: 1fr;
+}
+
+#skill-detail-status-btn {
+    width: auto;
+    min-width: 12;
+    height: 1;
+    background: #1a1a1a;
+    border: none;
+}
+
+#skill-detail-status-btn.-enabled {
+    color: #00cc00;
+}
+
+#skill-detail-status-btn.-disabled {
+    color: #ff4f18;
+}
+
+#skill-detail-desc {
+    color: #a0a0a0;
+    margin-bottom: 1;
+}
+
+#skill-detail-action-sets {
+    color: #666666;
+    margin-bottom: 1;
+}
+
+#skill-detail-content {
+    height: 1fr;
+    min-height: 10;
+    max-height: 25;
+    margin: 1 0;
+    border: solid #2a2a2a;
+    background: #000000;
+    padding: 1;
+    overflow-y: auto;
+}
+
+#skill-detail-content Static {
+    color: #e5e5e5;
+}
+
+#skill-detail-actions {
+    height: auto;
+    margin-top: 1;
+    dock: bottom;
+}
+
+.skill-detail-btn {
+    width: auto;
+    min-width: 8;
+    height: 1;
+    background: #333333;
+    color: #a0a0a0;
+    border: none;
+    margin-right: 1;
+}
+
+.skill-detail-btn:hover {
+    background: #ff4f18;
+    color: #ffffff;
+}
+
+.skill-detail-btn.-copy {
+    color: #0088ff;
+}
+
+.skill-detail-btn.-copy:hover {
+    background: #0088ff;
+    color: #ffffff;
 }
 """

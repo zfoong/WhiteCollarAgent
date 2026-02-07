@@ -61,11 +61,11 @@ class InternalActionInterface:
     # ─────────────────────── LLM Access for Actions ───────────────────────
 
     @classmethod
-    def use_llm(cls, prompt: str, system_message: Optional[str] = None) -> Dict[str, Any]:
-        """Generate a response from the configured LLM."""
+    async def use_llm(cls, prompt: str, system_message: Optional[str] = None) -> Dict[str, Any]:
+        """Generate a response from the configured LLM (async to avoid blocking TUI)."""
         if cls.llm_interface is None:
             raise RuntimeError("InternalActionInterface not initialized with LLMInterface.")
-        response = cls.llm_interface.generate_response(prompt, system_message)
+        response = await cls.llm_interface.generate_response_async(prompt, system_message)
         return {"llm_response": response}
 
     @classmethod
@@ -119,17 +119,17 @@ class InternalActionInterface:
     # ───────────────── Task Management ─────────────────
 
     @classmethod
-    def do_create_task(
+    async def do_create_task(
         cls,
         task_name: str,
         task_description: str,
         task_mode: str = "complex",
     ) -> Dict[str, Any]:
         """
-        Create a new task with automatic action set selection.
+        Create a new task with automatic skill and action set selection.
 
-        The action sets are automatically selected by an LLM based on the task
-        description. This supports custom action sets and MCP tools dynamically.
+        Skills are selected first, then action sets. The action sets from
+        selected skills are merged with LLM-selected action sets.
 
         Args:
             task_name: Short name for the task.
@@ -137,7 +137,7 @@ class InternalActionInterface:
             task_mode: Task execution mode - "simple" for quick tasks, "complex" for multi-step work.
 
         Returns:
-            Dictionary with task_id, action_sets, and action_count.
+            Dictionary with task_id, action_sets, action_count, and selected_skills.
         """
         if cls.task_manager is None or cls.state_manager is None:
             raise RuntimeError("InternalActionInterface not initialized with Task/State managers.")
@@ -147,13 +147,20 @@ class InternalActionInterface:
         cls.state_manager.event_stream_manager.clear_all()
         logger.info(f"[TASK] Cleared event stream for new task: {task_name}")
 
-        # Step 1: Automatically select action sets via LLM
-        selected_sets = cls._select_action_sets_via_llm(task_name, task_description)
-        logger.info(f"[TASK] Auto-selected action sets for '{task_name}': {selected_sets}")
+        # Select skills and action sets in a single LLM call (optimized)
+        # Skills are selected first, then action sets with knowledge of skill recommendations
+        selected_skills, all_action_sets = await cls._select_skills_and_action_sets_via_llm(
+            task_name, task_description
+        )
+        logger.info(f"[TASK] Auto-selected skills for '{task_name}': {selected_skills}")
+        logger.info(f"[TASK] Final action sets: {all_action_sets}")
 
-        # Step 2: Create task with selected action sets
+        # Create task with selected skills and action sets
         task_id = cls.task_manager.create_task(
-            task_name, task_description, mode=task_mode, action_sets=selected_sets
+            task_name, task_description,
+            mode=task_mode,
+            action_sets=all_action_sets,
+            selected_skills=selected_skills
         )
         task: Optional[Task] = cls.task_manager.get_task()
         cls.state_manager.add_to_active_task(task)
@@ -183,10 +190,11 @@ class InternalActionInterface:
             "task_id": task_id,
             "action_sets": task.action_sets if task else [],
             "action_count": len(task.compiled_actions) if task else 0,
+            "selected_skills": task.selected_skills if task else [],
         }
 
     @classmethod
-    def _select_action_sets_via_llm(cls, task_name: str, task_description: str) -> List[str]:
+    async def _select_action_sets_via_llm(cls, task_name: str, task_description: str) -> List[str]:
         """
         Make LLM call to automatically select action sets based on task description.
 
@@ -239,8 +247,8 @@ class InternalActionInterface:
                 available_sets=sets_text
             )
 
-            # Step 3: Call LLM (use a simpler call for this quick decision)
-            response = cls.llm_interface.generate_response(
+            # Step 3: Call LLM asynchronously to avoid blocking TUI
+            response = await cls.llm_interface.generate_response_async(
                 user_prompt=prompt,
                 system_prompt="You are a helpful assistant that selects action sets for tasks. Return only valid JSON.",
             )
@@ -283,6 +291,234 @@ class InternalActionInterface:
         except Exception as e:
             logger.warning(f"[TASK] Failed to select action sets via LLM: {e}")
             return []
+
+    @classmethod
+    async def _select_skills_via_llm(cls, task_name: str, task_description: str) -> List[str]:
+        """
+        Make LLM call to select relevant skills based on task description.
+
+        Args:
+            task_name: Short name for the task.
+            task_description: Detailed description of the task.
+
+        Returns:
+            List of skill names, or empty list if no skills match.
+        """
+        import json
+
+        # If no LLM interface, return empty list
+        if cls.llm_interface is None:
+            logger.warning("[SKILLS] No LLM interface available, skipping skill selection")
+            return []
+
+        try:
+            from core.skill.skill_manager import skill_manager
+            from core.prompt import SKILL_SELECTION_PROMPT
+
+            # Get available skills
+            available_skills = skill_manager.list_skills_for_selection()
+
+            if not available_skills:
+                logger.debug("[SKILLS] No skills available for selection")
+                return []
+
+            # Format skills for prompt
+            skills_text = "\n".join(
+                f"- {name}: {desc}"
+                for name, desc in available_skills.items()
+            )
+
+            # Build prompt
+            prompt = SKILL_SELECTION_PROMPT.format(
+                task_name=task_name,
+                task_description=task_description,
+                available_skills=skills_text
+            )
+
+            # Call LLM asynchronously to avoid blocking TUI
+            response = await cls.llm_interface.generate_response_async(
+                user_prompt=prompt,
+                system_prompt="You are a helpful assistant that selects skills for tasks. Return only valid JSON.",
+            )
+
+            # Parse response (clean up markdown if present)
+            response = response.strip()
+            if response.startswith("```"):
+                lines = response.split("\n")
+                response = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+            selected_skills = json.loads(response)
+
+            # Validate
+            if not isinstance(selected_skills, list):
+                logger.warning(f"[SKILLS] LLM returned non-list for skills: {selected_skills}")
+                return []
+
+            # Filter to only valid skill names
+            valid_skill_names = set(available_skills.keys())
+            valid_selected = [s for s in selected_skills if isinstance(s, str) and s in valid_skill_names]
+
+            logger.info(f"[SKILLS] LLM raw response: {selected_skills}")
+            logger.info(f"[SKILLS] Valid selected skills: {valid_selected}")
+
+            return valid_selected
+
+        except ImportError as e:
+            logger.debug(f"[SKILLS] Skill module not available: {e}")
+            return []
+        except json.JSONDecodeError as e:
+            logger.warning(f"[SKILLS] Failed to parse LLM response for skills: {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"[SKILLS] Failed to select skills via LLM: {e}")
+            return []
+
+    @classmethod
+    def _get_skill_action_sets(cls, skill_names: List[str]) -> List[str]:
+        """
+        Get action sets required by selected skills.
+
+        Args:
+            skill_names: List of skill names.
+
+        Returns:
+            List of action set names from selected skills.
+        """
+        if not skill_names:
+            return []
+
+        try:
+            from core.skill.skill_manager import skill_manager
+            return skill_manager.get_skill_action_sets(skill_names)
+        except ImportError:
+            return []
+        except Exception as e:
+            logger.warning(f"[SKILLS] Failed to get skill action sets: {e}")
+            return []
+
+    @classmethod
+    async def _select_skills_and_action_sets_via_llm(
+        cls, task_name: str, task_description: str
+    ) -> tuple[List[str], List[str]]:
+        """
+        Select skills and action sets in a single LLM call.
+
+        This combines skill and action set selection into one call for efficiency.
+        Skills are selected first, then action sets are selected with knowledge
+        of which skills were chosen and their recommended action sets.
+
+        Args:
+            task_name: Short name for the task.
+            task_description: Detailed description of the task.
+
+        Returns:
+            Tuple of (selected_skills, selected_action_sets).
+        """
+        import json
+        from core.action.action_set import action_set_manager
+        from core.prompt import SKILLS_AND_ACTION_SETS_SELECTION_PROMPT
+
+        # If no LLM interface, return empty lists
+        if cls.llm_interface is None:
+            logger.warning("[TASK] No LLM interface available, using defaults")
+            return [], []
+
+        try:
+            # Get available skills
+            available_skills = {}
+            skill_action_sets_map = {}
+            try:
+                from core.skill.skill_manager import skill_manager
+                for skill in skill_manager.get_enabled_skills():
+                    # Include action set recommendations in skill description
+                    desc = skill.description
+                    if skill.metadata.action_sets:
+                        desc += f" (recommends: {skill.metadata.action_sets})"
+                        skill_action_sets_map[skill.name] = skill.metadata.action_sets
+                    available_skills[skill.name] = desc
+            except ImportError:
+                logger.debug("[TASK] Skill module not available")
+
+            # Get available action sets
+            available_sets = action_set_manager.list_all_sets()
+
+            # Format skills for prompt (or indicate none available)
+            if available_skills:
+                skills_text = "\n".join(
+                    f"- {name}: {desc}"
+                    for name, desc in available_skills.items()
+                )
+            else:
+                skills_text = "(no skills available)"
+
+            # Format action sets for prompt (exclude 'core')
+            sets_text = "\n".join(
+                f"- {name}: {desc}"
+                for name, desc in available_sets.items()
+                if name != "core"
+            )
+            if not sets_text:
+                sets_text = "(no additional action sets available)"
+
+            # Build the combined prompt
+            prompt = SKILLS_AND_ACTION_SETS_SELECTION_PROMPT.format(
+                task_name=task_name,
+                task_description=task_description,
+                available_skills=skills_text,
+                available_sets=sets_text
+            )
+
+            # Call LLM asynchronously to avoid blocking TUI
+            response = await cls.llm_interface.generate_response_async(
+                user_prompt=prompt,
+                system_prompt="You are a helpful assistant that selects skills and action sets for tasks. Return only valid JSON.",
+            )
+
+            # Parse response (clean up markdown if present)
+            response = response.strip()
+            if response.startswith("```"):
+                lines = response.split("\n")
+                response = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+            result = json.loads(response)
+
+            # Extract and validate skills (LIMIT TO 1 SKILL)
+            selected_skills = result.get("skills", [])
+            if not isinstance(selected_skills, list):
+                selected_skills = []
+            valid_skill_names = set(available_skills.keys())
+            valid_skills = [s for s in selected_skills if isinstance(s, str) and s in valid_skill_names]
+
+            # Enforce limit: only keep the first skill to prevent context overload
+            if len(valid_skills) > 1:
+                logger.info(f"[TASK] Multiple skills selected, limiting to first one: {valid_skills[0]}")
+                valid_skills = valid_skills[:1]
+
+            # Extract and validate action sets
+            selected_sets = result.get("action_sets", [])
+            if not isinstance(selected_sets, list):
+                selected_sets = []
+            valid_set_names = set(available_sets.keys())
+            valid_sets = [s for s in selected_sets if isinstance(s, str) and s in valid_set_names and s != "core"]
+
+            # Add action sets recommended by selected skills (ensure they're included)
+            for skill_name in valid_skills:
+                if skill_name in skill_action_sets_map:
+                    for rec_set in skill_action_sets_map[skill_name]:
+                        if rec_set in valid_set_names and rec_set not in valid_sets:
+                            valid_sets.append(rec_set)
+
+            logger.info(f"[TASK] LLM response: skills={selected_skills}, action_sets={selected_sets}")
+            logger.info(f"[TASK] Valid selection: skills={valid_skills}, action_sets={valid_sets}")
+
+            return valid_skills, valid_sets
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"[TASK] Failed to parse LLM response: {e}")
+            return [], []
+        except Exception as e:
+            logger.warning(f"[TASK] Failed to select skills/action sets via LLM: {e}")
+            return [], []
 
     @classmethod
     def update_todos(cls, todos: List[Dict[str, Any]]) -> Dict[str, Any]:

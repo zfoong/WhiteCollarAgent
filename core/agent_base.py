@@ -839,6 +839,53 @@ class AgentBase:
             logger.warning(f"[MCP] Error during MCP shutdown: {e}")
 
     # =====================================
+    # Skills Integration
+    # =====================================
+
+    async def _initialize_skills(self) -> None:
+        """
+        Initialize the skills system and discover available skills.
+
+        This method:
+        1. Loads skills configuration from core/config/skills_config.json
+        2. Discovers skills from global (~/.whitecollar/skills/) and project directories
+        3. Makes skills available for automatic selection during task creation
+
+        Skills provide specialized instructions that are injected into context
+        when selected for a task.
+        """
+        try:
+            from core.skill.skill_manager import skill_manager
+            from core.config import PROJECT_ROOT
+
+            config_path = PROJECT_ROOT / "core" / "config" / "skills_config.json"
+
+            logger.info(f"[SKILLS] Loading config from {config_path}")
+
+            # Initialize skill manager (loads config and discovers skills)
+            await skill_manager.initialize(config_path)
+
+            # Log discovered skills
+            status = skill_manager.get_status()
+            total_skills = status.get("total_skills", 0)
+            enabled_skills = status.get("enabled_skills", 0)
+
+            if total_skills > 0:
+                logger.info(f"[SKILLS] Discovered {total_skills} skills ({enabled_skills} enabled)")
+                for skill_name, skill_info in status.get("skills", {}).items():
+                    if skill_info.get("enabled"):
+                        logger.debug(f"[SKILLS] - {skill_name}: {skill_info.get('description', 'No description')}")
+            else:
+                logger.info("[SKILLS] No skills discovered. Create skills in ~/.whitecollar/skills/ or .whitecollar/skills/")
+
+        except ImportError as e:
+            logger.warning(f"[SKILLS] Skill module not available: {e}")
+        except Exception as e:
+            import traceback
+            logger.warning(f"[SKILLS] Failed to initialize skills: {e}")
+            logger.debug(f"[SKILLS] Traceback: {traceback.format_exc()}")
+
+    # =====================================
     # Lifecycle
     # =====================================
 
@@ -854,6 +901,9 @@ class AgentBase:
         """
         # Initialize MCP client and register tools
         await self._initialize_mcp()
+
+        # Initialize skills system
+        await self._initialize_skills()
 
         try:
             # Allow the TUI to present provider/api-key configuration before chat starts.

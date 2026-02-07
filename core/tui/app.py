@@ -31,6 +31,12 @@ from core.tui.mcp_settings import (
     get_server_env_vars,
     MCP_SERVER_TEMPLATES,
 )
+from core.tui.skill_settings import (
+    list_skills,
+    get_skill_info,
+    toggle_skill,
+    get_skill_raw_content,
+)
 
 if TYPE_CHECKING:
     from core.tui.interface import TUIInterface
@@ -55,6 +61,7 @@ class CraftApp(App):
 
     # Icons for task/action status
     ICON_COMPLETED = "+"
+    ICON_ERROR = "x"
     ICON_LOADING_FRAMES = ["●", "○"]  # Animated loading icons
 
     _MENU_ITEMS = [
@@ -221,10 +228,14 @@ class CraftApp(App):
         # Build MCP server list items
         mcp_server_items = self._build_mcp_server_list_items()
 
+        # Build Skills list items
+        skill_items = self._build_skill_list_items()
+
         # Build tab buttons
         tab_buttons = Horizontal(
             Button("Models", id="tab-btn-models", classes="settings-tab -active"),
             Button("MCP Servers", id="tab-btn-mcp", classes="settings-tab"),
+            Button("Skills", id="tab-btn-skills", classes="settings-tab"),
             id="settings-tab-bar",
         )
 
@@ -268,11 +279,24 @@ class CraftApp(App):
             classes="-hidden",  # Hidden by default
         )
 
+        # Build Skills section content
+        skills_section = Container(
+            Static("Discovered Skills", id="skills-title"),
+            VerticalScroll(
+                *skill_items,
+                id="skills-list",
+            ),
+            Static("Click skill name to view details, toggle to enable/disable", id="skills-hint"),
+            id="section-skills",
+            classes="-hidden",  # Hidden by default
+        )
+
         settings = Container(
             Static("Settings", id="settings-title"),
             tab_buttons,
             models_section,
             mcp_section,
+            skills_section,
             ListView(
                 ListItem(Label("save", classes="menu-item"), id="settings-save"),
                 ListItem(Label("cancel", classes="menu-item"), id="settings-cancel"),
@@ -342,6 +366,47 @@ class CraftApp(App):
         items = self._build_mcp_server_list_items()
         for item in items:
             server_list.mount(item)
+
+    def _build_skill_list_items(self) -> list:
+        """Build list items for discovered skills."""
+        skills = list_skills()
+        items = []
+
+        if not skills:
+            items.append(Static("No skills discovered", classes="skill-empty"))
+        else:
+            for skill in skills:
+                status = "[+]" if skill["enabled"] else "[-]"
+                name = skill["name"]
+
+                # Truncate description if too long
+                desc = skill["description"][:30] + "..." if len(skill["description"]) > 30 else skill["description"]
+
+                # Build toggle button class based on status
+                toggle_class = "skill-toggle-btn" if skill["enabled"] else "skill-toggle-btn -disabled"
+
+                items.append(
+                    Horizontal(
+                        Button(name, id=f"skill-view-{name}", classes="skill-view-btn"),
+                        Static(desc, classes="skill-desc"),
+                        Button("o" if skill["enabled"] else "x", id=f"skill-toggle-{name}", classes=toggle_class),
+                        classes="skill-row",
+                    )
+                )
+
+        return items
+
+    def _refresh_skill_list(self) -> None:
+        """Refresh the skill list in settings."""
+        if not self.query("#skills-list"):
+            return
+
+        skill_list = self.query_one("#skills-list", VerticalScroll)
+        skill_list.remove_children()
+
+        items = self._build_skill_list_items()
+        for item in items:
+            skill_list.mount(item)
 
     def _close_settings(self) -> None:
         for card in self.query("#settings-card"):
@@ -855,6 +920,9 @@ class CraftApp(App):
         elif button_id == "tab-btn-mcp":
             self._switch_settings_section("mcp")
             return
+        elif button_id == "tab-btn-skills":
+            self._switch_settings_section("skills")
+            return
 
         # Handle MCP server remove buttons
         if button_id and button_id.startswith("mcp-remove-"):
@@ -877,29 +945,66 @@ class CraftApp(App):
         elif button_id == "mcp-env-cancel":
             self._close_mcp_env_editor()
 
+        # Handle Skill toggle buttons
+        if button_id and button_id.startswith("skill-toggle-"):
+            skill_name = button_id[13:]  # Remove "skill-toggle-" prefix
+            success, message = toggle_skill(skill_name)
+            if success:
+                self.notify(message, severity="information", timeout=2)
+                self._refresh_skill_list()
+            else:
+                self.notify(message, severity="error", timeout=3)
+
+        # Handle Skill view buttons
+        if button_id and button_id.startswith("skill-view-"):
+            skill_name = button_id[11:]  # Remove "skill-view-" prefix
+            self._open_skill_detail_viewer(skill_name)
+
+        # Handle Skill detail buttons
+        if button_id == "skill-detail-close":
+            self._close_skill_detail_viewer()
+        elif button_id == "skill-detail-copy":
+            self._copy_skill_content()
+        elif button_id == "skill-detail-status-btn":
+            self._toggle_skill_from_detail_viewer()
+
     def _switch_settings_section(self, section: str) -> None:
-        """Switch between Models and MCP sections in settings."""
+        """Switch between Models, MCP, and Skills sections in settings."""
         # Update button styles
         models_btn = self.query_one("#tab-btn-models", Button)
         mcp_btn = self.query_one("#tab-btn-mcp", Button)
+        skills_btn = self.query_one("#tab-btn-skills", Button)
 
+        # Reset all buttons
+        models_btn.remove_class("-active")
+        mcp_btn.remove_class("-active")
+        skills_btn.remove_class("-active")
+
+        # Activate the selected tab
         if section == "models":
             models_btn.add_class("-active")
-            mcp_btn.remove_class("-active")
-        else:
-            models_btn.remove_class("-active")
+        elif section == "mcp":
             mcp_btn.add_class("-active")
+        elif section == "skills":
+            skills_btn.add_class("-active")
 
         # Show/hide sections
         models_section = self.query_one("#section-models", Container)
         mcp_section = self.query_one("#section-mcp", Container)
+        skills_section = self.query_one("#section-skills", Container)
 
+        # Hide all sections first
+        models_section.add_class("-hidden")
+        mcp_section.add_class("-hidden")
+        skills_section.add_class("-hidden")
+
+        # Show the selected section
         if section == "models":
             models_section.remove_class("-hidden")
-            mcp_section.add_class("-hidden")
-        else:
-            models_section.add_class("-hidden")
+        elif section == "mcp":
             mcp_section.remove_class("-hidden")
+        elif section == "skills":
+            skills_section.remove_class("-hidden")
 
     def _open_mcp_env_editor(self, server_name: str) -> None:
         """Open a modal to edit environment variables for an MCP server."""
@@ -973,3 +1078,131 @@ class CraftApp(App):
             overlay.remove()
         if hasattr(self, "_mcp_env_editing_server"):
             del self._mcp_env_editing_server
+
+    def _open_skill_detail_viewer(self, skill_name: str) -> None:
+        """Open a modal to view skill details and full SKILL.md content."""
+        skill_info = get_skill_info(skill_name)
+        if not skill_info:
+            self.notify(f"Skill '{skill_name}' not found", severity="error", timeout=2)
+            return
+
+        # Remove any existing skill detail overlay
+        for overlay in self.query("#skill-detail-overlay"):
+            overlay.remove()
+
+        # Get the raw SKILL.md content
+        raw_content = get_skill_raw_content(skill_name)
+        if not raw_content:
+            raw_content = skill_info.get("instructions", "No instructions available")
+
+        # Store raw content for copy functionality and skill name for toggling
+        self._skill_detail_raw_content = raw_content
+        self._skill_detail_current_name = skill_name
+
+        # Build status button with colored dot
+        is_enabled = skill_info["enabled"]
+        status_dot = "●"  # Unicode bullet
+        status_text = f"{status_dot} Enabled" if is_enabled else f"{status_dot} Disabled"
+
+        # Build action sets display
+        action_sets = ", ".join(skill_info.get("action_sets", [])) or "None"
+        action_sets_text = f"Action Sets: {action_sets}"
+
+        # Create the overlay with title row layout
+        overlay = Container(
+            Container(
+                # Header section (fixed)
+                Container(
+                    # Title row: skill name on left, status button on right
+                    Horizontal(
+                        Static(f"Skill: {skill_name}", id="skill-detail-title"),
+                        Button(status_text, id="skill-detail-status-btn"),
+                        id="skill-detail-title-row",
+                    ),
+                    Static(skill_info["description"], id="skill-detail-desc"),
+                    Static(action_sets_text, id="skill-detail-action-sets"),
+                    id="skill-detail-header",
+                ),
+                # Scrollable content
+                VerticalScroll(
+                    Static(raw_content),
+                    id="skill-detail-content",
+                ),
+                # Action buttons (fixed at bottom)
+                Horizontal(
+                    Button("Copy", id="skill-detail-copy", classes="skill-detail-btn -copy"),
+                    Button("Close", id="skill-detail-close", classes="skill-detail-btn"),
+                    id="skill-detail-actions",
+                ),
+                id="skill-detail-viewer",
+            ),
+            id="skill-detail-overlay",
+        )
+
+        self.mount(overlay)
+
+        # Apply inline color to status button (CSS classes don't reliably override Button defaults)
+        if self.query("#skill-detail-status-btn"):
+            status_btn = self.query_one("#skill-detail-status-btn", Button)
+            status_btn.styles.color = "#00cc00" if is_enabled else "#ff4f18"
+
+    def _close_skill_detail_viewer(self) -> None:
+        """Close the skill detail viewer modal."""
+        for overlay in self.query("#skill-detail-overlay"):
+            overlay.remove()
+        if hasattr(self, "_skill_detail_raw_content"):
+            del self._skill_detail_raw_content
+        if hasattr(self, "_skill_detail_current_name"):
+            del self._skill_detail_current_name
+
+    def _toggle_skill_from_detail_viewer(self) -> None:
+        """Toggle the skill status from within the detail viewer."""
+        if not hasattr(self, "_skill_detail_current_name"):
+            return
+
+        skill_name = self._skill_detail_current_name
+        success, message = toggle_skill(skill_name)
+
+        if success:
+            self.notify(message, severity="information", timeout=2)
+            # Refresh the skill list in settings
+            self._refresh_skill_list()
+            # Close then reopen to show updated status (avoid duplicate ID)
+            for overlay in self.query("#skill-detail-overlay"):
+                overlay.remove()
+            # Use call_after_refresh to ensure DOM is updated before reopening
+            self.call_after_refresh(lambda: self._open_skill_detail_viewer(skill_name))
+        else:
+            self.notify(message, severity="error", timeout=3)
+
+    def _copy_skill_content(self) -> None:
+        """Copy the skill SKILL.md content to clipboard."""
+        if not hasattr(self, "_skill_detail_raw_content"):
+            self.notify("No content to copy", severity="error", timeout=2)
+            return
+
+        try:
+            import pyperclip
+            pyperclip.copy(self._skill_detail_raw_content)
+            self.notify("Copied to clipboard!", severity="information", timeout=2)
+        except ImportError:
+            # Fallback: try using the system clipboard via subprocess
+            try:
+                import subprocess
+                import sys
+                if sys.platform == "win32":
+                    subprocess.run(["clip"], input=self._skill_detail_raw_content.encode("utf-8"), check=True)
+                    self.notify("Copied to clipboard!", severity="information", timeout=2)
+                elif sys.platform == "darwin":
+                    subprocess.run(["pbcopy"], input=self._skill_detail_raw_content.encode("utf-8"), check=True)
+                    self.notify("Copied to clipboard!", severity="information", timeout=2)
+                else:
+                    # Linux - try xclip or xsel
+                    try:
+                        subprocess.run(["xclip", "-selection", "clipboard"], input=self._skill_detail_raw_content.encode("utf-8"), check=True)
+                        self.notify("Copied to clipboard!", severity="information", timeout=2)
+                    except FileNotFoundError:
+                        subprocess.run(["xsel", "--clipboard", "--input"], input=self._skill_detail_raw_content.encode("utf-8"), check=True)
+                        self.notify("Copied to clipboard!", severity="information", timeout=2)
+            except Exception as e:
+                self.notify(f"Could not copy: {e}", severity="error", timeout=3)

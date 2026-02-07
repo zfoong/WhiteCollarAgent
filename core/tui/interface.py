@@ -24,6 +24,14 @@ from core.tui.mcp_settings import (
     get_template_env_vars,
     update_mcp_server_env,
 )
+from core.tui.skill_settings import (
+    list_skills,
+    get_skill_info,
+    enable_skill,
+    disable_skill,
+    reload_skills,
+    get_skill_search_directories,
+)
 
 if TYPE_CHECKING:
     from core.agent_base import AgentBase
@@ -93,6 +101,11 @@ class TUIInterface:
         # Handle /mcp command with subcommands
         if command == "/mcp":
             await self._handle_mcp_command(parts[1:])
+            return True
+
+        # Handle /skill command with subcommands
+        if command == "/skill":
+            await self._handle_skill_command(parts[1:])
             return True
 
         handler = self._command_handlers.get(command)
@@ -365,6 +378,143 @@ class TUIInterface:
 
 Note: Changes require restart to take effect."""
 
+    # =====================================
+    # Skill Commands
+    # =====================================
+
+    async def _handle_skill_command(self, args: list[str]) -> None:
+        """Handle /skill command with subcommands."""
+        if not args:
+            # Show help for /skill command
+            help_text = self._build_skill_help_text()
+            await self.chat_updates.put(("System", help_text, "system"))
+            return
+
+        subcommand = args[0].lower()
+
+        if subcommand == "list":
+            await self._skill_list()
+        elif subcommand == "info":
+            if len(args) < 2:
+                await self.chat_updates.put(("System", "Usage: /skill info <name>", "system"))
+            else:
+                await self._skill_info(args[1])
+        elif subcommand == "enable":
+            if len(args) < 2:
+                await self.chat_updates.put(("System", "Usage: /skill enable <name>", "system"))
+            else:
+                await self._skill_enable(args[1])
+        elif subcommand == "disable":
+            if len(args) < 2:
+                await self.chat_updates.put(("System", "Usage: /skill disable <name>", "system"))
+            else:
+                await self._skill_disable(args[1])
+        elif subcommand == "reload":
+            await self._skill_reload()
+        elif subcommand == "dirs":
+            await self._skill_dirs()
+        else:
+            await self.chat_updates.put(
+                ("System", f"Unknown /skill subcommand: {subcommand}. Type /skill for help.", "system")
+            )
+
+    async def _skill_list(self) -> None:
+        """List all discovered skills."""
+        skills = list_skills()
+        if not skills:
+            dirs = get_skill_search_directories()
+            dirs_text = ", ".join(dirs) if dirs else "none configured"
+            await self.chat_updates.put(
+                ("System", f"No skills discovered.\nSearch directories: {dirs_text}", "system")
+            )
+            return
+
+        lines = ["Discovered Skills:", ""]
+        for skill in skills:
+            status = "[+]" if skill["enabled"] else "[-]"
+            lines.append(f"  {status} {skill['name']}: {skill['description']}")
+            if skill["action_sets"]:
+                lines.append(f"      Action sets: {', '.join(skill['action_sets'])}")
+        await self.chat_updates.put(("System", "\n".join(lines), "system"))
+
+    async def _skill_info(self, name: str) -> None:
+        """Show detailed information about a skill."""
+        info = get_skill_info(name)
+        if not info:
+            await self.chat_updates.put(("System", f"Skill '{name}' not found.", "system"))
+            return
+
+        lines = [
+            f"Skill: {info['name']}",
+            f"Description: {info['description']}",
+            f"Enabled: {'Yes' if info['enabled'] else 'No'}",
+            f"User Invocable: {'Yes' if info['user_invocable'] else 'No'}",
+        ]
+        if info.get("argument_hint"):
+            lines.append(f"Argument Hint: {info['argument_hint']}")
+        if info.get("action_sets"):
+            lines.append(f"Action Sets: {', '.join(info['action_sets'])}")
+        if info.get("allowed_tools"):
+            lines.append(f"Allowed Tools: {', '.join(info['allowed_tools'])}")
+        lines.append(f"Source: {info['source']}")
+        lines.append("")
+        lines.append("Instructions Preview:")
+        # Show first 500 chars of instructions
+        instructions = info.get("instructions", "")
+        if len(instructions) > 500:
+            lines.append(f"  {instructions[:500]}...")
+        else:
+            lines.append(f"  {instructions}")
+
+        await self.chat_updates.put(("System", "\n".join(lines), "system"))
+
+    async def _skill_enable(self, name: str) -> None:
+        """Enable a skill."""
+        success, message = enable_skill(name)
+        severity = "system" if success else "error"
+        await self.chat_updates.put(("System", message, severity))
+
+    async def _skill_disable(self, name: str) -> None:
+        """Disable a skill."""
+        success, message = disable_skill(name)
+        severity = "system" if success else "error"
+        await self.chat_updates.put(("System", message, severity))
+
+    async def _skill_reload(self) -> None:
+        """Reload skills from disk."""
+        success, message = reload_skills()
+        severity = "system" if success else "error"
+        await self.chat_updates.put(("System", message, severity))
+
+    async def _skill_dirs(self) -> None:
+        """Show skill search directories."""
+        dirs = get_skill_search_directories()
+        if not dirs:
+            await self.chat_updates.put(("System", "No skill directories configured.", "system"))
+            return
+
+        lines = ["Skill Search Directories:", ""]
+        for d in dirs:
+            lines.append(f"  {d}")
+        await self.chat_updates.put(("System", "\n".join(lines), "system"))
+
+    def _build_skill_help_text(self) -> str:
+        """Build help text for /skill command."""
+        return """Skill Management Commands:
+
+  /skill list             - List all discovered skills
+  /skill info <name>      - Show skill details and instructions
+  /skill enable <name>    - Enable a skill
+  /skill disable <name>   - Disable a skill
+  /skill reload           - Reload skills from disk
+  /skill dirs             - Show skill search directories
+
+Skills are discovered from:
+  - ~/.whitecollar/skills/<name>/SKILL.md (global)
+  - .whitecollar/skills/<name>/SKILL.md (project)
+
+Skills are automatically selected during task creation based on the task description."""
+
     def _build_help_text(self) -> str:
         intro = (
             "I am a computer-use AI agent., I can perform computer-based task autonomously "
@@ -378,6 +528,7 @@ Note: Changes require restart to take effect."""
             "/reset": "Reset the agent and clear interface state.",
             "/exit": "Exit the session.",
             "/mcp": "Manage MCP servers (list, add, remove, enable, disable).",
+            "/skill": "Manage skills (list, info, enable, disable, reload).",
         }
 
         lines: list[str] = [intro, "", "Available commands:"]
@@ -440,15 +591,42 @@ Note: Changes require restart to take effect."""
         await self.status_updates.put(self._status_message)
 
     async def _consume_triggers(self) -> None:
-        """Continuously consume triggers and hand them to the agent."""
+        """Continuously consume triggers and hand them to the agent.
+
+        The agent.react() call is run in a dedicated thread with its own event loop
+        to completely isolate the agent's processing from the TUI event loop.
+        This ensures animations and user input remain responsive during agent processing.
+        """
         try:
             while self._agent.is_running:
                 trigger = await self._agent.triggers.get()
                 if trigger.session_id:
                     self._tracked_sessions.add(trigger.session_id)
-                await self._agent.react(trigger)
+                # Run react() in a separate thread with its own event loop
+                # This completely decouples agent processing from the TUI
+                await asyncio.get_event_loop().run_in_executor(
+                    None,  # Use default executor (ThreadPoolExecutor)
+                    self._run_react_in_thread,
+                    trigger,
+                )
         except asyncio.CancelledError:  # pragma: no cover
             raise
+
+    def _run_react_in_thread(self, trigger) -> None:
+        """Run agent.react() in a dedicated thread with its own event loop.
+
+        This method is called from run_in_executor and creates a fresh event loop
+        in the worker thread. This ensures that all async operations within react()
+        (including asyncio.to_thread() calls for LLM) are completely isolated from
+        the main TUI event loop.
+        """
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._agent.react(trigger))
+        finally:
+            loop.close()
 
     async def _watch_events(self) -> None:
         """Refresh the conversation timeline with agent actions."""
@@ -556,6 +734,11 @@ Note: Changes require restart to take effect."""
         elif kind == "action_end":
             if entry_key in self._task_action_entries:
                 self._task_action_entries[entry_key].is_completed = True
+                # Check if the action failed (message format: "{action_name} → error")
+                if message and " → " in message:
+                    status_part = message.split(" → ")[-1]
+                    if status_part == "error":
+                        self._task_action_entries[entry_key].is_error = True
                 await self.action_updates.put(ActionUpdate(operation="update", entry_key=entry_key))
 
         # Handle waiting_for_user event - set agent state to waiting
@@ -629,15 +812,20 @@ Note: Changes require restart to take effect."""
         )
 
     def format_action_entry(self, entry: ActionEntry) -> RenderableType:
-        # Choose icon based on completion status
+        # Choose icon based on completion and error status
         if entry.is_completed:
-            icon = CraftApp.ICON_COMPLETED
+            if entry.is_error:
+                icon = CraftApp.ICON_ERROR
+            else:
+                icon = CraftApp.ICON_COMPLETED
         else:
             # Use current frame of loading animation
             icon = CraftApp.ICON_LOADING_FRAMES[self._loading_frame_index % len(CraftApp.ICON_LOADING_FRAMES)]
 
-        # Determine color based on style and completion
-        if entry.style == "task":
+        # Determine color based on style, completion, and error status
+        if entry.is_error:
+            colour = "bold #ff4444"  # Red for errors
+        elif entry.style == "task":
             colour = "bold #ff4f18"
         else:  # action
             colour = "bold #a0a0a0"

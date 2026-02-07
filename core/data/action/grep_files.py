@@ -72,42 +72,58 @@ _INPUT_SCHEMA = {
 }
 
 
-def _chunk_text(text, chunk_size=300, overlap=50):
-    """Split text into overlapping word chunks."""
-    import re
-    words = re.findall(r'\S+', text or '')
-    if not words:
-        return []
-    if chunk_size <= 0:
-        chunk_size = 300
-    if overlap < 0:
-        overlap = 0
-    step = max(1, chunk_size - overlap)
-    n = len(words)
-    segments = []
-    for start in range(0, n, step):
-        end = min(start + chunk_size, n)
-        chunk_words = words[start:end]
-        if not chunk_words:
-            break
-        chunk_text_val = ' '.join(chunk_words).strip()
-        if not chunk_text_val:
-            continue
-        has_leading = start > 0
-        has_trailing = end < n
-        segments.append({
-            'text': chunk_text_val,
-            'start_word_index': start + 1,
-            'has_leading_ellipsis': bool(has_leading),
-            'has_trailing_ellipsis': bool(has_trailing)
-        })
-    return segments
-
-
-def _grep_files_impl(input_data: dict) -> dict:
-    """Common implementation for grep_files across all platforms."""
+@action(
+    name="grep_files",
+    description="Searches a text file for keywords and returns matching chunks with pagination.",
+    mode="CLI",
+    platforms=["linux", "windows", "darwin"],
+    action_sets=["file_operations"],
+    input_schema=_INPUT_SCHEMA,
+    output_schema=_OUTPUT_SCHEMA,
+    test_payload={
+        "input_file": "/path/to/input.txt",
+        "keywords": ["Mt. Fuji", "visibility"],
+        "chunk_size": 300,
+        "overlap": 50,
+        "chunk_start": 1,
+        "chunk_end": 5,
+        "simulated_mode": True
+    }
+)
+def grep_files(input_data: dict) -> dict:
+    """Searches a text file for keywords and returns matching chunks with pagination."""
     import os
     import re
+
+    def chunk_text(text, chunk_size=300, overlap=50):
+        """Split text into overlapping word chunks."""
+        words = re.findall(r'\S+', text or '')
+        if not words:
+            return []
+        if chunk_size <= 0:
+            chunk_size = 300
+        if overlap < 0:
+            overlap = 0
+        step = max(1, chunk_size - overlap)
+        n = len(words)
+        segments = []
+        for start in range(0, n, step):
+            end = min(start + chunk_size, n)
+            chunk_words = words[start:end]
+            if not chunk_words:
+                break
+            chunk_text_val = ' '.join(chunk_words).strip()
+            if not chunk_text_val:
+                continue
+            has_leading = start > 0
+            has_trailing = end < n
+            segments.append({
+                'text': chunk_text_val,
+                'start_word_index': start + 1,
+                'has_leading_ellipsis': bool(has_leading),
+                'has_trailing_ellipsis': bool(has_trailing)
+            })
+        return segments
 
     simulated_mode = input_data.get('simulated_mode', False)
 
@@ -182,7 +198,7 @@ def _grep_files_impl(input_data: dict) -> dict:
         with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
 
-        segments = _chunk_text(content, chunk_size=chunk_size, overlap=overlap)
+        segments = chunk_text(content, chunk_size=chunk_size, overlap=overlap)
 
         if not segments:
             return {
@@ -252,69 +268,3 @@ def _grep_files_impl(input_data: dict) -> dict:
             'total_matches': 0,
             'returned_range': [0, 0]
         }
-
-
-@action(
-    name="grep_files",
-    description="Searches a text file for keywords and returns matching chunks with pagination.",
-    mode="CLI",
-    platforms=["linux"],
-    action_sets=["file_operations"],
-    input_schema=_INPUT_SCHEMA,
-    output_schema=_OUTPUT_SCHEMA,
-    test_payload={
-        "input_file": "/path/to/input.txt",
-        "keywords": ["Mt. Fuji", "visibility"],
-        "chunk_size": 300,
-        "overlap": 50,
-        "chunk_start": 1,
-        "chunk_end": 5,
-        "simulated_mode": True
-    }
-)
-def grep_files_linux(input_data: dict) -> dict:
-    return _grep_files_impl(input_data)
-
-
-@action(
-    name="grep_files",
-    description="Searches a text file for keywords and returns matching chunks with pagination.",
-    mode="CLI",
-    platforms=["windows"],
-    action_sets=["file_operations"],
-    input_schema=_INPUT_SCHEMA,
-    output_schema=_OUTPUT_SCHEMA,
-    test_payload={
-        "input_file": "/path/to/input.txt",
-        "keywords": ["Mt. Fuji", "visibility"],
-        "chunk_size": 300,
-        "overlap": 50,
-        "chunk_start": 1,
-        "chunk_end": 5,
-        "simulated_mode": True
-    }
-)
-def grep_files_windows(input_data: dict) -> dict:
-    return _grep_files_impl(input_data)
-
-
-@action(
-    name="grep_files",
-    description="Searches a text file for keywords and returns matching chunks with pagination.",
-    mode="CLI",
-    platforms=["darwin"],
-    action_sets=["file_operations"],
-    input_schema=_INPUT_SCHEMA,
-    output_schema=_OUTPUT_SCHEMA,
-    test_payload={
-        "input_file": "/path/to/input.txt",
-        "keywords": ["Mt. Fuji", "visibility"],
-        "chunk_size": 300,
-        "overlap": 50,
-        "chunk_start": 1,
-        "chunk_end": 5,
-        "simulated_mode": True
-    }
-)
-def grep_files_darwin(input_data: dict) -> dict:
-    return _grep_files_impl(input_data)

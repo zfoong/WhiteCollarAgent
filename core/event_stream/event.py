@@ -67,6 +67,7 @@ class EventRecord:
     event: Event
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     repeat_count: int = 1
+    _cached_tokens: int | None = field(default=None, repr=False)
 
     def compact_line(self) -> str:
         t = self.ts.strftime("%H:%M:%S")

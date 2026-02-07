@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone, timedelta
 import re
+import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 from core.event_stream.event import Event, EventRecord
@@ -25,6 +26,7 @@ from core.llm import LLMInterface
 from core.prompt import EVENT_STREAM_SUMMARIZATION_PROMPT
 from sklearn.feature_extraction.text import TfidfVectorizer
 from core.logger import logger
+from decorators.profiler import profiler, OperationCategory
 import threading
 import tiktoken
 
@@ -46,6 +48,27 @@ def count_tokens(text: str) -> int:
     if not text:
         return 0
     return len(_get_tokenizer().encode(text))
+
+
+def get_cached_token_count(rec: "EventRecord") -> int:
+    """Get token count for an EventRecord, using cached value if available.
+
+    This avoids repeated calls to tiktoken.encode() which is CPU-intensive.
+    The token count is computed once per event and cached for subsequent access.
+    """
+    if rec._cached_tokens is None:
+        # Cache miss - need to compute tokens (this is the slow path)
+        start = time.perf_counter()
+        rec._cached_tokens = count_tokens(rec.compact_line())
+        duration_ms = (time.perf_counter() - start) * 1000
+        profiler.record(
+            "token_count_compute",
+            duration_ms,
+            OperationCategory.OTHER,
+            {"text_length": len(rec.compact_line()), "token_count": rec._cached_tokens},
+        )
+    return rec._cached_tokens
+
 
 class EventStream:
     """
@@ -125,7 +148,7 @@ class EventStream:
         rec = EventRecord(event=ev)
 
         self.tail_events.append(rec)
-        self._total_tokens += count_tokens(rec.compact_line())
+        self._total_tokens += get_cached_token_count(rec)
         self.summarize_if_needed()
         return len(self.tail_events) - 1
 
@@ -205,6 +228,7 @@ class EventStream:
         Find the cutoff index such that events from cutoff to end have approximately keep_tokens.
         Returns the number of events to summarize (from the beginning).
         """
+        start = time.perf_counter()
         if not events:
             return 0
 
@@ -212,14 +236,22 @@ class EventStream:
         tokens_from_end = 0
         keep_count = 0
         for rec in reversed(events):
-            event_tokens = count_tokens(rec.compact_line())
+            event_tokens = get_cached_token_count(rec)
             if tokens_from_end + event_tokens > keep_tokens:
                 break
             tokens_from_end += event_tokens
             keep_count += 1
 
         # Return how many events to summarize (from the beginning)
-        return len(events) - keep_count
+        cutoff = len(events) - keep_count
+        duration_ms = (time.perf_counter() - start) * 1000
+        profiler.record(
+            "find_token_cutoff",
+            duration_ms,
+            OperationCategory.OTHER,
+            {"event_count": len(events), "events_processed": len(events), "cutoff": cutoff},
+        )
+        return cutoff
 
     async def summarize_by_LLM(self) -> None:
         """
@@ -268,8 +300,8 @@ class EventStream:
             # Apply + prune under lock
             with self._lock:
                 self.head_summary = new_summary
-                # Calculate tokens being removed
-                removed_tokens = sum(count_tokens(r.compact_line()) for r in self.tail_events[:cutoff])
+                # Calculate tokens being removed (using cached values)
+                removed_tokens = sum(get_cached_token_count(r) for r in self.tail_events[:cutoff])
                 self._total_tokens -= removed_tokens
                 if cutoff >= len(self.tail_events):
                     self.tail_events = []

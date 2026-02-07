@@ -61,7 +61,8 @@ class TaskManager:
         task_name: str,
         task_instruction: str,
         mode: str = "complex",
-        action_sets: Optional[List[str]] = None
+        action_sets: Optional[List[str]] = None,
+        selected_skills: Optional[List[str]] = None
     ) -> str:
         """
         Create a new task without LLM planning.
@@ -73,6 +74,8 @@ class TaskManager:
             action_sets: List of action set names to enable for this task
                          (e.g., ["file_operations", "web_research"]).
                          The "core" set is always included automatically.
+            selected_skills: List of skill names selected for this task.
+                             Their instructions will be injected into context.
 
         Returns:
             The unique task identifier.
@@ -100,6 +103,7 @@ class TaskManager:
             temp_dir=str(temp_dir),
             action_sets=selected_sets,
             compiled_actions=compiled_actions,
+            selected_skills=selected_skills or [],
         )
 
         self.active = task

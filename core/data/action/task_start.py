@@ -87,13 +87,15 @@ def start_task(input_data: dict) -> dict:
             "action_count": 10,  # Approximate for testing
         }
 
+    import asyncio
     import core.internal_action_interface as iai
 
     try:
         # Action sets are automatically selected by do_create_task based on task description
-        result = iai.InternalActionInterface.do_create_task(
+        # do_create_task is async to avoid blocking the TUI during LLM calls
+        result = asyncio.run(iai.InternalActionInterface.do_create_task(
             task_name, task_description, task_mode
-        )
+        ))
         return {
             "status": "success",
             "task_id": result["task_id"],

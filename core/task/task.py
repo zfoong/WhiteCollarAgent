@@ -30,6 +30,7 @@ class Task:
         status: Current state - running, completed, error, paused, or cancelled
         action_sets: Selected action set names for this task (e.g., ["file_operations", "web_research"])
         compiled_actions: Cached list of action names compiled from action_sets
+        selected_skills: Skills selected for this task (instructions injected into context)
     """
     id: str
     name: str
@@ -45,6 +46,8 @@ class Task:
     action_sets: List[str] = field(default_factory=list)
     # Compiled action names from action_sets - cached for performance
     compiled_actions: List[str] = field(default_factory=list)
+    # Skills selected for this task - instructions injected into context
+    selected_skills: List[str] = field(default_factory=list)
 
     def get_current_todo(self) -> Optional[TodoItem]:
         """
@@ -80,4 +83,5 @@ class Task:
             "todos": [todo.to_dict() for todo in self.todos],
             "action_sets": self.action_sets,
             "compiled_actions": self.compiled_actions,
+            "selected_skills": self.selected_skills,
         }
