@@ -16,6 +16,7 @@ class ActionEntry:
     message: str
     style: str = "action"
     is_completed: bool = False
+    is_error: bool = False  # True if action completed with error
     parent_task: Optional[str] = None  # Task name if this action belongs to a task
 
 

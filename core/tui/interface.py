@@ -734,6 +734,11 @@ Skills are automatically selected during task creation based on the task descrip
         elif kind == "action_end":
             if entry_key in self._task_action_entries:
                 self._task_action_entries[entry_key].is_completed = True
+                # Check if the action failed (message format: "{action_name} → error")
+                if message and " → " in message:
+                    status_part = message.split(" → ")[-1]
+                    if status_part == "error":
+                        self._task_action_entries[entry_key].is_error = True
                 await self.action_updates.put(ActionUpdate(operation="update", entry_key=entry_key))
 
         # Handle waiting_for_user event - set agent state to waiting
@@ -807,15 +812,20 @@ Skills are automatically selected during task creation based on the task descrip
         )
 
     def format_action_entry(self, entry: ActionEntry) -> RenderableType:
-        # Choose icon based on completion status
+        # Choose icon based on completion and error status
         if entry.is_completed:
-            icon = CraftApp.ICON_COMPLETED
+            if entry.is_error:
+                icon = CraftApp.ICON_ERROR
+            else:
+                icon = CraftApp.ICON_COMPLETED
         else:
             # Use current frame of loading animation
             icon = CraftApp.ICON_LOADING_FRAMES[self._loading_frame_index % len(CraftApp.ICON_LOADING_FRAMES)]
 
-        # Determine color based on style and completion
-        if entry.style == "task":
+        # Determine color based on style, completion, and error status
+        if entry.is_error:
+            colour = "bold #ff4444"  # Red for errors
+        elif entry.style == "task":
             colour = "bold #ff4f18"
         else:  # action
             colour = "bold #a0a0a0"

@@ -61,6 +61,7 @@ class CraftApp(App):
 
     # Icons for task/action status
     ICON_COMPLETED = "+"
+    ICON_ERROR = "x"
     ICON_LOADING_FRAMES = ["●", "○"]  # Animated loading icons
 
     _MENU_ITEMS = [
