@@ -234,9 +234,11 @@ class ActionManager:
         # ────────────────────────────────────────────────────────────────
 
         logger.debug(f"Action {action.name} completed with status: {status}.")
-        
+
         if is_running_task:
-            display_status = "failed" if status == "error" else "completed"
+            # Check if action output indicates error (some actions return error status without raising exceptions)
+            output_has_error = outputs and outputs.get("status") == "error"
+            display_status = "failed" if (status == "error" or output_has_error) else "completed"
             self._log_event_stream(
                 is_gui_task=is_gui_task,
                 event_type="action_end",

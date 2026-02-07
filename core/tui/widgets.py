@@ -175,6 +175,7 @@ class ConversationLog(_BaseLog):
             return
 
         history = list(self._history)
+        saved_scroll_y = self.scroll_offset.y  # Save scroll position
         super().clear()
 
         # Rebuild line ranges as we reflow
@@ -184,6 +185,16 @@ class ConversationLog(_BaseLog):
             self.write(renderable, expand=True, shrink=True)
             end_line = len(self.lines) - 1
             self._line_ranges.append((start_line, end_line))
+
+        # Schedule scroll restoration after DOM update
+        self.call_after_refresh(self._restore_scroll, saved_scroll_y)
+
+    def _restore_scroll(self, scroll_y: int) -> None:
+        """Restore scroll position after content refresh."""
+        # Clamp to max scroll position in case content height changed
+        max_scroll = max(0, self.virtual_size.height - self.size.height)
+        clamped_y = min(scroll_y, max_scroll)
+        self.scroll_to(y=clamped_y, animate=False)
 
     def _extract_text(self, renderable: RenderableType) -> str:
         """Extract plain text from a renderable object, excluding labels."""
