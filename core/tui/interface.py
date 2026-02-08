@@ -724,11 +724,11 @@ Skills are automatically selected during task creation based on the task descrip
     async def _handle_action_event(self, kind: str, message: str, *, style: str = "action") -> None:
         """Record an action update and refresh the status bar."""
         # Extract action name from display message formats:
-        # action_start: "Running {action_name}" -> extract action_name
-        # action_end: "{action_name} → completed/failed" -> extract action_name
-        if kind == "action_start" and message.startswith("Running "):
+        # action_start/GUI action start: "Running {action_name}" -> extract action_name
+        # action_end/GUI action end: "{action_name} → completed/failed" -> extract action_name
+        if kind in {"action_start", "GUI action start"} and message.startswith("Running "):
             action_name = message[8:]  # Remove "Running " prefix
-        elif kind == "action_end" and " → " in message:
+        elif kind in {"action_end", "GUI action end"} and " → " in message:
             action_name = message.split(" → ")[0]
         else:
             action_name = message
@@ -759,8 +759,8 @@ Skills are automatically selected during task creation based on the task descrip
             self._agent_state = "task_completed"
             self._task_completed_time = time.time()
 
-        # Handle action start
-        elif kind == "action_start":
+        # Handle action start (both CLI and GUI modes)
+        elif kind in {"action_start", "GUI action start"}:
             self._agent_state = "working"
             entry = ActionEntry(
                 kind=kind,
@@ -772,14 +772,14 @@ Skills are automatically selected during task creation based on the task descrip
             self._task_action_entries[entry_key] = entry
             await self.action_updates.put(ActionUpdate(operation="add", entry=entry, entry_key=entry_key))
 
-        # Handle action end - update existing entry
-        elif kind == "action_end":
+        # Handle action end (both CLI and GUI modes) - update existing entry
+        elif kind in {"action_end", "GUI action end"}:
             if entry_key in self._task_action_entries:
                 self._task_action_entries[entry_key].is_completed = True
                 # Check if the action failed (message format: "{action_name} → error")
                 if message and " → " in message:
                     status_part = message.split(" → ")[-1]
-                    if status_part == "error":
+                    if status_part == "error" or status_part == "failed":
                         self._task_action_entries[entry_key].is_error = True
                 await self.action_updates.put(ActionUpdate(operation="update", entry_key=entry_key))
 
@@ -895,7 +895,9 @@ Skills are automatically selected during task creation based on the task descrip
             return "system"
         if kind.startswith("task"):
             return "task"
-        if kind in {"action", "action_start", "action_end", "waiting_for_user"}:
+        # Include both CLI and GUI action events
+        if kind in {"action", "action_start", "action_end", "waiting_for_user",
+                    "GUI action start", "GUI action end"}:
             return "action"
         if kind in {"screen", "info", "note"}:
             return "info"
