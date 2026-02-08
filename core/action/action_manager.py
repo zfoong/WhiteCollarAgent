@@ -326,7 +326,19 @@ class ActionManager:
 
     def _log_event_stream(self, is_gui_task: bool, event_type: str, event: str, display_message: str, action_name: str) -> None:
         if is_gui_task:
-            GUIHandler.gui_module.set_gui_event_stream(event)
+            # Map event_type to GUI-specific labels
+            gui_event_labels = {
+                "action_start": "GUI action start",
+                "action_end": "GUI action end",
+            }
+            kind = gui_event_labels.get(event_type, "agent GUI event")
+            GUIHandler.gui_module.gui_event_stream_manager.log(
+                kind,
+                event,
+                severity="INFO",
+                display_message=display_message,
+                action_name=action_name,
+            )
         else:
             if self.event_stream_manager:
                 self.event_stream_manager.log(

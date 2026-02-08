@@ -3,7 +3,7 @@ import ast
 import tempfile
 import os
 from gradio_client import Client, file
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Any
 from core.action.action import Action
 from core.state.agent_state import STATE
 from core.state.types import ReasoningResult
@@ -18,6 +18,50 @@ from core.context_engine import ContextEngine
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.llm import LLMInterface, LLMCallType
 from core.logger import logger
+
+# Hardcoded list of actions available in GUI mode
+GUI_MODE_ACTIONS = [
+    # Core actions (always available)
+    "send_message",
+    "wait",
+    "set_mode",
+    "task_update_todos",
+    # GUI interaction actions
+    "mouse_click",
+    "mouse_move",
+    "mouse_drag",
+    "mouse_trace",
+    "keyboard_type",
+    "keyboard_hotkey",
+    "scroll",
+    "open_browser",
+    "open_application",
+    "window_control",
+    "clipboard_read",
+    "clipboard_write",
+]
+
+# Compact action space prompt for GUI mode 
+# This is a hardcoded prompt that describes all available GUI actions in a compact format
+GUI_ACTION_SPACE_PROMPT = """## Action Space
+
+mouse_click(x=<int>, y=<int>, button='left', click_type='single') # Click at (x,y). button: 'left'|'right'|'middle'. click_type: 'single'|'double'.
+mouse_move(x=<int>, y=<int>, duration=0) # Move cursor to (x,y). Optional duration in seconds for smooth move.
+mouse_drag(start_x=<int>, start_y=<int>, end_x=<int>, end_y=<int>, duration=0.5) # Drag from start to end position.
+mouse_trace(points=[{x, y, duration}, ...], relative=false, easing='linear') # Move through waypoints. easing: 'linear'|'easeInOutQuad'.
+keyboard_type(text='<string>', interval=0) # Type text at current focus. Use \\n for Enter. interval=delay between keystrokes.
+keyboard_hotkey(keys='<combo>') # Send key combo. Examples: 'ctrl+c', 'alt+tab', 'enter'. Use + to combine keys.
+scroll(direction='<up|down>') # Scroll one viewport in direction.
+open_browser(url='<url>') # Open browser, optionally with URL.
+open_application(exe_path='<path>', args=[]) # Launch Windows app at exe_path with optional args.
+window_control(operation='<op>', title='<substring>') # operation: 'focus'|'close'|'maximize'|'minimize'. Matches window by title substring.
+clipboard_read() # Read current clipboard content.
+clipboard_write(content='<string>') # Write text to clipboard.
+send_message(message='<string>', wait_for_user_reply=false) # Send message to user. Set wait_for_user_reply=true to pause for response.
+wait(seconds=<number>) # Pause for seconds (max 60).
+set_mode(target_mode='<cli|gui>') # Switch agent mode. Use 'cli' when GUI task is complete.
+task_update_todos(todos=[{content, status}, ...]) # Update todo list. status: 'pending'|'in_progress'|'completed'.
+"""
 
 class GUIModule:
     def __init__(
@@ -65,6 +109,53 @@ class GUIModule:
 
     def get_gui_event_stream(self) -> str:
         return self.gui_event_stream_manager.get_stream().to_prompt_snapshot(include_summary=True)
+
+    def emit_todos_to_gui_event_stream(self, todos: List[Dict[str, Any]]) -> None:
+        """Emit todos event to GUI event stream with checkbox visualization."""
+        todo_lines = []
+        for todo in todos:
+            status = todo.get("status", "pending")
+            content = todo.get("content", "")
+            if status == "completed":
+                checkbox = "[x]"
+            elif status == "in_progress":
+                checkbox = "[>]"
+            else:
+                checkbox = "[ ]"
+            todo_lines.append(f"  {checkbox} {content}")
+
+        todos_str = "\n" + "\n".join(todo_lines) if todo_lines else "(no todos)"
+        self.gui_event_stream_manager.log("todos", todos_str, severity="INFO")
+
+    def log_gui_reasoning(self, reasoning: str) -> None:
+        """Log agent reasoning to GUI event stream."""
+        self.gui_event_stream_manager.log(
+            "agent reasoning",
+            reasoning,
+            severity="DEBUG",
+        )
+
+    def log_gui_action_start(self, action_name: str, element: str = "") -> None:
+        """Log GUI action start to event stream."""
+        msg = f"Action: {action_name}"
+        if element:
+            msg += f" on '{element}'"
+        self.gui_event_stream_manager.log(
+            "GUI action start",
+            msg,
+            severity="INFO",
+        )
+
+    def log_gui_action_end(self, action_name: str, status: str, message: str = "") -> None:
+        """Log GUI action completion to event stream."""
+        msg = f"Action: {action_name} - {status}"
+        if message:
+            msg += f" ({message})"
+        self.gui_event_stream_manager.log(
+            "GUI action end",
+            msg,
+            severity="INFO" if status == "success" else "WARN",
+        )
 
     async def perform_gui_task_step(self, step: Optional[TodoItem], session_id: str, next_action_description: str, parent_action_id: str) -> dict:
         """
@@ -149,20 +240,25 @@ class GUIModule:
                 }
 
             # ===================================
-            # 3. Get Image Description
+            # 3. Get Image Description + Prepare Image for VLM
             # ===================================
             if self.can_use_omniparser:
                 image_description_list, annotated_image_bytes = await self._get_image_description_omniparser(png_bytes)
                 gui_state = "\n".join(image_description_list)
+                # Use annotated image for action selection (has labeled elements)
+                vlm_image_bytes = annotated_image_bytes
             else:
                 gui_state = await self._get_image_description_vlm(png_bytes=png_bytes, query=query)
+                # Use raw screenshot for action selection
+                vlm_image_bytes = png_bytes
 
             # ===================================
-            # 4. Select Action (with integrated reasoning)
+            # 4. Select Action (with integrated reasoning via VLM)
             # ===================================
             action_decision = await self.action_router.select_action_in_GUI(
                 query=query,
                 gui_state=gui_state,
+                image_bytes=vlm_image_bytes,
                 GUI_mode=True
             )
 
@@ -182,7 +278,7 @@ class GUIModule:
 
             # Log reasoning to GUI event stream
             if self.gui_event_stream_manager and reasoning:
-                self.set_gui_event_stream(reasoning)
+                self.log_gui_reasoning(reasoning)
 
             # ===================================
             # 5. Get Pixel Position (if needed)
@@ -238,65 +334,6 @@ class GUIModule:
                 "status": "error",
                 "message": str(e),
             }
-
-    async def vlm_flow(self, query: str, png_bytes: bytes) -> Tuple[ReasoningResult, str]:
-        """
-        Perform the VLM flow.
-        """
-        # ==================================
-        # 1. Get Image Description
-        # ==================================
-        image_description: str = await self._get_image_description_vlm(png_bytes=png_bytes, query=query)
-
-        # ==================================
-        # 2. Perform Reasoning
-        # ==================================
-        reasoning_result: ReasoningResult = await self._perform_reasoning_GUI_vlm(query=image_description)
-        action_query: str = reasoning_result.action_query
-
-        # ==================================
-        # 3. Get Pixel Position
-        # ==================================
-        pixel_position: List[int] = await self._get_pixel_position_vlm(image_bytes=png_bytes, element_to_find=action_query)
-
-        # ==================================
-        # 4. Construct Action Search Query
-        # ==================================
-        action_search_query: str = action_query + " " + json.dumps(pixel_position)
-
-        return reasoning_result, action_search_query
-
-    async def omniparser_flow(self, query: str, png_bytes: bytes) -> Tuple[ReasoningResult, str]:
-        """
-        Perform the omniparser flow.
-        """
-        # ==================================
-        # 1. OmniParser Image Analysis
-        # ==================================
-        image_description, annotated_image_bytes = await self._get_image_description_omniparser(png_bytes)
-
-        # ==================================
-        # 2. Reasoning
-        # ==================================
-        reasoning_result, item_index = await self._perform_reasoning_GUI_omniparser(png_bytes=annotated_image_bytes)
-        action_query: str = reasoning_result.action_query
-
-        # ==================================
-        # 3. Get Pixel Position
-        # ==================================
-        if len(image_description) > item_index:
-            item = image_description[item_index]
-            bbox: List[float] = self.extract_bbox_from_line(item)
-            pixel_position: List[int] = self.convert_bbox_to_pixels(bbox, 1064, 1064)
-        else:
-            pixel_position = "No UI element needed for action"
-
-        # ==================================
-        # 4. Construct Action Search Query
-        # ==================================
-        action_search_query: str = action_query + " " + json.dumps(pixel_position)
-
-        return reasoning_result, action_search_query
 
     # ==================================
     # VLM Helper Methods

@@ -157,6 +157,9 @@ class AgentBase:
             action_manager=self.action_manager,
         )
 
+        # Set gui_module reference in InternalActionInterface for GUI event stream integration
+        InternalActionInterface.gui_module = GUIHandler.gui_module
+
         # ── misc ──
         self.is_running: bool = True
         self._extra_system_prompt: str = self._load_extra_system_prompt()

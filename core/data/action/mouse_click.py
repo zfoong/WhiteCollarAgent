@@ -82,23 +82,31 @@ def mouse_click(input_data: dict) -> dict:
         return {'status': 'error', 'position': {}, 'message': f"Invalid click_type '{click_type}'. Must be 'single' or 'double'."}
 
     try:
+        # Disable fail-safe for VM environments where cursor position detection can be unreliable
+        pyautogui.FAILSAFE = False
+
+        # Get screen size for boundary checking
+        screen_width, screen_height = pyautogui.size()
+
         # Get position (use current if not specified)
         pos_x, pos_y = (x, y) if x is not None and y is not None else pyautogui.position()
         pos_x, pos_y = int(pos_x), int(pos_y)
 
-        # Move to position with brief duration for stability
-        pyautogui.moveTo(pos_x, pos_y, duration=0.25)
+        # Clamp coordinates to screen bounds with a small margin to avoid edge issues
+        margin = 1
+        pos_x = max(margin, min(pos_x, screen_width - margin))
+        pos_y = max(margin, min(pos_y, screen_height - margin))
+
+        # Now move to target position with visible duration
+        pyautogui.moveTo(pos_x, pos_y, duration=0.1)
         time.sleep(0.1)
 
-        # Get final position after move
-        final_x, final_y = pyautogui.position()
-
-        # Perform click
+        # Perform click at the specified coordinates directly (don't rely on current position)
         if click_type == 'double':
-            pyautogui.doubleClick(x=final_x, y=final_y, button=button)
+            pyautogui.doubleClick(x=pos_x, y=pos_y, button=button)
         else:
-            pyautogui.click(x=final_x, y=final_y, button=button)
+            pyautogui.click(x=pos_x, y=pos_y, button=button)
 
-        return {'status': 'success', 'position': {'x': final_x, 'y': final_y}, 'message': ''}
+        return {'status': 'success', 'position': {'x': pos_x, 'y': pos_y}, 'message': ''}
     except Exception as e:
         return {'status': 'error', 'position': {}, 'message': str(e)}

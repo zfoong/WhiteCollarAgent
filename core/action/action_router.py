@@ -16,7 +16,7 @@ from core.state.agent_state import STATE
 
 from core.logger import logger
 from core.llm import LLMCallType
-from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT, SELECT_ACTION_IN_SIMPLE_TASK_PROMPT
+from core.prompt import SELECT_ACTION_IN_TASK_PROMPT, SELECT_ACTION_PROMPT, SELECT_ACTION_IN_GUI_PROMPT, SELECT_ACTION_IN_SIMPLE_TASK_PROMPT, GUI_ACTION_SPACE_PROMPT
 from decorators.profiler import profile, OperationCategory
 
 
@@ -298,6 +298,7 @@ class ActionRouter:
         self,
         query: str,
         gui_state: str = "",
+        image_bytes: Optional[bytes] = None,
         action_type: Optional[str] = None,
         GUI_mode=False,
     ) -> Dict[str, Any]:
@@ -305,18 +306,17 @@ class ActionRouter:
         GUI-specific action selection when a task is running.
 
         Reasoning is now integrated directly into the action selection prompt,
-        eliminating the need for a separate reasoning LLM call. The prompt also
-        outputs an 'element_to_find' for pixel position lookup.
+        using VLM to see the screen and select the appropriate action.
 
         1. Gets compiled action list from task's action sets.
-        2. Builds a candidate list for the LLM.
-        3. LLM reasons about the screen state, selects an action, and identifies
+        2. VLM reasons about the screen state, selects an action, and identifies
            the UI element to interact with (if applicable).
-        4. Returns the decision with action, parameters, reasoning, and element_to_find.
+        3. Returns the decision with action, parameters, reasoning, and element_to_find.
 
         Args:
             query: Task-level instruction for the next step.
             gui_state: Description of the current screen state (from VLM/OmniParser).
+            image_bytes: Screenshot bytes for VLM to see the screen.
             action_type: Optional action type hint supplied to the LLM.
             GUI_mode: Whether the user is interacting through a GUI, affecting
                 which actions are visible.
@@ -325,20 +325,10 @@ class ActionRouter:
             Dict[str, Any]: Decision payload with ``action_name``, ``parameters``,
             ``reasoning``, and ``element_to_find`` for execution.
         """
-        action_candidates = []
-        action_name_candidates = []
-
-        # List of filtered actions
-        ignore_actions = ["ignore"]
-
-        # Get compiled action list from task's action sets
+        # GUI mode uses hardcoded compact action space prompt for efficiency
+        # No need to build candidates dynamically - action validation happens after selection
         compiled_actions = self._get_current_task_compiled_actions()
-
-        # Use static compiled list - NO RAG SEARCH
-        action_candidates = self._build_candidates_from_compiled_list(
-            compiled_actions, GUI_mode, ignore_actions
-        )
-        logger.info(f"ActionRouter (GUI) using compiled action list: {len(action_candidates)} actions")
+        logger.info(f"ActionRouter (GUI) using compact action space prompt with {len(compiled_actions)} actions")
 
         # Build the instruction prompt for the LLM
         # KV CACHING: Static/session-static content first, dynamic (gui_event_stream) last
@@ -348,6 +338,7 @@ class ActionRouter:
         # - static_prompt: everything except gui_event_stream (cached prefix)
         # - full_prompt: includes gui_event_stream (used for first call or non-cached)
         # Note: task_state includes skill instructions and is session-static (doesn't change during task)
+        # Note: GUI mode uses hardcoded compact action space prompt for efficiency
         task_state = self.context_engine.get_task_state()
         static_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
@@ -355,7 +346,7 @@ class ActionRouter:
             gui_event_stream="",  # Empty for static prompt
             gui_state=gui_state,
             query=query,
-            action_candidates=self._format_candidates(action_candidates),
+            gui_action_space=GUI_ACTION_SPACE_PROMPT,
         )
         full_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
@@ -363,13 +354,14 @@ class ActionRouter:
             gui_event_stream=self.context_engine.get_gui_event_stream(),
             gui_state=gui_state,
             query=query,
-            action_candidates=self._format_candidates(action_candidates),
+            gui_action_space=GUI_ACTION_SPACE_PROMPT,
         )
 
         max_retries = 3
         for attempt in range(max_retries):
             decision = await self._prompt_for_decision_gui(
                 prompt=full_prompt,
+                image_bytes=image_bytes,
                 is_task=True,
                 static_prompt=static_prompt,
             )
