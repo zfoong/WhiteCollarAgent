@@ -133,7 +133,7 @@ class AgentBase:
         self.action_manager = ActionManager(
             self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, self.state_manager
         )
-        self.action_router = ActionRouter(self.action_library, self.llm, self.vlm, self.context_engine)
+        self.action_router = ActionRouter(self.action_library, self.llm, self.context_engine)
 
         self.task_manager = TaskManager(
             db_interface=self.db_interface,
@@ -149,13 +149,21 @@ class AgentBase:
             context_engine=self.context_engine,
         )
 
+        # Initialize footage callback (will be set by TUI interface later)
+        self._tui_footage_callback = None
+
         GUIHandler.gui_module: GUIModule = GUIModule(
             provider=llm_provider,
             action_library=self.action_library,
             action_router=self.action_router,
             context_engine=self.context_engine,
             action_manager=self.action_manager,
+            event_stream_manager=self.event_stream_manager,
+            tui_footage_callback=self._tui_footage_callback,
         )
+
+        # Set gui_module reference in InternalActionInterface for GUI event stream integration
+        InternalActionInterface.gui_module = GUIHandler.gui_module
 
         # ── misc ──
         self.is_running: bool = True
@@ -236,14 +244,7 @@ class AgentBase:
                 gui_response = await self._handle_gui_task_execution(
                     trigger_data, session_id
                 )
-                if self.event_stream_manager and gui_response.get("event_stream_summary"):
-                    self.event_stream_manager.log(
-                        "agent GUI event",
-                        gui_response.get("event_stream_summary"),
-                        severity="DEBUG",
-                        display_message=None,
-                    )
-                    self.state_manager.bump_event_stream()
+                # GUI events are now logged to main event stream directly, no summary passback needed
                 await self._finalize_action_execution(gui_response.get("new_session_id"), gui_response.get("action_output"), session_id)
                 return
 
@@ -296,7 +297,8 @@ class AgentBase:
         Handle GUI mode task execution.
 
         Returns:
-            Dictionary with action_output, new_session_id, and event_stream_summary
+            Dictionary with action_output and new_session_id.
+            Note: GUI events are now logged to main event stream directly.
         """
         current_todo = self.state_manager.get_current_todo()
 
@@ -314,12 +316,10 @@ class AgentBase:
 
         action_output = gui_response.get("action_output", {})
         new_session_id = action_output.get("task_id") or session_id
-        event_stream_summary: str | None = gui_response.get("event_stream_summary")
 
         return {
             "action_output": action_output,
             "new_session_id": new_session_id,
-            "event_stream_summary": event_stream_summary,
         }
 
     @profile("agent_select_action", OperationCategory.AGENT_LOOP)
@@ -750,6 +750,8 @@ class AgentBase:
                     action_router=self.action_router,
                     context_engine=self.context_engine,
                     action_manager=self.action_manager,
+                    event_stream_manager=self.event_stream_manager,
+                    tui_footage_callback=self._tui_footage_callback,
                 )
         return llm_ok and vlm_ok
 

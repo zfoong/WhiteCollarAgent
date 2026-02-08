@@ -294,6 +294,7 @@ class VLMInterface:
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": 2048,
+            "response_format": {"type": "json_object"},  # Enforce JSON output
         }
         headers = {
             "Content-Type": "application/json",

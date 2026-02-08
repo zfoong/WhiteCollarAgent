@@ -35,8 +35,30 @@ Screen {
     width: 2fr;
 }
 
-#action-panel {
+#right-panel {
     width: 1fr;
+    height: 100%;
+    layout: vertical;
+}
+
+#vm-footage-panel {
+    height: 1fr;
+    min-height: 8;
+    border: solid #2a2a2a;
+    border-title-align: left;
+    border-title-color: #ff4f18;
+    background: #0a0a0a;
+    margin: 0 1;
+}
+
+#vm-footage-panel.-hidden {
+    display: none;
+    height: 0;
+    min-height: 0;
+}
+
+#action-panel {
+    height: 1fr;
 }
 
 TextLog {

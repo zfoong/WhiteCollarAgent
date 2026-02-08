@@ -2,25 +2,25 @@ from core.action.action_framework.registry import action
 
 @action(
     name="web_search",
-    description="Performs web search using Google Custom Search API (if credentials exist) or DuckDuckGo fallback. Supports single query (string) or batch queries (array of strings).",
+    description="""Performs web search and returns search result snippets with markdown hyperlinks.
+- Uses Google Custom Search API (if credentials exist) or DuckDuckGo fallback
+- Returns search result blocks with title, URL, and content snippets
+- Results are formatted with markdown links for easy reference
+- Use web_fetch action to read full page content from specific URLs""",
     default=True,
     mode="CLI",
     action_sets=["web_research"],
     input_schema={
         "query": {
-            "type": ["string", "array"],
+            "type": "string",
             "example": "latest AI developments 2025",
-            "description": "Search query. Can be a single string or an array of strings for batch search."
+            "description": "The search query to use. Must be at least 2 characters.",
+            "required": True
         },
         "num_results": {
             "type": "integer",
             "example": 5,
-            "description": "Number of results per query (1-20). Defaults to 5."
-        },
-        "combine_output": {
-            "type": "boolean",
-            "example": False,
-            "description": "For batch queries: if true, combines all results into a single formatted string. Defaults to false."
+            "description": "Number of results to return (1-20). Defaults to 5."
         }
     },
     output_schema={
@@ -29,20 +29,24 @@ from core.action.action_framework.registry import action
             "example": "success",
             "description": "'success' or 'error'."
         },
-        "search_results": {
+        "results": {
             "type": "array",
-            "description": "For single query: list of {title, url, content, type}. For batch: list of {query, search_results}."
+            "description": "List of search results, each containing: title, url, snippet, markdown_link."
         },
-        "combined_text": {
+        "sources_markdown": {
             "type": "string",
-            "description": "Present when combine_output=true. All results as formatted text."
+            "description": "Pre-formatted markdown list of sources for easy inclusion in responses."
+        },
+        "result_count": {
+            "type": "integer",
+            "description": "Number of results returned."
         },
         "message": {
             "type": "string",
             "description": "Error message if status is 'error'."
         }
     },
-    requirement=["aiohttp", "duckduckgo-search", "google-api-python-client"],
+    requirement=["duckduckgo-search", "google-api-python-client"],
     test_payload={
         "query": "latest AI developments 2025",
         "num_results": 5,
@@ -50,129 +54,139 @@ from core.action.action_framework.registry import action
     }
 )
 def web_search(input_data: dict) -> dict:
-    import os, json, asyncio, random, re
+    """
+    Web search action that returns search result snippets with markdown hyperlinks.
+    Similar to Claude Code's WebSearch tool - returns snippets, not full page content.
+    """
+    import os
+    import re
 
     simulated_mode = input_data.get('simulated_mode', False)
-    query = input_data.get('query', '')
-    num_results = int(input_data.get('num_results', 5))
-    combine_output = bool(input_data.get('combine_output', False))
+    query = input_data.get('query', '').strip()
+    num_results = min(max(int(input_data.get('num_results', 5)), 1), 20)
 
-    # Determine if batch mode
-    is_batch = isinstance(query, list)
-    queries = query if is_batch else [query] if query else []
+    # Validate query
+    if not query or len(query) < 2:
+        return {
+            'status': 'error',
+            'message': 'Query is required and must be at least 2 characters.',
+            'results': [],
+            'sources_markdown': '',
+            'result_count': 0
+        }
 
-    if not queries or (len(queries) == 1 and not queries[0]):
-        return {'status': 'error', 'message': 'query is required.', 'search_results': []}
+    def _normalise_ws(text):
+        """Normalize whitespace in text."""
+        return re.sub(r'\s+', ' ', (text or '')).strip()
 
+    def _format_results(raw_results):
+        """Format raw search results into standardized output."""
+        formatted = []
+        for r in raw_results:
+            title = _normalise_ws(r.get('title', 'Untitled'))
+            url = r.get('url', '')
+            snippet = _normalise_ws(r.get('snippet', r.get('content', r.get('description', ''))))
+
+            formatted.append({
+                'title': title,
+                'url': url,
+                'snippet': snippet,
+                'markdown_link': f"[{title}]({url})"
+            })
+        return formatted
+
+    def _generate_sources_markdown(results):
+        """Generate a markdown-formatted sources list."""
+        if not results:
+            return ''
+        lines = ['Sources:']
+        for r in results:
+            lines.append(f"- [{r['title']}]({r['url']})")
+        return '\n'.join(lines)
+
+    # Simulated mode for testing
     if simulated_mode:
-        # Return mock result for testing
-        if is_batch:
-            results = [
-                {
-                    'query': q,
-                    'search_results': [
-                        {'title': f'Test result {i} for {q}', 'url': 'https://example.com', 'content': 'Test content', 'type': 'text'}
-                        for i in range(num_results)
-                    ]
-                }
-                for q in queries
-            ]
-            if combine_output:
-                combined = '\n\n'.join(f"{r['query']}:\n" + ' '.join(sr['content'] for sr in r['search_results']) for r in results)
-                return {'status': 'success', 'search_results': results, 'combined_text': combined}
-            return {'status': 'success', 'search_results': results}
-        else:
-            return {
-                'status': 'success',
-                'search_results': [
-                    {'title': f'Test result {i} for {queries[0]}', 'url': 'https://example.com', 'content': 'Test content', 'type': 'text'}
-                    for i in range(num_results)
-                ]
+        mock_results = [
+            {
+                'title': f'Test Result {i+1}: {query}',
+                'url': f'https://example.com/result{i+1}',
+                'snippet': f'This is a test snippet for result {i+1} about {query}.',
+                'markdown_link': f'[Test Result {i+1}: {query}](https://example.com/result{i+1})'
             }
+            for i in range(num_results)
+        ]
+        return {
+            'status': 'success',
+            'results': mock_results,
+            'sources_markdown': _generate_sources_markdown(mock_results),
+            'result_count': len(mock_results),
+            'message': ''
+        }
 
-    from ddgs import DDGS
-
-    UA_LIST = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6)',
-        'Mozilla/5.0 (X11; Ubuntu; Linux x86_64)'
-    ]
-
-    def _normalise_ws(t):
-        return re.sub(r'\s+', ' ', (t or '')).strip()
-
-    def _strip_links_images(t):
-        return re.sub(r'!\[.*?\]\([^)]*\)', '', t or '')
-
-    async def duckduckgo_search(q, n=5):
+    # Real search implementation
+    def duckduckgo_search(q, n=5):
+        """Search using DuckDuckGo."""
+        from duckduckgo_search import DDGS
         results = []
-        dd = DDGS()
-        with dd:
-            hits = list(dd.text(q, max_results=n))
-            for hit in hits:
-                url = hit.get('url') or hit.get('href')
-                entry = {
-                    'title': _normalise_ws(hit.get('title') or 'Untitled'),
-                    'url': url,
-                    'content': _strip_links_images(_normalise_ws(hit.get('description') or '')),
-                    'type': 'text'
-                }
-                results.append(entry)
+        try:
+            with DDGS() as ddgs:
+                hits = list(ddgs.text(q, max_results=n + 10))  # Get extra for filtering
+                for hit in hits:
+                    url = hit.get('href') or hit.get('url', '')
+                    results.append({
+                        'title': hit.get('title', 'Untitled'),
+                        'url': url,
+                        'snippet': hit.get('body', hit.get('description', ''))
+                    })
+        except Exception as e:
+            raise Exception(f"DuckDuckGo search failed: {str(e)}")
         return results
 
-    async def google_cse_search(q, n=5):
+    def google_cse_search(q, n=5):
+        """Search using Google Custom Search API."""
         try:
             from googleapiclient.discovery import build
             api_key = os.getenv('GOOGLE_API_KEY')
             cse_id = os.getenv('GOOGLE_CSE_ID')
             if not api_key or not cse_id:
-                raise Exception('No API credentials')
+                raise Exception('No Google API credentials')
+
             service = build('customsearch', 'v1', developerKey=api_key)
-            res = service.cse().list(q=q, cx=cse_id, num=n).execute()
+            res = service.cse().list(q=q, cx=cse_id, num=min(n + 5, 10)).execute()
             items = res.get('items', [])
+
             return [{
-                'title': _normalise_ws(i.get('title', 'Untitled')),
-                'url': i.get('link'),
-                'content': _normalise_ws(i.get('snippet', '')),
-                'type': 'text'
-            } for i in items]
-        except:
-            return await duckduckgo_search(q, n)
-
-    async def do_search(q, n):
-        return await google_cse_search(q, n)
-
-    async def run_searches():
-        all_results = []
-        for q in queries:
-            results = await do_search(q, num_results)
-            if is_batch:
-                all_results.append({'query': q, 'search_results': results})
-            else:
-                all_results = results
-                break
-        return all_results
+                'title': item.get('title', 'Untitled'),
+                'url': item.get('link', ''),
+                'snippet': item.get('snippet', '')
+            } for item in items]
+        except Exception:
+            # Fallback to DuckDuckGo
+            return duckduckgo_search(q, n)
 
     try:
-        results = asyncio.run(run_searches())
+        # Try Google first, fallback to DuckDuckGo
+        raw_results = google_cse_search(query, num_results)
 
-        if is_batch and combine_output:
-            combined_parts = []
-            for r in results:
-                content = ' '.join(
-                    _normalise_ws(sr.get('content', ''))
-                    for sr in r['search_results']
-                    if sr.get('content')
-                )
-                if content:
-                    combined_parts.append(f"{r['query']}:\n{content}")
-            return {
-                'status': 'success',
-                'search_results': results,
-                'combined_text': '\n\n'.join(combined_parts)
-            }
+        # Limit to requested number
+        raw_results = raw_results[:num_results]
 
-        return {'status': 'success', 'search_results': results}
+        # Format results
+        formatted_results = _format_results(raw_results)
+
+        return {
+            'status': 'success',
+            'results': formatted_results,
+            'sources_markdown': _generate_sources_markdown(formatted_results),
+            'result_count': len(formatted_results),
+            'message': ''
+        }
 
     except Exception as e:
-        return {'status': 'error', 'message': str(e), 'search_results': []}
+        return {
+            'status': 'error',
+            'message': str(e),
+            'results': [],
+            'sources_markdown': '',
+            'result_count': 0
+        }

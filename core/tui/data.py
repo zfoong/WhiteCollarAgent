@@ -26,3 +26,11 @@ class ActionUpdate:
     operation: str  # "add" or "update"
     entry: Optional[ActionEntry] = None
     entry_key: Optional[str] = None
+
+
+@dataclass
+class FootageUpdate:
+    """Container for VM footage updates."""
+    image_bytes: bytes
+    timestamp: float
+    container_id: str = ""

@@ -26,7 +26,6 @@ from core.event_stream.event_stream_manager import EventStreamManager
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
-from core.gui.handler import GUIHandler
 from decorators.profiler import profile, OperationCategory
 
 nest_asyncio.apply()
@@ -325,17 +324,31 @@ class ActionManager:
         )
 
     def _log_event_stream(self, is_gui_task: bool, event_type: str, event: str, display_message: str, action_name: str) -> None:
+        """Log action events to the unified event stream.
+
+        Both GUI and CLI actions are logged to the main event stream.
+        GUI actions use prefixed labels (e.g., "GUI action start") for clarity.
+        """
+        if not self.event_stream_manager:
+            logger.warning(f"No event stream manager to log to for event type: {event_type}")
+            return
+
+        # Use GUI-specific labels when in GUI mode, otherwise standard labels
         if is_gui_task:
-            GUIHandler.gui_module.set_gui_event_stream(event)
+            gui_event_labels = {
+                "action_start": "GUI action start",
+                "action_end": "GUI action end",
+            }
+            kind = gui_event_labels.get(event_type, f"GUI {event_type}")
         else:
-            if self.event_stream_manager:
-                self.event_stream_manager.log(
-                    event_type,
-                    event,
-                    display_message=display_message, action_name=action_name,
-                )
-            else:
-                logger.warning(f"No event stream manager to log to for event type: {event_type}")
+            kind = event_type
+
+        self.event_stream_manager.log(
+            kind,
+            event,
+            display_message=display_message,
+            action_name=action_name,
+        )
     # ------------------------------------------------------------------
     # Action execution primitives (unchanged)
     # ------------------------------------------------------------------

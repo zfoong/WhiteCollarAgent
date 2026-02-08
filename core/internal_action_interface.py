@@ -16,10 +16,12 @@ from datetime import datetime
 from core.logger import logger
 from pathlib import Path
 from core.config import AGENT_WORKSPACE_ROOT
+from core.gui.gui_module import GUI_MODE_ACTIONS
 import mss, mss.tools, os
 
 if TYPE_CHECKING:
     from core.context_engine import ContextEngine
+    from core.gui.gui_module import GUIModule
 
 
 class InternalActionInterface:
@@ -35,6 +37,7 @@ class InternalActionInterface:
     state_manager: Optional[StateManager] = None
     vlm_interface: Optional[VLMInterface] = None
     context_engine: Optional["ContextEngine"] = None
+    gui_module: Optional["GUIModule"] = None
 
     @classmethod
     def initialize(
@@ -44,6 +47,7 @@ class InternalActionInterface:
         state_manager: StateManager,
         vlm_interface: Optional[VLMInterface] = None,
         context_engine: Optional["ContextEngine"] = None,
+        gui_module: Optional["GUIModule"] = None,
     ):
         """
         Register the shared interfaces that actions depend on.
@@ -57,6 +61,7 @@ class InternalActionInterface:
         cls.state_manager = state_manager
         cls.vlm_interface = vlm_interface
         cls.context_engine = context_engine
+        cls.gui_module = gui_module
 
     # ─────────────────────── LLM Access for Actions ───────────────────────
 
@@ -112,9 +117,15 @@ class InternalActionInterface:
     def switch_to_CLI_mode():
         STATE.update_gui_mode(False)
 
-    @staticmethod
-    def switch_to_GUI_mode():
+    @classmethod
+    def switch_to_GUI_mode(cls):
+        """Switch to GUI mode with hardcoded action list."""
         STATE.update_gui_mode(True)
+
+        # Replace compiled_actions with hardcoded GUI mode actions
+        if cls.task_manager and cls.task_manager.active:
+            cls.task_manager.active.compiled_actions = GUI_MODE_ACTIONS.copy()
+            logger.info(f"[GUI MODE] Set compiled_actions to {len(GUI_MODE_ACTIONS)} hardcoded GUI actions")
 
     # ───────────────── Task Management ─────────────────
 
@@ -537,8 +548,9 @@ class InternalActionInterface:
 
         updated_todos = cls.task_manager.update_todos(todos)
 
-        # Emit [todos] event to event stream for session caching optimization
+        # Emit [todos] event to unified event stream for session caching optimization
         # Format: [ ] Pending | [>] In Progress | [x] Completed
+        # Note: CLI and GUI modes now share the same event stream
         cls._emit_todos_event(updated_todos)
 
         return {"status": "ok", "todos": updated_todos}

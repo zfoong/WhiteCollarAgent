@@ -4,7 +4,6 @@ from tzlocal import get_localzone
 import json
 
 from core.config import AGENT_WORKSPACE_ROOT
-from core.gui.handler import GUIHandler
 from core.logger import logger
 from core.prompt import (
     AGENT_ROLE_PROMPT,
@@ -204,20 +203,6 @@ class ContextEngine:
         if stream:
             stream.reset_session_sync(call_type)
 
-    def get_gui_event_stream(self) -> str:
-        """
-        Get the GUI event stream content for inclusion in user prompts.
-        """
-        gui_event_stream: str = GUIHandler.gui_module.get_gui_event_stream()
-        if gui_event_stream:
-            return (
-                "<gui_event_stream>\n"
-                "Use the GUI event stream to understand the current situation and past GUI actions:\n"
-                f"{gui_event_stream}\n"
-                "</gui_event_stream>"
-            )
-        return "<gui_event_stream>\n(no GUI events yet)\n</gui_event_stream>"
-
     def get_task_state(self) -> str:
         """
         Get the current task state for inclusion in user prompts.
@@ -342,7 +327,7 @@ class ContextEngine:
         KV CACHING OPTIMIZATION:
         - System prompt contains ONLY STATIC content (agent_info, role_info, policy, environment, base_instruction)
         - Dynamic content (event_stream, task_state, agent_state) must be added to user prompts by callers
-        - Use get_event_stream(), get_task_state(), get_agent_state(), get_gui_event_stream() for user prompts
+        - Use get_event_stream(), get_task_state(), get_agent_state() for user prompts
 
         :param system_flags: Optional dict of booleans to enable/disable system sections.
             Supported keys (STATIC ONLY): ``agent_info``, ``role_info``, ``policy``,

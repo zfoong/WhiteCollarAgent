@@ -278,6 +278,18 @@ Critical Rules:
 - If unrecoverable error, use 'task_end' with status 'abort'.
 - In GUI mode: only ONE UI interaction per action. Switch to CLI mode using 'switch_mode' action when task is complete.
 - You must provide concrete parameter values for the action's input_schema.
+
+File Reading Best Practices:
+- read_file returns content with line numbers in cat -n format
+- For large files, use offset/limit parameters for pagination:
+  * Default reads first 2000 lines - check has_more to know if more exists
+  * Use offset to skip to specific line numbers
+  * Use limit to control how many lines to read
+- To find specific content in large files:
+  1. Use grep_files with keywords to locate relevant sections
+  2. Note the line numbers from grep results
+  3. Use read_file with appropriate offset to read that section
+- DO NOT repeatedly read entire large files - use targeted reading with offset/limit
 </rules>
 
 <reasoning_protocol>
@@ -331,7 +343,25 @@ Your job is to reason about the current state, then select the next action and p
 {event_stream}
 """
 
-# KV CACHING OPTIMIZED: Static content FIRST, session-static in MIDDLE, dynamic (gui_event_stream) LAST
+# Compact action space prompt for GUI mode (UI-TARS style)
+# This is a hardcoded prompt that describes all available GUI actions in a compact format
+GUI_ACTION_SPACE_PROMPT = """## Action Space
+
+mouse_click(x=<int>, y=<int>, button='left', click_type='single') # Click at (x,y). button: 'left'|'right'|'middle'. click_type: 'single'|'double'.
+mouse_move(x=<int>, y=<int>, duration=0) # Move cursor to (x,y). Optional duration in seconds for smooth move.
+mouse_drag(start_x=<int>, start_y=<int>, end_x=<int>, end_y=<int>, duration=0.5) # Drag from start to end position.
+mouse_trace(points=[{x, y, duration}, ...], relative=false, easing='linear') # Move through waypoints. easing: 'linear'|'easeInOutQuad'.
+keyboard_type(text='<string>', interval=0) # Type text at current focus. Use \\n for Enter. interval=delay between keystrokes.
+keyboard_hotkey(keys='<combo>') # Send key combo. Examples: 'ctrl+c', 'alt+tab', 'enter'. Use + to combine keys.
+scroll(direction='<up|down>') # Scroll one viewport in direction.
+window_control(operation='<op>', title='<substring>') # operation: 'focus'|'close'|'maximize'|'minimize'. Matches window by title substring.
+send_message(message='<string>', wait_for_user_reply=false) # Send message to user. Set wait_for_user_reply=true to pause for response.
+wait(seconds=<number>) # Pause for seconds (max 60).
+set_mode(target_mode='<cli|gui>') # Switch agent mode. Use 'cli' when GUI task is complete.
+task_update_todos(todos=[{content, status}, ...]) # Update todo list. status: 'pending'|'in_progress'|'completed'.
+"""
+
+# KV CACHING OPTIMIZED: Static content FIRST, session-static in MIDDLE, dynamic (event_stream) LAST
 SELECT_ACTION_IN_GUI_PROMPT = """
 <rules>
 GUI Action Selection Rules:
@@ -343,58 +373,37 @@ GUI Action Selection Rules:
 - Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
 - use 'send_message' when you want to communicate or report to the user.
 - If the current todo is complete, use 'task_update_todos' to mark it as completed and move on.
-- If the result of the task has been achieved, you MUST use 'switch_mode' action to switch to CLI mode.
+- If the result of the task has been achieved, you MUST use 'set_mode' action to switch to CLI mode.
 - DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
 </rules>
-
-<reasoning_protocol>
-Before selecting an action, you MUST reason through these steps:
-1. Describe the current screen state based on the screenshot/description provided.
-2. Verify if the previous action in the event stream was performed successfully.
-3. Check the event stream for warnings or repeated patterns that need adjustment.
-4. Determine what the next action should be to progress toward the goal.
-5. If selecting a click/mouse action, identify the specific UI element to interact with.
-6. Consider if the current todo is complete (check [todos] event) and needs updating.
-7. Check if task is complete and mode switch is needed.
-</reasoning_protocol>
-
-<notes>
-- Provide every required parameter for the chosen action, respecting each field's type, description, and example.
-- Keep parameter values concise and directly useful for execution.
-- Always use double quotes around strings so the JSON is valid.
-- DO NOT return empty response. When encounter issue, return 'send_message' to inform user.
-</notes>
 
 <output_format>
 Return ONLY a valid JSON object with this structure and no extra commentary:
 {{
-  "reasoning": "<description of the current screen state, verification of previous action, and decision for next action>",
-  "element_to_find": "<description of the UI element to interact with, or empty string if action doesn't need pixel coordinates>",
   "action_name": "<name of the chosen action, or empty string if none apply>",
   "parameters": {{
     "<parameter name>": <value>,
     "...": <value>
   }}
 }}
-
-Note: The 'element_to_find' field is used to locate pixel coordinates for mouse/click actions.
-- For mouse_click, mouse_move, mouse_drag: describe the element like "the Firefox icon on the desktop" or "the search button"
-- For keyboard actions, send_message, task_update_todos, etc.: set element_to_find to ""
 </output_format>
 
-<actions>
-This is the list of action candidates, each including descriptions and input schema:
-{action_candidates}
-</actions>
+<notes>
+- Provide every required parameter for the chosen action, respecting each field's type, description, and example.
+- Keep parameter values concise and directly useful for execution.
+- Always use double quotes around strings so the JSON is valid.
+- DO NOT return empty response. When encounter issue (), return 'send message' to inform user.
+</notes>
 
 {agent_state}
 
-<gui_state>
-Current screen state (screenshot description or parsed elements):
-{gui_state}
-</gui_state>
-
 {task_state}
+
+{gui_action_space}
+
+---
+
+{event_stream}
 
 <objective>
 You are a GUI agent. You are given a goal and your event stream, with screenshots. You need to reason about the current state and perform the next action to complete the task.
@@ -404,9 +413,10 @@ Here is your goal:
 Your job is to reason about the screen, select the next GUI action, and provide the input parameters so it can be executed immediately.
 </objective>
 
----
-
-{gui_event_stream}
+<reasoning>
+Here is your reasoning of the current step:
+{reasoning}
+</reasoning>
 """
 
 # Used for simple task mode - streamlined action selection without todo workflow
@@ -614,6 +624,23 @@ Adaptive Execution:
 - If verification fails, analyze why and either re-execute or gather more info
 - Never assume task is done without verification and user confirmation
 </working_ethic>
+
+<file_handling>
+Efficient File Reading:
+- read_file returns content with line numbers (cat -n format)
+- Default limit is 2000 lines - check has_more in response to know if file continues
+- For large files (>500 lines), follow this strategy:
+  1. Read beginning first to understand structure
+  2. Use grep_files to find specific patterns/functions
+  3. Use read_file with offset/limit to read targeted sections based on grep results
+
+File Actions:
+- read_file: General reading with pagination (offset/limit)
+- grep_files: Search for keywords, returns matching chunks with line numbers
+- stream_read + stream_edit: Use together for file modifications
+
+Avoid: Reading entire large files repeatedly - use grep + targeted offset/limit reads instead
+</file_handling>
 """
 
 
@@ -1011,18 +1038,9 @@ Follow these instructions carefully:
 - Make sure the query is general and descriptive enough to retrieve relevant GUI actions from a vector database.
 </quality_control>
 
----
-
-{gui_event_stream}
-
 {task_state}
 
 {agent_state}
-
-<gui_state>
-You are provided with a screenshot of the current screen.
-{gui_state}
-</gui_state>
 
 <output_format>
 Return ONLY a JSON object with two fields:
@@ -1038,6 +1056,14 @@ Return ONLY a JSON object with two fields:
   "action_query": "step complete, move to next step"
 }}
 </output_format>
+---
+
+<gui_state>
+You are provided with a screenshot of the current screen.
+{gui_state}
+</gui_state>
+
+{event_stream}
 """
 
 # DEPRECATED: GUI OmniParser reasoning is now integrated into SELECT_ACTION_IN_GUI_PROMPT.
@@ -1078,10 +1104,6 @@ Follow these instructions carefully:
 - Make sure the query is general and descriptive enough to retrieve relevant GUI actions from a vector database.
 </quality_control>
 
----
-
-{gui_event_stream}
-
 {task_state}
 
 {agent_state}
@@ -1102,6 +1124,10 @@ Return ONLY a JSON object with three fields:
   "item_index": 42
 }}
 </output_format>
+
+---
+
+{event_stream}
 """
 
 GUI_QUERY_FOCUSED_PROMPT = """
@@ -1168,7 +1194,7 @@ After getting the pixels, do an extra check to make sure the pixel location is v
 
 ---
 
-Element to find: {element_to_find}
+Element to find: {element_index_to_find}
 
 Analyze the image and generate the JSON list.
 """

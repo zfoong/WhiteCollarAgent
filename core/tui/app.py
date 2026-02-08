@@ -19,7 +19,7 @@ from core.models.types import InterfaceType
 
 from core.tui.styles import TUI_CSS
 from core.tui.settings import save_settings_to_env, get_api_key_env_name
-from core.tui.widgets import ConversationLog, PasteableInput
+from core.tui.widgets import ConversationLog, PasteableInput, VMFootageWidget
 from core.tui.mcp_settings import (
     list_mcp_servers,
     add_mcp_server_from_template,
@@ -54,6 +54,7 @@ class CraftApp(App):
     status_text = var("Status: Idle")
     show_menu = var(True)
     show_settings = var(False)
+    gui_mode_active = var(False)
 
     _STATUS_PREFIX = " "
     _STATUS_GAP = 4
@@ -177,9 +178,17 @@ class CraftApp(App):
                     ConversationLog(id="chat-log"),
                     id="chat-panel",
                 ),
-                Container(
-                    ConversationLog(id="action-log"),
-                    id="action-panel",
+                Vertical(
+                    Container(
+                        VMFootageWidget(id="vm-footage"),
+                        id="vm-footage-panel",
+                        classes="-hidden",
+                    ),
+                    Container(
+                        ConversationLog(id="action-log"),
+                        id="action-panel",
+                    ),
+                    id="right-panel",
                 ),
                 id="top-region",
             ),
@@ -521,6 +530,7 @@ class CraftApp(App):
     async def on_mount(self) -> None:  # pragma: no cover - UI lifecycle
         self.query_one("#chat-panel").border_title = "Chat"
         self.query_one("#action-panel").border_title = "Action"
+        self.query_one("#vm-footage-panel").border_title = "VM Footage"
 
         # Runtime safeguard: enforce wrapping on the logs even if CSS/props vary by version
         chat_log = self.query_one("#chat-log", ConversationLog)
@@ -560,6 +570,18 @@ class CraftApp(App):
         if self.query("#menu-panel"):
             menu_panel = self.query_one("#menu-panel")
             menu_panel.set_class(show, "-hidden")
+
+    def watch_gui_mode_active(self, active: bool) -> None:
+        """Handle GUI mode layout changes."""
+        self._toggle_vm_footage_panel(active)
+
+    def _toggle_vm_footage_panel(self, show: bool) -> None:
+        """Show/hide the VM footage panel based on GUI mode."""
+        footage_panel = self.query("#vm-footage-panel")
+        if footage_panel:
+            footage_panel.first().set_class(not show, "-hidden")
+            if show:
+                footage_panel.first().border_title = "VM Footage"
 
     def _sync_layers(self) -> None:
         menu_layer = self.query_one("#menu-layer")
@@ -632,6 +654,27 @@ class CraftApp(App):
             except QueueEmpty:
                 break
             self._set_status(status)
+
+        # Process footage updates
+        while True:
+            try:
+                footage_update = self._interface.footage_updates.get_nowait()
+            except QueueEmpty:
+                break
+
+            # Activate GUI mode if not already active
+            if not self.gui_mode_active:
+                self.gui_mode_active = True
+
+            # Update footage widget
+            footage_widget = self.query_one("#vm-footage", VMFootageWidget)
+            footage_widget.update_footage(footage_update.image_bytes)
+
+        # Check if GUI mode ended
+        if self._interface.gui_mode_ended():
+            self.gui_mode_active = False
+            footage_widget = self.query_one("#vm-footage", VMFootageWidget)
+            footage_widget.clear_footage()
 
     async def on_shutdown_request(self, event: events.ShutdownRequest) -> None:
         await self._interface.request_shutdown()

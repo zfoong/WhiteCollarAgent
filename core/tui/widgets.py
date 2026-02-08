@@ -1,10 +1,14 @@
 """Custom widgets for the TUI interface."""
 from __future__ import annotations
 
+import io
 from typing import Optional, Tuple
 
 from textual import events
-from textual.widgets import OptionList
+from textual.app import ComposeResult
+from textual.containers import Container
+from textual.widget import Widget
+from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 from textual.widgets import Input
 from textual.widgets import RichLog as _BaseLog
@@ -12,6 +16,17 @@ from textual.widgets import RichLog as _BaseLog
 from rich.console import RenderableType
 from rich.table import Table
 from rich.text import Text
+
+try:
+    from textual_image.widget import Image as TextualImage
+    from textual_image.renderable import HalfcellImage
+    from PIL import Image as PILImage
+    HAS_TEXTUAL_IMAGE = True
+except ImportError:
+    HAS_TEXTUAL_IMAGE = False
+    TextualImage = None
+    HalfcellImage = None
+    PILImage = None
 
 
 class ContextMenu(OptionList):
@@ -286,3 +301,80 @@ class ConversationLog(_BaseLog):
         super().on_resize(event)
         self._reflow_history()
         self.refresh(layout=True, repaint=True)
+
+
+class VMFootageWidget(Widget):
+    """Widget for displaying VM screenshots with auto-update capability."""
+
+    DEFAULT_CSS = """
+    VMFootageWidget {
+        height: 100%;
+        width: 100%;
+        background: #0a0a0a;
+    }
+
+    VMFootageWidget .vm-placeholder {
+        width: 100%;
+        height: 100%;
+        content-align: center middle;
+        color: #666666;
+        text-style: italic;
+    }
+
+    VMFootageWidget .vm-image-container {
+        width: 100%;
+        height: 100%;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._current_image_bytes: Optional[bytes] = None
+        self._image_widget: Optional[Widget] = None
+
+    def compose(self) -> ComposeResult:
+        yield Static("No VM footage available", id="vm-placeholder", classes="vm-placeholder")
+
+    def update_footage(self, image_bytes: bytes) -> None:
+        """Update the displayed footage from PNG bytes."""
+        if not HAS_TEXTUAL_IMAGE:
+            return
+
+        if image_bytes == self._current_image_bytes:
+            return
+
+        self._current_image_bytes = image_bytes
+
+        try:
+            pil_image = PILImage.open(io.BytesIO(image_bytes))
+
+            placeholder = self.query("#vm-placeholder")
+            if placeholder:
+                for p in placeholder:
+                    p.remove()
+
+            existing = self.query(".vm-image-container")
+            if existing:
+                for e in existing:
+                    e.remove()
+
+            img_widget = TextualImage(pil_image, classes="vm-image-container")
+            self.mount(img_widget)
+            self._image_widget = img_widget
+
+        except Exception as e:
+            self.log.error(f"Failed to update footage: {e}")
+
+    def clear_footage(self) -> None:
+        """Clear the footage and show placeholder."""
+        self._current_image_bytes = None
+
+        if self._image_widget:
+            self._image_widget.remove()
+            self._image_widget = None
+
+        for img in self.query(".vm-image-container"):
+            img.remove()
+
+        if not self.query("#vm-placeholder"):
+            self.mount(Static("No VM footage available", id="vm-placeholder", classes="vm-placeholder"))
