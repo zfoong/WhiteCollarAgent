@@ -378,22 +378,26 @@ GUI Action Selection Rules:
 </rules>
 
 <reasoning_protocol>
-Before selecting an action, you MUST reason through these steps:
-1. Describe the current screen state based on the screenshot/description provided.
-2. Verify if the previous action in the event stream was performed successfully.
-3. Check the event stream for warnings or repeated patterns that need adjustment.
-4. Determine what the next action should be to progress toward the goal.
-5. If selecting a click/mouse action, identify the specific UI element to interact with.
-6. Consider if the current todo is complete (check [todos] event) and needs updating.
-7. Check if task is complete and mode switch is needed.
+Follow these instructions carefully:
+1. Base your reasoning and decisions ONLY on the current screen and any relevant context from the task.
+2. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
+3. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
+4. When GUI task is complete, if GUI mode is active, you should switch to CLI mode.
+5. DO NOT perform more than one action at a time. For example, if you have to type in a search bar, you should only perform the typing action, not typing and selecting from the drop down and clicking on the button at the same time.
+6. Pay close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
+7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intended or not.
+8. You MUST check if the previous reasoning and action works as intended or not and how it affects your current action.
+9. If an interaction based action is not working as intended, you should try to reason about the problem and adjust accordingly.
+10. Pay close attention to the current mode of the agent - CLI or GUI.
+11. If the current todo is complete, use 'task_update_todos' to mark it as completed.
+12. If the result of the task has been achieved, you MUST use 'switch_mode' action to switch to CLI mode.
 </reasoning_protocol>
 
-<notes>
+<validation>
+- Verify if the screenshot visually shows if the previous action in the event stream has been performed successfully.
+- ONLY give response based on the GUI state information
 - The action_name MUST be one of the listed actions.
-- Provide parameters matching the action signature shown in the Action Space.
-- Always use double quotes around strings so the JSON is valid.
-- DO NOT return empty response. When encounter issue, return 'send_message' to inform user.
-</notes>
+</validation>
 
 <output_format>
 Return ONLY a valid JSON object with this structure and no extra commentary:

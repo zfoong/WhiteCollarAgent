@@ -18,6 +18,7 @@ from core.context_engine import ContextEngine
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.llm import LLMInterface, LLMCallType
 from core.logger import logger
+from decorators.profiler import profile, OperationCategory
 
 # Hardcoded list of actions available in GUI mode
 GUI_MODE_ACTIONS = [
@@ -151,6 +152,7 @@ class GUIModule:
     # Private Methods
     # ===================================
 
+    @profile("gui_perform_task_step_action", OperationCategory.ACTION_EXECUTION)
     async def _perform_gui_task_step_action(self, step: Optional[TodoItem], session_id: str, next_action_description: str, parent_action_id: str) -> dict:
         """
         Perform a GUI task step action.
@@ -206,7 +208,8 @@ class GUIModule:
             # ===================================
             if self.can_use_omniparser:
                 image_description_list, annotated_image_bytes = await self._get_image_description_omniparser(png_bytes)
-                gui_state = "\n".join(image_description_list)
+                # Convert to compact format for token efficiency (~50% reduction)
+                gui_state = self._format_gui_state_compact(image_description_list)
                 # Use annotated image for action selection (has labeled elements)
                 vlm_image_bytes = annotated_image_bytes
             else:
@@ -301,6 +304,7 @@ class GUIModule:
     # VLM Helper Methods
     # ==================================
 
+    @profile("gui_get_image_description_vlm", OperationCategory.LLM)
     async def _get_image_description_vlm(self, png_bytes: bytes, query: str) -> str:
         """
         Get the description of the image.
@@ -327,6 +331,7 @@ class GUIModule:
 
         return image_description
 
+    @profile("gui_perform_reasoning_vlm", OperationCategory.REASONING)
     async def _perform_reasoning_GUI_vlm(self, query: str, retries: int = 2, log_reasoning_event = False) -> ReasoningResult:
         """
         Perform LLM-based reasoning on a user query to guide action selection.
@@ -386,6 +391,7 @@ class GUIModule:
             except ValueError as e:
                 raise RuntimeError("Failed to obtain valid reasoning from VLM") from e
 
+    @profile("gui_get_pixel_position_vlm", OperationCategory.LLM)
     async def _get_pixel_position_vlm(self, image_bytes: bytes, element_to_find: str) -> List[Dict]:
         """
         Get the pixel position of the element in the image.
@@ -412,6 +418,7 @@ class GUIModule:
     # OmniParser Helper Methods
     # ==================================
 
+    @profile("gui_get_image_description_omniparser", OperationCategory.LLM)
     async def _get_image_description_omniparser(self, image_bytes: bytes) -> Tuple[List[str], bytes]:
         """
         Get the description of the image using OmniParser via Gradio Client.
@@ -471,6 +478,83 @@ class GUIModule:
         except (IndexError, TypeError, IOError, OSError) as e:
              raise ValueError(f"Failed to parse Gradio client response format: {e}") from e
 
+    def _parse_omniparser_line(self, line: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse a single OmniParser line into structured data.
+
+        Input format: "icon N: {'type': 'text', 'bbox': [...], 'interactivity': False, 'content': 'Hello', 'source': '...'}"
+        Output: {'index': N, 'type': 'text', 'bbox': [...], 'interactivity': False, 'content': 'Hello'}
+
+        Returns None if parsing fails.
+        """
+        try:
+            # Split "icon N: {...}" into ["icon N", "{...}"]
+            parts = line.split(': ', 1)
+            if len(parts) < 2:
+                logger.warning(f"[OmniParser] Invalid line format: {line[:50]}...")
+                return None
+
+            # Extract index from "icon N"
+            prefix = parts[0].strip()
+            if not prefix.startswith("icon "):
+                logger.warning(f"[OmniParser] Missing 'icon' prefix: {prefix}")
+                return None
+
+            try:
+                index = int(prefix[5:])
+            except ValueError:
+                logger.warning(f"[OmniParser] Invalid index in: {prefix}")
+                return None
+
+            # Parse the dictionary part
+            dict_str = parts[1].strip()
+            elem_dict = ast.literal_eval(dict_str)
+
+            return {
+                'index': index,
+                'type': elem_dict.get('type', 'unknown'),
+                'bbox': elem_dict.get('bbox', [0, 0, 0, 0]),
+                'interactivity': elem_dict.get('interactivity', False),
+                'content': elem_dict.get('content', ''),
+            }
+
+        except (ValueError, SyntaxError) as e:
+            logger.warning(f"[OmniParser] Failed to parse line: {e}")
+            return None
+
+    def _format_element_compact(self, elem: Dict[str, Any]) -> str:
+        """
+        Format a single parsed element into compact key-value format.
+
+        Output format: [N] type=text bbox=(0.916,0.003,0.958,0.014) content="Hello" click=no
+        """
+        idx = elem['index']
+        elem_type = elem['type']
+        bbox = elem['bbox']
+        # Round to 3 decimal places
+        bbox_str = f"({bbox[0]:.3f},{bbox[1]:.3f},{bbox[2]:.3f},{bbox[3]:.3f})"
+        content = elem.get('content', '') or ''
+        click = 'yes' if elem.get('interactivity', False) else 'no'
+        return f'[{idx}] type={elem_type} bbox={bbox_str} content="{content}" click={click}'
+
+    @profile("gui_format_state_compact", OperationCategory.CONTEXT)
+    def _format_gui_state_compact(self, parsed_text_list: List[str]) -> str:
+        """
+        Convert verbose OmniParser output to compact VLM-friendly format.
+
+        Input: ['icon 0: {...}', 'icon 1: {...}', ...]
+        Output: '[0] type=text bbox=(0.916,0.003,0.958,0.014) content="Hello" click=no\n...'
+
+        This reduces token usage by ~50% while preserving all essential information.
+        """
+        compact_lines = []
+        for line in parsed_text_list:
+            parsed = self._parse_omniparser_line(line)
+            if parsed:
+                compact_lines.append(self._format_element_compact(parsed))
+        return "\n".join(compact_lines)
+
+    @profile("gui_perform_reasoning_omniparser", OperationCategory.REASONING)
     async def _perform_reasoning_GUI_omniparser(self, png_bytes: bytes, retries: int = 2, log_reasoning_event = False) -> Tuple[ReasoningResult, int]:
         """
         Perform reasoning on a image to guide action selection.
