@@ -19,11 +19,13 @@ from rich.text import Text
 
 try:
     from textual_image.widget import Image as TextualImage
+    from textual_image.renderable import HalfcellImage
     from PIL import Image as PILImage
     HAS_TEXTUAL_IMAGE = True
 except ImportError:
     HAS_TEXTUAL_IMAGE = False
     TextualImage = None
+    HalfcellImage = None
     PILImage = None
 
 
