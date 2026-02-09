@@ -31,6 +31,7 @@ SKIP_UNPROCESSED_TASK_NAMES = {"Process Memory Events"}
 SKIP_UNPROCESSED_EVENT_TYPES = {
     # Action lifecycle events
     "action_start",
+    "action_end",
     # GUI action events
     "gui_action",
     "GUI action start",
@@ -39,8 +40,8 @@ SKIP_UNPROCESSED_EVENT_TYPES = {
     "reasoning",
     "screen_description",
     # Task lifecycle events
-    "task_start",
-    "task_end",
+    # "task_start",
+    # "task_end",
     # System events
     "waiting_for_user",
 }

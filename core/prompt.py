@@ -732,8 +732,33 @@ ENVIRONMENTAL_CONTEXT_PROMPT = """
 - Operating System: {operating_system} {os_version} ({os_platform})
 - VM Operating System: {vm_operating_system} {vm_os_version} ({vm_os_platform})
 - VM's screen resolution (GUI mode): {vm_resolution}
-- Your sandbox and working directory, please save and access your files and folder here: {working_directory}. All files MUST be saved INSIDE the working directory, not outside.
 </agent_environment>
+"""
+
+AGENT_FILE_SYSTEM_CONTEXT_PROMPT = """
+<agent_file_system>
+Your persistent file system at {agent_file_system_path} contains the following structure:
+
+## Core Files
+- **AGENT.md**: Your identity file containing agent configuration, operating model, task execution guidelines, communication rules, error handling strategies, documentation standards, and organization context including org chart.
+- **USER.md**: User profile containing identity, communication preferences, interaction settings, and personality information. Reference this to personalize interactions.
+- **MEMORY.md**: Persistent memory log storing distilled facts, preferences, and events from past interactions. Format: `[timestamp] [type] content`. Agent should NOT edit directly - use memory processing actions.
+- **EVENT.md**: Comprehensive event log tracking all system activities including task execution, action results, and agent messages. Older events are summarized automatically.
+- **EVENT_UNPROCESSED.md**: Temporary buffer for recent events awaiting memory processing. Events here are periodically evaluated and important ones are distilled into MEMORY.md.
+- **CONVERSATION_HISTORY.md**: Record of conversations between the agent and users, preserving dialogue context across sessions.
+- **TASK_HISTORY.md**: Summaries of completed tasks including task ID, status, timeline, outcome, process details, and any errors encountered.
+- **PROACTIVE.md**: Configuration for scheduled proactive tasks (hourly/daily/weekly/monthly), including task instructions, conditions, priorities, deadlines, and execution history.
+
+## Working Directory
+- **workspace/**: Your sandbox directory for task-related files. ALL files you create during task execution MUST be saved here, not outside.
+- **workspace/tmp/{{task_id}}/**: Temporary directory for task specific temp files (e.g., plan, draft, sketch pad). These directories are automatically cleaned up when tasks end or when the agent starts.
+
+## Important Notes
+- Save files to `workspace/` directory if you want to persist them after task ended or across tasks. 
+- Temporary task files go in `workspace/tmp/{{task_id}}/` (all files in the temporary task files will be clean up automatically when task ended)
+- Do not edit system files (MEMORY.md, EVENT*.md, CONVERSATION_HISTORY.md, TASK_HISTORY.md) directly - use appropriate actions
+- You can read and update AGENT.md and USER.md to store persistent configuration
+</agent_file_system>
 """
 
 

@@ -9,6 +9,7 @@ from core.prompt import (
     AGENT_ROLE_PROMPT,
     AGENT_INFO_PROMPT,
     ENVIRONMENTAL_CONTEXT_PROMPT,
+    AGENT_FILE_SYSTEM_CONTEXT_PROMPT,
     POLICY_PROMPT,
 )
 from core.state.state_manager import StateManager
@@ -119,6 +120,17 @@ class ContextEngine:
             vm_os_version="6.12.13",
             vm_os_platform="Linux a5e39e32118c 6.12.13 #1 SMP Thu Mar 13 11:34:50 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux",
             vm_resolution="1064 x 1064"
+        )
+        return prompt
+
+    def create_system_file_system_context(self):
+        """
+        Create a system message block with agent file system context.
+        STATIC - describes the agent's persistent file system structure.
+        """
+        from core.config import AGENT_FILE_SYSTEM_PATH
+        prompt = AGENT_FILE_SYSTEM_CONTEXT_PROMPT.format(
+            agent_file_system_path=AGENT_FILE_SYSTEM_PATH,
         )
         return prompt
 
@@ -392,13 +404,13 @@ class ContextEngine:
         Assembles the system and user messages for the LLM with configurable sections.
 
         KV CACHING OPTIMIZATION:
-        - System prompt contains ONLY STATIC content (agent_info, role_info, policy, environment, base_instruction)
+        - System prompt contains ONLY STATIC content (agent_info, role_info, policy, environment, file_system, base_instruction)
         - Dynamic content (event_stream, task_state, agent_state) must be added to user prompts by callers
         - Use get_event_stream(), get_task_state(), get_agent_state() for user prompts
 
         :param system_flags: Optional dict of booleans to enable/disable system sections.
             Supported keys (STATIC ONLY): ``agent_info``, ``role_info``, ``policy``,
-            ``environment`` and ``base_instruction``.
+            ``environment``, ``file_system``, and ``base_instruction``.
         :param user_flags: Optional dict of booleans to enable/disable user sections.
             Supported keys: ``query`` and ``expected_output``. Defaults to ``query``
             enabled and ``expected_output`` disabled.
@@ -410,6 +422,7 @@ class ContextEngine:
             "agent_info": True,
             "policy": False,  # default off to save tokens
             "environment": True,
+            "file_system": True,
             "base_instruction": True,
         }
         user_default_flags = {
@@ -426,6 +439,7 @@ class ContextEngine:
             ("policy", self.create_system_policy),
             ("role_info", self.create_system_role_info),
             ("environment", self.create_system_environmental_context),
+            ("file_system", self.create_system_file_system_context),
             ("base_instruction", self.create_system_base_instruction),
         ]
 

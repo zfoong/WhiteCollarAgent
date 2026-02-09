@@ -294,7 +294,7 @@ class GUIModule:
 
             # Log VLM reasoning to event stream (before action selection)
             if self.event_stream_manager and vlm_reasoning:
-                self.log_gui_reasoning(vlm_reasoning + " | " + vlm_action_query)
+                self.log_gui_reasoning(vlm_reasoning + " This is the action I will execute: " + vlm_action_query)
 
             # ===================================
             # 4. Select Action (with integrated reasoning via VLM)
@@ -426,15 +426,16 @@ class GUIModule:
             item = image_description_list[item_index]
             bbox: List[float] = self.extract_bbox_from_line(item)
             pixel_position: List[int] = self.convert_bbox_to_pixels(bbox, 1064, 1064)
+            action_query += ". The element involved has a position of [xmin_px, ymin_px, xmax_px, ymax_px] = " + json.dumps(pixel_position)
         else:
-            pixel_position = "No UI element needed for action"
+            pixel_position = ". No UI element needed for action."
+            action_query += pixel_position
 
         # ==================================
         # 4. Construct Action Search Query
         # ==================================
-        action_search_query: str = action_query + " | The element involved has a position of [ymin_px, xmin_px, ymax_px, xmax_px] = " + json.dumps(pixel_position)
-
-        return reasoning_result, action_search_query
+        
+        return reasoning_result, action_query
 
     # ==================================
     # VLM Helper Methods
@@ -674,7 +675,7 @@ class GUIModule:
             parts = data_line.split(': ', 1)
 
             if len(parts) < 2:
-                print(f"Error: Line format incorrect. Could not find separator ': '")
+                logger.warning(f"Error: Line format incorrect. Could not find separator ': '")
                 return None
 
             # parts[0] is like "icon 0"
@@ -693,14 +694,14 @@ class GUIModule:
             if isinstance(bbox, list) and len(bbox) == 4:
                 return bbox
             else:
-                print(f"Error: 'bbox' found but format is invalid: {bbox}")
+                logger.warning(f"Error: 'bbox' found but format is invalid: {bbox}")
                 return None
 
         except (ValueError, SyntaxError, ast.ASTError) as e:
-            print(f"Error parsing dictionary contents in line: {e}")
+            logger.warning(f"Error parsing dictionary contents in line: {e}")
             return None
         except Exception as e:
-            print(f"Unexpected error: {e}")
+            logger.warning(f"Unexpected error: {e}")
             return None
 
     def convert_bbox_to_pixels(
