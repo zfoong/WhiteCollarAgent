@@ -291,6 +291,10 @@ class TaskManager:
             display_message=task.name,
         )
 
+        # Reset skip_unprocessed_logging flag (may have been set during memory processing)
+        if hasattr(self.event_stream_manager, 'set_skip_unprocessed_logging'):
+            self.event_stream_manager.set_skip_unprocessed_logging(False)
+
         # Reset agent state
         STATE.set_agent_property("current_task_id", "")
         STATE.set_agent_property("action_count", 0)

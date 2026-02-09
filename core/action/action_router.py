@@ -101,8 +101,10 @@ class ActionRouter:
     
         # Build the instruction prompt for the LLM
         # KV CACHING: Inject dynamic context into user prompt
+        # Memory context provides relevant memories for context-aware decisions
         prompt = SELECT_ACTION_PROMPT.format(
             event_stream=self.context_engine.get_event_stream(),
+            memory_context=self.context_engine.get_memory_context(query),
             query=query,
             action_candidates=self._format_candidates(action_candidates),
         )
@@ -167,10 +169,13 @@ class ActionRouter:
         # - static_prompt: everything except event_stream (cached prefix)
         # - full_prompt: includes event_stream (used for first call or non-cached)
         # Note: task_state includes skill instructions and is session-static (doesn't change during task)
+        # Memory context provides relevant memories for context-aware decisions
         task_state = self.context_engine.get_task_state()
+        memory_context = self.context_engine.get_memory_context(query)
         static_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=task_state,
+            memory_context=memory_context,
             event_stream="",  # Empty for static prompt
             query=query,
             action_candidates=self._format_candidates(action_candidates),
@@ -178,6 +183,7 @@ class ActionRouter:
         full_prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=task_state,
+            memory_context=memory_context,
             event_stream=self.context_engine.get_event_stream(),
             query=query,
             action_candidates=self._format_candidates(action_candidates),
@@ -252,10 +258,13 @@ class ActionRouter:
         # - static_prompt: everything except event_stream (cached prefix)
         # - full_prompt: includes event_stream (used for first call or non-cached)
         # Note: task_state includes skill instructions and is session-static (doesn't change during task)
+        # Memory context provides relevant memories for context-aware decisions
         task_state = self.context_engine.get_task_state()
+        memory_context = self.context_engine.get_memory_context(query)
         static_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=task_state,
+            memory_context=memory_context,
             event_stream="",  # Empty for static prompt
             query=query,
             action_candidates=self._format_candidates(action_candidates),
@@ -263,6 +272,7 @@ class ActionRouter:
         full_prompt = SELECT_ACTION_IN_SIMPLE_TASK_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=task_state,
+            memory_context=memory_context,
             event_stream=self.context_engine.get_event_stream(),
             query=query,
             action_candidates=self._format_candidates(action_candidates),
@@ -336,10 +346,12 @@ class ActionRouter:
         # - full_prompt: includes event_stream (used for first call or non-cached)
         # Note: task_state includes skill instructions and is session-static (doesn't change during task)
         task_state = self.context_engine.get_task_state()
+        memory_context = self.context_engine.get_memory_context(query)
         static_prompt = SELECT_ACTION_IN_GUI_PROMPT.format(
             agent_state=self.context_engine.get_agent_state(),
             task_state=task_state,
             event_stream="",  # Empty for static prompt
+            memory_context=memory_context,
             reasoning=reasoning,
             query=query,
             gui_action_space=GUI_ACTION_SPACE_PROMPT,
@@ -348,6 +360,7 @@ class ActionRouter:
             agent_state=self.context_engine.get_agent_state(),
             task_state=task_state,
             event_stream=self.context_engine.get_event_stream(),
+            memory_context=memory_context,
             reasoning=reasoning,
             query=query,
             gui_action_space=GUI_ACTION_SPACE_PROMPT,

@@ -36,17 +36,26 @@ if TYPE_CHECKING:
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
 from core.action.action_router import ActionRouter
+
+from core.config import (
+    AGENT_WORKSPACE_ROOT,
+    AGENT_FILE_SYSTEM_PATH,
+    AGENT_MEMORY_CHROMA_PATH,
+    PROCESS_MEMORY_AT_STARTUP,
+    MEMORY_PROCESSING_SCHEDULE_HOUR,
+)
+
 from core.tui import TUIInterface
 from core.internal_action_interface import InternalActionInterface
 from core.llm import LLMInterface, LLMCallType
 from core.vlm_interface import VLMInterface
 from core.database_interface import DatabaseInterface
 from core.logger import logger
+from core.memory import MemoryManager, MemoryPointer, MemoryFileWatcher, create_memory_processing_task
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from core.trigger import Trigger, TriggerQueue
-# STEP_REASONING_PROMPT removed - reasoning is now integrated into action selection
 from core.state.types import ReasoningResult
 from core.task.task_manager import TaskManager
 from core.event_stream.event_stream_manager import EventStreamManager
@@ -116,7 +125,10 @@ class AgentBase:
         )
         self.vlm = VLMInterface(provider=llm_provider, deferred=deferred_init)
 
-        self.event_stream_manager = EventStreamManager(self.llm)
+        self.event_stream_manager = EventStreamManager(
+            self.llm,
+            agent_file_system_path=AGENT_FILE_SYSTEM_PATH
+        )
         
         # action & task layers
         self.action_library = ActionLibrary(self.llm, db_interface=self.db_interface)
@@ -141,11 +153,35 @@ class AgentBase:
             state_manager=self.state_manager,
         )
 
+
+        # ── memory manager for proactive agent ──
+        self.memory_manager = MemoryManager(
+            agent_file_system_path=str(AGENT_FILE_SYSTEM_PATH),
+            chroma_path=str(AGENT_MEMORY_CHROMA_PATH),
+        )
+        # Connect memory manager to context engine for memory-aware prompts
+        self.context_engine.set_memory_manager(self.memory_manager)
+
+        # Index the agent file system on startup (incremental)
+        try:
+            self.memory_manager.update()
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to update memory index on startup: {e}")
+
+        # Start file watcher to auto-index on changes
+        self.memory_file_watcher = MemoryFileWatcher(
+            memory_manager=self.memory_manager,
+            debounce_seconds=30.0,
+        )
+        self.memory_file_watcher.start()
+
+
         InternalActionInterface.initialize(
             self.llm,
             self.task_manager,
             self.state_manager,
             vlm_interface=self.vlm,
+            memory_manager=self.memory_manager,
             context_engine=self.context_engine,
         )
 
@@ -234,7 +270,16 @@ class AgentBase:
 
         try:
             logger.debug("[REACT] starting...")
-            
+
+            # Handle special trigger types (memory processing, etc.)
+            if trigger.payload.get("type") == "memory_processing":
+                is_scheduled = trigger.payload.get("scheduled", False)
+                task_created = await self._handle_memory_processing_trigger(reschedule=is_scheduled)
+                if not task_created:
+                    # No events to process, nothing to do
+                    return
+                # Task was created, continue with normal action selection below
+
             # Initialize session and extract trigger data
             trigger_data: TriggerData = self._extract_trigger_data(trigger)
             await self._initialize_session(trigger_data.gui_mode, session_id)
@@ -244,7 +289,6 @@ class AgentBase:
                 gui_response = await self._handle_gui_task_execution(
                     trigger_data, session_id
                 )
-                # GUI events are now logged to main event stream directly, no summary passback needed
                 await self._finalize_action_execution(gui_response.get("new_session_id"), gui_response.get("action_output"), session_id)
                 return
 
@@ -268,6 +312,169 @@ class AgentBase:
             return
         finally:
             self._cleanup_session()
+
+    def create_process_memory_task(self) -> str:
+        """
+        Create a task to process unprocessed events and move them to memory.
+
+        This creates a task that uses the 'memory-processor' skill to guide
+        the agent through:
+        1. Read EVENT_UNPROCESSED.md for unprocessed events
+        2. Evaluate event importance for long-term memory
+        3. Check for duplicate memories using memory_search
+        4. Write important, unique events to MEMORY.md
+        5. Clear processed events from EVENT_UNPROCESSED.md
+
+        Returns:
+            The task ID of the created task.
+        """
+        logger.info("[MEMORY] Creating process memory task")
+
+        # Enable skip_unprocessed_logging to prevent infinite loops
+        # (events generated during memory processing won't be added to EVENT_UNPROCESSED.md)
+        # This flag is automatically reset when the task ends (in task_manager._end_task)
+        self.event_stream_manager.set_skip_unprocessed_logging(True)
+
+        # Create task using the memory-processor skill
+        task_id = create_memory_processing_task(self.task_manager)
+        logger.info(f"[MEMORY] Process memory task created: {task_id}")
+
+        return task_id
+
+    async def _process_memory_at_startup(self) -> None:
+        """
+        Process unprocessed events into memory at startup.
+
+        This checks if there are unprocessed events and fires a memory
+        processing trigger if needed. The trigger goes through normal
+        processing flow which creates the task and executes it.
+        """
+        import time
+
+        try:
+            unprocessed_file = AGENT_FILE_SYSTEM_PATH / "EVENT_UNPROCESSED.md"
+            if not unprocessed_file.exists():
+                logger.debug("[MEMORY] EVENT_UNPROCESSED.md not found, skipping startup processing")
+                return
+
+            # Check if there are events to process (more than just headers)
+            content = unprocessed_file.read_text(encoding="utf-8")
+            lines = content.strip().split("\n")
+            # Filter out empty lines and header lines (starting with # or empty)
+            event_lines = [l for l in lines if l.strip() and l.strip().startswith("[")]
+
+            if not event_lines:
+                logger.info("[MEMORY] No unprocessed events found at startup")
+                return
+
+            logger.info(f"[MEMORY] Found {len(event_lines)} unprocessed events at startup, firing processing trigger")
+
+            # Fire a memory_processing trigger (not scheduled, so won't reschedule)
+            trigger = Trigger(
+                fire_at=time.time(),
+                priority=50,
+                next_action_description="Process unprocessed events into long-term memory (startup)",
+                payload={
+                    "type": "memory_processing",
+                    "scheduled": False,  # Don't reschedule after this
+                },
+                session_id="memory_processing_startup",
+            )
+            await self.triggers.put(trigger)
+
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to process memory at startup: {e}")
+
+    async def _schedule_daily_memory_processing(self) -> None:
+        """
+        Schedule a trigger for daily memory processing at the configured hour.
+
+        Creates a trigger that fires at MEMORY_PROCESSING_SCHEDULE_HOUR (default 3am)
+        daily to process unprocessed events into long-term memory.
+        """
+        import time
+        from datetime import datetime, timedelta
+
+        try:
+            now = datetime.now()
+            # Calculate next occurrence of the scheduled hour
+            scheduled_time = now.replace(
+                hour=MEMORY_PROCESSING_SCHEDULE_HOUR,
+                minute=0,
+                second=0,
+                microsecond=0
+            )
+
+            # If the scheduled time has already passed today, schedule for tomorrow
+            if scheduled_time <= now:
+                scheduled_time += timedelta(days=1)
+
+            fire_at = scheduled_time.timestamp()
+
+            trigger = Trigger(
+                fire_at=fire_at,
+                priority=100,  # Low priority - background task
+                next_action_description="Process unprocessed events into long-term memory (daily scheduled task)",
+                payload={
+                    "type": "memory_processing",
+                    "scheduled": True,
+                },
+                session_id="memory_processing_daily",
+            )
+
+            await self.triggers.put(trigger)
+            logger.info(
+                f"[MEMORY] Scheduled daily memory processing at "
+                f"{scheduled_time.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"(in {(scheduled_time - now).total_seconds() / 3600:.1f} hours)"
+            )
+
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to schedule daily memory processing: {e}")
+
+    async def _handle_memory_processing_trigger(self, reschedule: bool = True) -> bool:
+        """
+        Handle the memory processing trigger.
+
+        This is called when a memory processing trigger fires (startup or scheduled).
+        It creates a task to process unprocessed events, and optionally reschedules.
+
+        Args:
+            reschedule: If True, schedule the next daily processing trigger.
+
+        Returns:
+            True if a task was created and processing should continue,
+            False if no task was created and react() should return.
+        """
+        logger.info("[MEMORY] Memory processing trigger fired")
+        task_created = False
+
+        try:
+            # Check if there are events to process
+            unprocessed_file = AGENT_FILE_SYSTEM_PATH / "EVENT_UNPROCESSED.md"
+            if unprocessed_file.exists():
+                content = unprocessed_file.read_text(encoding="utf-8")
+                lines = content.strip().split("\n")
+                event_lines = [l for l in lines if l.strip() and l.strip().startswith("[")]
+
+                if event_lines:
+                    logger.info(f"[MEMORY] Processing {len(event_lines)} unprocessed events")
+                    self.create_process_memory_task()
+                    task_created = True
+                else:
+                    logger.info("[MEMORY] No unprocessed events to process")
+            else:
+                logger.debug("[MEMORY] EVENT_UNPROCESSED.md not found")
+
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to process memory: {e}")
+
+        finally:
+            # Reschedule for the next day (only for scheduled triggers)
+            if reschedule:
+                await self._schedule_daily_memory_processing()
+
+        return task_created
 
     # =====================================
     # Internal Methods
@@ -906,6 +1113,13 @@ class AgentBase:
 
         # Initialize skills system
         await self._initialize_skills()
+
+        # Process unprocessed events into memory at startup (if enabled)
+        if PROCESS_MEMORY_AT_STARTUP:
+            await self._process_memory_at_startup()
+
+        # Schedule daily memory processing
+        await self._schedule_daily_memory_processing()
 
         try:
             # Allow the TUI to present provider/api-key configuration before chat starts.

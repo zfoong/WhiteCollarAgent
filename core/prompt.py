@@ -238,6 +238,8 @@ Your job is to choose the best action from the action library and prepare the in
 
 ---
 
+{memory_context}
+
 {event_stream}
 """
 
@@ -340,6 +342,8 @@ Your job is to reason about the current state, then select the next action and p
 
 ---
 
+{memory_context}
+
 {event_stream}
 """
 
@@ -400,6 +404,8 @@ Return ONLY a valid JSON object with this structure and no extra commentary:
 {task_state}
 
 {gui_action_space}
+
+{memory_context}
 
 ---
 
@@ -484,6 +490,8 @@ Reason briefly, then select the next action to complete this task efficiently.
 </objective>
 
 ---
+
+{memory_context}
 
 {event_stream}
 """
@@ -641,6 +649,11 @@ File Actions:
 
 Avoid: Reading entire large files repeatedly - use grep + targeted offset/limit reads instead
 </file_handling>
+
+<memory>
+- The agent file system and MEMORY.md serves as your persistent memory across sessions. Information stored here persists and can be retrieved in future conversations. Use it to recall important facts about users, projects, and the organization.
+- You can run the 'memory_search' action and read related information from the agent file system and MEMORY.md to retrieve memory related to the task, users, related resources and instruction.
+</memory>
 """
 
 

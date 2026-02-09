@@ -17,6 +17,7 @@ from core.logger import logger
 from pathlib import Path
 from core.config import AGENT_WORKSPACE_ROOT
 from core.gui.gui_module import GUI_MODE_ACTIONS
+from core.memory import MemoryManager
 import mss, mss.tools, os
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class InternalActionInterface:
     vlm_interface: Optional[VLMInterface] = None
     context_engine: Optional["ContextEngine"] = None
     gui_module: Optional["GUIModule"] = None
+    memory_manager: Optional[MemoryManager] = None
 
     @classmethod
     def initialize(
@@ -48,6 +50,7 @@ class InternalActionInterface:
         vlm_interface: Optional[VLMInterface] = None,
         context_engine: Optional["ContextEngine"] = None,
         gui_module: Optional["GUIModule"] = None,
+        memory_manager: MemoryManager | None = None
     ):
         """
         Register the shared interfaces that actions depend on.
@@ -62,6 +65,7 @@ class InternalActionInterface:
         cls.vlm_interface = vlm_interface
         cls.context_engine = context_engine
         cls.gui_module = gui_module
+        cls.memory_manager = memory_manager 
 
     # ─────────────────────── LLM Access for Actions ───────────────────────
 
@@ -79,6 +83,38 @@ class InternalActionInterface:
         if cls.vlm_interface is None:
             raise RuntimeError("InternalActionInterface not initialized with VLMInterface.")
         return cls.vlm_interface.describe_image(image_path, user_prompt=prompt)
+
+   # ───────────────── Memory Search ─────────────────
+
+    @classmethod
+    def memory_search(cls, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Search the agent's memory for relevant information.
+
+        Args:
+            query: The search query string
+            top_k: Maximum number of results to return (default: 5)
+
+        Returns:
+            List of memory pointers with file_path, section_path, title, summary, and relevance_score
+        """
+        if cls.memory_manager is None:
+            raise RuntimeError("InternalActionInterface not initialized with MemoryManager.")
+
+        pointers = cls.memory_manager.retrieve(query=query, top_k=top_k)
+
+        # Convert MemoryPointer objects to dictionaries for JSON serialization
+        return [
+            {
+                "chunk_id": ptr.chunk_id,
+                "file_path": ptr.file_path,
+                "section_path": ptr.section_path,
+                "title": ptr.title,
+                "summary": ptr.summary,
+                "relevance_score": ptr.relevance_score,
+            }
+            for ptr in pointers
+        ]
 
     # ─────────────────────── GUI Actions ───────────────────────
 

@@ -31,7 +31,7 @@ import threading
 import tiktoken
 
 SEVERITIES = ("DEBUG", "INFO", "WARN", "ERROR") # TODO duplicated declare in event and event stream
-MAX_EVENT_INLINE_CHARS = 8000
+MAX_EVENT_INLINE_CHARS = 200000
 
 # Token counting utility
 _tokenizer = None
