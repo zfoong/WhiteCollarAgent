@@ -154,16 +154,17 @@ class ActionManager:
         }
 
         logger.info(f"Action {action.name} marked as in-flight.")
-        
-        if is_running_task:
-            self._log_event_stream(
-                is_gui_task=is_gui_task,
-                event_type="action_start",
-                event=f"Running action {action.name} with input: {input_data}.",
-                display_message=f"Running {action.display_name}",
-                action_name=action.name,
-            )
-            
+
+        # Always log action events (both task and conversation mode)
+        # This enables TUI to track agent state transitions consistently
+        self._log_event_stream(
+            is_gui_task=is_gui_task,
+            event_type="action_start",
+            event=f"Running action {action.name} with input: {input_data}.",
+            display_message=f"Running {action.display_name}",
+            action_name=action.name,
+        )
+
         logger.debug(f"Starting execution of action {action.name}...")
 
         try:
@@ -234,41 +235,28 @@ class ActionManager:
 
         logger.debug(f"Action {action.name} completed with status: {status}.")
 
-        if is_running_task:
-            # Check if action output indicates error (some actions return error status without raising exceptions)
-            output_has_error = outputs and outputs.get("status") == "error"
-            display_status = "failed" if (status == "error" or output_has_error) else "completed"
+        # Always log action events (both task and conversation mode)
+        # This enables TUI to track agent state transitions consistently
+        # Check if action output indicates error (some actions return error status without raising exceptions)
+        output_has_error = outputs and outputs.get("status") == "error"
+        display_status = "failed" if (status == "error" or output_has_error) else "completed"
+        self._log_event_stream(
+            is_gui_task=is_gui_task,
+            event_type="action_end",
+            event=f"Action {action.name} completed with output: {outputs}.",
+            display_message=f"{action.display_name} → {display_status}",
+            action_name=action.name,
+        )
+
+        # Emit waiting_for_user event if action requested to wait for user reply
+        if outputs and outputs.get("wait_for_user_reply", False):
             self._log_event_stream(
                 is_gui_task=is_gui_task,
-                event_type="action_end",
-                event=f"Action {action.name} completed with output: {outputs}.",
-                display_message=f"{action.display_name} → {display_status}",
+                event_type="waiting_for_user",
+                event="Agent is waiting for user response.",
+                display_message=None,  # No display message - handled by TUI status bar only
                 action_name=action.name,
             )
-
-            # Emit waiting_for_user event if action requested to wait for user reply
-            if outputs and outputs.get("wait_for_user_reply", False):
-                self._log_event_stream(
-                    is_gui_task=is_gui_task,
-                    event_type="waiting_for_user",
-                    event="Agent is waiting for user response.",
-                    display_message=None,  # No display message - handled by TUI status bar only
-                    action_name=action.name,
-                )
-
-            # current_step: Optional[Step] = self.state_manager.get_current_step()
-            # if current_step:
-            #     self._log_event_stream(
-            #         is_gui_task=is_gui_task,
-            #         event_type="task",
-            #         event=f"Running task step: '{current_step.step_name}' – {current_step.description} {context if context else ''}",
-            #         display_message=f"Running task step: '{current_step.step_name}' – {current_step.description}",
-            #         action_name=action.name,
-            #     )
-            #     logger.debug(f"[ActionManager] Step {current_step.step_name} queued ({session_id})")
-                
-        else:
-            logger.warning(f"Action {action.name} completed with status: {status}. But no event stream manager to log to.")
         
         logger.debug(f"Persisting final state for action {action.name}...")
         STATE.set_agent_property("action_count", STATE.get_agent_property("action_count") + 1)

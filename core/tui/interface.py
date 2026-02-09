@@ -762,26 +762,33 @@ Skills are automatically selected during task creation based on the task descrip
         # Handle action start (both CLI and GUI modes)
         elif kind in {"action_start", "GUI action start"}:
             self._agent_state = "working"
-            entry = ActionEntry(
-                kind=kind,
-                message=action_name,  # Use just the action name
-                style=style,
-                is_completed=False,
-                parent_task=self._current_task_name
-            )
-            self._task_action_entries[entry_key] = entry
-            await self.action_updates.put(ActionUpdate(operation="add", entry=entry, entry_key=entry_key))
+            # Only add to action panel if there's an active task
+            # In conversation mode, we track state but don't display actions
+            if self._current_task_name:
+                entry = ActionEntry(
+                    kind=kind,
+                    message=action_name,
+                    style=style,
+                    is_completed=False,
+                    parent_task=self._current_task_name
+                )
+                self._task_action_entries[entry_key] = entry
+                await self.action_updates.put(ActionUpdate(operation="add", entry=entry, entry_key=entry_key))
 
-        # Handle action end (both CLI and GUI modes) - update existing entry
+        # Handle action end (both CLI and GUI modes)
         elif kind in {"action_end", "GUI action end"}:
+            # Update panel entry if it exists (only exists for task-mode actions)
             if entry_key in self._task_action_entries:
                 self._task_action_entries[entry_key].is_completed = True
-                # Check if the action failed (message format: "{action_name} → error")
                 if message and " → " in message:
                     status_part = message.split(" → ")[-1]
                     if status_part == "error" or status_part == "failed":
                         self._task_action_entries[entry_key].is_error = True
                 await self.action_updates.put(ActionUpdate(operation="update", entry_key=entry_key))
+
+            # In conversation mode, transition to idle when action completes
+            if not self._current_task_name and self._agent_state == "working":
+                self._agent_state = "idle"
 
         # Handle waiting_for_user event - set agent state to waiting
         elif kind == "waiting_for_user":
@@ -865,11 +872,9 @@ Skills are automatically selected during task creation based on the task descrip
             icon = CraftApp.ICON_LOADING_FRAMES[self._loading_frame_index % len(CraftApp.ICON_LOADING_FRAMES)]
 
         # Determine color based on style, completion, and error status
-        if entry.is_error:
-            colour = "bold #ff4444"  # Red for errors
-        elif entry.style == "task":
+        if entry.style == "task":
             colour = "bold #ff4f18"
-        else:  # action
+        else:  # action (including errors - same color as completed)
             colour = "bold #a0a0a0"
 
         # Format: [icon]

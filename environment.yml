@@ -44,3 +44,4 @@ dependencies:
       - textual-image>=0.8.0
       - gradio_client
       - python-dotenv
+      - watchdog
