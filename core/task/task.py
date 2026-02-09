@@ -48,6 +48,12 @@ class Task:
     compiled_actions: List[str] = field(default_factory=list)
     # Skills selected for this task - instructions injected into context
     selected_skills: List[str] = field(default_factory=list)
+    # ISO timestamp when the task ended (None if still running)
+    ended_at: Optional[str] = None
+    # Errors encountered during task execution (if any)
+    errors: List[str] = field(default_factory=list)
+    # Final summary of the task (populated on task_end)
+    final_summary: Optional[str] = None
 
     def get_current_todo(self) -> Optional[TodoItem]:
         """
@@ -84,4 +90,8 @@ class Task:
             "action_sets": self.action_sets,
             "compiled_actions": self.compiled_actions,
             "selected_skills": self.selected_skills,
+            "created_at": self.created_at,
+            "ended_at": self.ended_at,
+            "errors": self.errors,
+            "final_summary": self.final_summary,
         }

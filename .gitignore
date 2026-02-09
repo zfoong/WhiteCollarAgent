@@ -3,6 +3,7 @@ apps/controlpanel/.vs/
 apps/chatserver/uploads/
 chroma_db_actions/
 chroma_db_taskdocs/
+chroma_db_memory/
 core/chroma_db_actions/
 **/logs/
 workspace/

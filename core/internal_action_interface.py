@@ -17,6 +17,7 @@ from core.logger import logger
 from pathlib import Path
 from core.config import AGENT_WORKSPACE_ROOT
 from core.gui.gui_module import GUI_MODE_ACTIONS
+from core.memory import MemoryManager
 import mss, mss.tools, os
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class InternalActionInterface:
     vlm_interface: Optional[VLMInterface] = None
     context_engine: Optional["ContextEngine"] = None
     gui_module: Optional["GUIModule"] = None
+    memory_manager: Optional[MemoryManager] = None
 
     @classmethod
     def initialize(
@@ -48,6 +50,7 @@ class InternalActionInterface:
         vlm_interface: Optional[VLMInterface] = None,
         context_engine: Optional["ContextEngine"] = None,
         gui_module: Optional["GUIModule"] = None,
+        memory_manager: MemoryManager | None = None
     ):
         """
         Register the shared interfaces that actions depend on.
@@ -62,6 +65,7 @@ class InternalActionInterface:
         cls.vlm_interface = vlm_interface
         cls.context_engine = context_engine
         cls.gui_module = gui_module
+        cls.memory_manager = memory_manager 
 
     # ─────────────────────── LLM Access for Actions ───────────────────────
 
@@ -79,6 +83,38 @@ class InternalActionInterface:
         if cls.vlm_interface is None:
             raise RuntimeError("InternalActionInterface not initialized with VLMInterface.")
         return cls.vlm_interface.describe_image(image_path, user_prompt=prompt)
+
+   # ───────────────── Memory Search ─────────────────
+
+    @classmethod
+    def memory_search(cls, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Search the agent's memory for relevant information.
+
+        Args:
+            query: The search query string
+            top_k: Maximum number of results to return (default: 5)
+
+        Returns:
+            List of memory pointers with file_path, section_path, title, summary, and relevance_score
+        """
+        if cls.memory_manager is None:
+            raise RuntimeError("InternalActionInterface not initialized with MemoryManager.")
+
+        pointers = cls.memory_manager.retrieve(query=query, top_k=top_k)
+
+        # Convert MemoryPointer objects to dictionaries for JSON serialization
+        return [
+            {
+                "chunk_id": ptr.chunk_id,
+                "file_path": ptr.file_path,
+                "section_path": ptr.section_path,
+                "title": ptr.title,
+                "summary": ptr.summary,
+                "relevance_score": ptr.relevance_score,
+            }
+            for ptr in pointers
+        ]
 
     # ─────────────────────── GUI Actions ───────────────────────
 
@@ -167,6 +203,8 @@ class InternalActionInterface:
         logger.info(f"[TASK] Final action sets: {all_action_sets}")
 
         # Create task with selected skills and action sets
+        # Note: Session caches are now created automatically by TaskManager.create_task()
+        # for complex tasks, so we don't need to create them here
         task_id = cls.task_manager.create_task(
             task_name, task_description,
             mode=task_mode,
@@ -175,27 +213,6 @@ class InternalActionInterface:
         )
         task: Optional[Task] = cls.task_manager.get_task()
         cls.state_manager.add_to_active_task(task)
-
-        # Create session caches for complex tasks only (expensive operation, skip for simple tasks)
-        if task_mode == "complex" and cls.llm_interface and cls.context_engine:
-            try:
-                # Generate the static system prompt for the session
-                system_prompt, _ = cls.context_engine.make_prompt(
-                    user_flags={"query": False, "expected_output": False},
-                    system_flags={"policy": False},
-                )
-                # Create a session cache for EACH call type so they don't pollute each other's KV cache
-                for call_type in [
-                    LLMCallType.REASONING,
-                    LLMCallType.ACTION_SELECTION,
-                    LLMCallType.GUI_REASONING,
-                    LLMCallType.GUI_ACTION_SELECTION,
-                ]:
-                    cache_id = cls.llm_interface.create_session_cache(task_id, call_type, system_prompt)
-                    if cache_id:
-                        logger.debug(f"[TASK] Created session cache {cache_id} for task {task_id}:{call_type}")
-            except Exception as e:
-                logger.warning(f"[TASK] Failed to create session caches for task {task_id}: {e}")
 
         return {
             "task_id": task_id,
@@ -601,12 +618,21 @@ class InternalActionInterface:
         cls.state_manager.bump_event_stream()
 
     @classmethod
-    async def mark_task_completed(cls, message: Optional[str] = None) -> Dict[str, Any]:
+    async def mark_task_completed(
+        cls,
+        message: Optional[str] = None,
+        summary: Optional[str] = None,
+        errors: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """Mark the current session task as completed."""
         try:
             # Get task_id before marking as completed (task will be cleared)
             task_id = cls._get_current_task_id()
-            ok = await cls.task_manager.mark_task_completed(message=message)
+            ok = await cls.task_manager.mark_task_completed(
+                message=message,
+                summary=summary,
+                errors=errors or []
+            )
             # End session cache if task was successfully completed
             if ok and task_id:
                 cls._end_task_session_cache(task_id)
@@ -616,12 +642,21 @@ class InternalActionInterface:
             return {"status": "error", "error": str(e)}
 
     @classmethod
-    async def mark_task_cancel(cls, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def mark_task_cancel(
+        cls,
+        reason: Optional[str] = None,
+        summary: Optional[str] = None,
+        errors: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """Cancel the current session task."""
         try:
             # Get task_id before marking as cancelled (task will be cleared)
             task_id = cls._get_current_task_id()
-            ok = await cls.task_manager.mark_task_cancel(reason=reason)
+            ok = await cls.task_manager.mark_task_cancel(
+                reason=reason,
+                summary=summary,
+                errors=errors or []
+            )
             # End session cache if task was successfully cancelled
             if ok and task_id:
                 cls._end_task_session_cache(task_id)

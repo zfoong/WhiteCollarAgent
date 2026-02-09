@@ -6,7 +6,7 @@ from core.action.action_framework.registry import action
     description=(
         "End the current task for this session with a final status. "
         "Use status='complete' when the task is fully done, or 'abort' when it "
-        "should be cancelled/failed early. Always provide a brief reason."
+        "should be cancelled/failed early. Always provide a reason and a detailed summary."
     ),
     default=True,
     mode="CLI",
@@ -22,6 +22,17 @@ from core.action.action_framework.registry import action
             "type": "string",
             "example": "All todos completed successfully.",
             "description": "Why the task is considered complete or why it should be aborted.",
+        },
+        "summary": {
+            "type": "string",
+            "example": "Successfully completed the user's request to update the configuration file. Modified config.json to add the new API endpoint and validated the changes.",
+            "description": "A detailed summary of what was accomplished during this task, including key actions taken and outcomes.",
+        },
+        "errors": {
+            "type": "array",
+            "items": {"type": "string"},
+            "example": ["Failed to connect to API on first attempt", "Permission denied for /etc/config"],
+            "description": "List of any errors or issues encountered during task execution (optional).",
         },
     },
     output_schema={
@@ -39,6 +50,7 @@ from core.action.action_framework.registry import action
     test_payload={
         "status": "complete",
         "reason": "All todos completed successfully.",
+        "summary": "Completed the test task successfully.",
         "simulated_mode": True,
     },
 )
@@ -47,6 +59,8 @@ def end_task(input_data: dict) -> dict:
 
     status = (input_data.get("status") or "").strip().lower()
     reason = input_data.get("reason")
+    summary = input_data.get("summary")
+    errors = input_data.get("errors", [])
     simulated_mode = input_data.get("simulated_mode", False)
 
     if status not in ("complete", "abort"):
@@ -62,10 +76,18 @@ def end_task(input_data: dict) -> dict:
     import core.internal_action_interface as iai
 
     if status == "complete":
-        res = asyncio.run(iai.InternalActionInterface.mark_task_completed(message=reason))
+        res = asyncio.run(iai.InternalActionInterface.mark_task_completed(
+            message=reason,
+            summary=summary,
+            errors=errors
+        ))
     else:
         # Map 'abort' to a cancellation by default
-        res = asyncio.run(iai.InternalActionInterface.mark_task_cancel(reason=reason))
+        res = asyncio.run(iai.InternalActionInterface.mark_task_cancel(
+            reason=reason,
+            summary=summary,
+            errors=errors
+        ))
 
     if isinstance(res, dict) and res.get("status") == "ok":
         res["status"] = "success"

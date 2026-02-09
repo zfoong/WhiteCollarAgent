@@ -9,6 +9,7 @@ from core.prompt import (
     AGENT_ROLE_PROMPT,
     AGENT_INFO_PROMPT,
     ENVIRONMENTAL_CONTEXT_PROMPT,
+    AGENT_FILE_SYSTEM_CONTEXT_PROMPT,
     POLICY_PROMPT,
 )
 from core.state.state_manager import StateManager
@@ -54,6 +55,16 @@ class ContextEngine:
         self.user_messages = []
         self._role_info_func = None  # injected by AgentBase or subclass
         self.state_manager = state_manager
+        self._memory_manager = None  # injected by AgentBase after creation
+
+    def set_memory_manager(self, memory_manager) -> None:
+        """
+        Set the memory manager for context retrieval.
+
+        Called by AgentBase after initialization to enable memory context
+        in prompts.
+        """
+        self._memory_manager = memory_manager
         
     # ─────────────── SYSTEM MESSAGE COMPONENTS (STATIC ONLY) ───────────────
     # These components are STATIC and contribute to KV cache hits
@@ -109,6 +120,17 @@ class ContextEngine:
             vm_os_version="6.12.13",
             vm_os_platform="Linux a5e39e32118c 6.12.13 #1 SMP Thu Mar 13 11:34:50 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux",
             vm_resolution="1064 x 1064"
+        )
+        return prompt
+
+    def create_system_file_system_context(self):
+        """
+        Create a system message block with agent file system context.
+        STATIC - describes the agent's persistent file system structure.
+        """
+        from core.config import AGENT_FILE_SYSTEM_PATH
+        prompt = AGENT_FILE_SYSTEM_CONTEXT_PROMPT.format(
+            agent_file_system_path=AGENT_FILE_SYSTEM_PATH,
         )
         return prompt
 
@@ -297,6 +319,63 @@ class ContextEngine:
             )
         return f"<agent_state>\n- Current Mode: {gui_mode_status}\n</agent_state>"
 
+    def get_memory_context(self, query: Optional[str] = None, top_k: int = 5) -> str:
+        """
+        Get relevant memories for inclusion in prompts.
+
+        Uses the MemoryManager to retrieve semantically relevant memories
+        based on the current query or task context.
+
+        Args:
+            query: Optional query to search memories. If not provided,
+                   uses the current task instruction or returns empty.
+            top_k: Maximum number of memory pointers to retrieve.
+
+        Returns:
+            Formatted memory context string, or empty string if no memories.
+        """
+        if not self._memory_manager:
+            return ""
+
+        # Determine query from context if not provided
+        if not query:
+            current_task: Optional[Task] = STATE.current_task
+            if current_task:
+                query = current_task.instruction
+            else:
+                # No query and no task - skip memory retrieval
+                return ""
+
+        try:
+            # Retrieve relevant memory pointers
+            pointers = self._memory_manager.retrieve(query, top_k=top_k, min_relevance=0.3)
+
+            if not pointers:
+                return ""
+
+            # Format memory pointers for prompt
+            lines = ["<relevant_memories>"]
+            lines.append("Historical context from previous interactions (verify against current event stream):")
+            lines.append("")
+
+            for ptr in pointers:
+                # Format: [file] section - summary (relevance: X.XX)
+                lines.append(
+                    f"- [{ptr.file_path}] {ptr.section_path}: {ptr.summary} "
+                    f"(relevance: {ptr.relevance_score:.2f})"
+                )
+
+            lines.append("")
+            lines.append("Note: Memories may be outdated. Trust current event stream over memories if they conflict.")
+            lines.append("Use memory_search action to retrieve full content if needed.")
+            lines.append("</relevant_memories>")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to retrieve memory context: {e}")
+            return ""
+
     # ──────────────────────── USER MESSAGE COMPONENTS ────────────────────────
 
     def create_user_query(self, query):
@@ -325,13 +404,13 @@ class ContextEngine:
         Assembles the system and user messages for the LLM with configurable sections.
 
         KV CACHING OPTIMIZATION:
-        - System prompt contains ONLY STATIC content (agent_info, role_info, policy, environment, base_instruction)
+        - System prompt contains ONLY STATIC content (agent_info, role_info, policy, environment, file_system, base_instruction)
         - Dynamic content (event_stream, task_state, agent_state) must be added to user prompts by callers
         - Use get_event_stream(), get_task_state(), get_agent_state() for user prompts
 
         :param system_flags: Optional dict of booleans to enable/disable system sections.
             Supported keys (STATIC ONLY): ``agent_info``, ``role_info``, ``policy``,
-            ``environment`` and ``base_instruction``.
+            ``environment``, ``file_system``, and ``base_instruction``.
         :param user_flags: Optional dict of booleans to enable/disable user sections.
             Supported keys: ``query`` and ``expected_output``. Defaults to ``query``
             enabled and ``expected_output`` disabled.
@@ -343,6 +422,7 @@ class ContextEngine:
             "agent_info": True,
             "policy": False,  # default off to save tokens
             "environment": True,
+            "file_system": True,
             "base_instruction": True,
         }
         user_default_flags = {
@@ -359,6 +439,7 @@ class ContextEngine:
             ("policy", self.create_system_policy),
             ("role_info", self.create_system_role_info),
             ("environment", self.create_system_environmental_context),
+            ("file_system", self.create_system_file_system_context),
             ("base_instruction", self.create_system_base_instruction),
         ]
 

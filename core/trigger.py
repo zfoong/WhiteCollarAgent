@@ -129,9 +129,9 @@ class TriggerQueue:
     # PUT
     # =================================================================
     @profile("trigger_queue_put", OperationCategory.TRIGGER)
-    async def put(self, trig: Trigger) -> None:
+    async def put(self, trig: Trigger, skip_merge: bool = False) -> None:
         """
-        Insert a trigger into the queue, merging with existing session triggers.
+        Insert a trigger into the queue, optionally merging with existing session triggers.
 
         When a trigger arrives for a session that already has queued work, the
         method consults the LLM to generate a new session identifier that
@@ -140,13 +140,20 @@ class TriggerQueue:
 
         Args:
             trig: Trigger instance describing when and why the agent should act.
+            skip_merge: If True, skip LLM-based trigger merging. Use for system
+                        triggers that should not be merged with user triggers.
         """
-        logger.debug(f"\n[PUT] Incoming trigger for session={trig.session_id}")
+        logger.debug(f"\n[PUT] Incoming trigger for session={trig.session_id} (skip_merge={skip_merge})")
         self._print_queue("BEFORE PUT")
 
         existing_triggers: List[Trigger] = self._heap
 
-        if len(existing_triggers) > 0:
+        # Skip LLM merge for system triggers or when explicitly requested
+        # System triggers have types like "memory_processing", "task_execution"
+        trigger_type = trig.payload.get("type", "")
+        is_system_trigger = trigger_type in ("memory_processing", "task_execution", "scheduled")
+
+        if len(existing_triggers) > 0 and not skip_merge and not is_system_trigger:
 
             # KV CACHING: System prompt is now minimal/static
             # Dynamic context moved to user prompt
@@ -171,6 +178,8 @@ class TriggerQueue:
 
             # Update the incoming trigger's ID
             trig.session_id = new_trigger_id
+        else:
+            logger.debug(f"[PUT] Skipping LLM merge (skip_merge={skip_merge}, is_system={is_system_trigger})")
 
         async with self._cv:
             # find all triggers in heap with same session_id

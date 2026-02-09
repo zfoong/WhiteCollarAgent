@@ -36,17 +36,26 @@ if TYPE_CHECKING:
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
 from core.action.action_router import ActionRouter
+
+from core.config import (
+    AGENT_WORKSPACE_ROOT,
+    AGENT_FILE_SYSTEM_PATH,
+    AGENT_MEMORY_CHROMA_PATH,
+    PROCESS_MEMORY_AT_STARTUP,
+    MEMORY_PROCESSING_SCHEDULE_HOUR,
+)
+
 from core.tui import TUIInterface
 from core.internal_action_interface import InternalActionInterface
 from core.llm import LLMInterface, LLMCallType
 from core.vlm_interface import VLMInterface
 from core.database_interface import DatabaseInterface
 from core.logger import logger
+from core.memory import MemoryManager, MemoryPointer, MemoryFileWatcher, create_memory_processing_task
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
 from core.trigger import Trigger, TriggerQueue
-# STEP_REASONING_PROMPT removed - reasoning is now integrated into action selection
 from core.state.types import ReasoningResult
 from core.task.task_manager import TaskManager
 from core.event_stream.event_stream_manager import EventStreamManager
@@ -116,7 +125,10 @@ class AgentBase:
         )
         self.vlm = VLMInterface(provider=llm_provider, deferred=deferred_init)
 
-        self.event_stream_manager = EventStreamManager(self.llm)
+        self.event_stream_manager = EventStreamManager(
+            self.llm,
+            agent_file_system_path=AGENT_FILE_SYSTEM_PATH
+        )
         
         # action & task layers
         self.action_library = ActionLibrary(self.llm, db_interface=self.db_interface)
@@ -139,13 +151,41 @@ class AgentBase:
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
             state_manager=self.state_manager,
+            llm_interface=self.llm,
+            context_engine=self.context_engine,
         )
+
+        # Clean up any leftover temp directories from previous runs
+        self.task_manager.cleanup_all_temp_dirs()
+
+        # ── memory manager for proactive agent ──
+        self.memory_manager = MemoryManager(
+            agent_file_system_path=str(AGENT_FILE_SYSTEM_PATH),
+            chroma_path=str(AGENT_MEMORY_CHROMA_PATH),
+        )
+        # Connect memory manager to context engine for memory-aware prompts
+        self.context_engine.set_memory_manager(self.memory_manager)
+
+        # Index the agent file system on startup (incremental)
+        try:
+            self.memory_manager.update()
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to update memory index on startup: {e}")
+
+        # Start file watcher to auto-index on changes
+        self.memory_file_watcher = MemoryFileWatcher(
+            memory_manager=self.memory_manager,
+            debounce_seconds=30.0,
+        )
+        self.memory_file_watcher.start()
+
 
         InternalActionInterface.initialize(
             self.llm,
             self.task_manager,
             self.state_manager,
             vlm_interface=self.vlm,
+            memory_manager=self.memory_manager,
             context_engine=self.context_engine,
         )
 
@@ -213,64 +253,231 @@ class AgentBase:
         return self._command_registry
 
     # =====================================
-    # Agent Turn
+    # Main Agent Cycle
     # =====================================
     @profile_loop
     async def react(self, trigger: Trigger) -> None:
         """
-        This is the main agent cycle. It executes a full agent turn in response to an incoming trigger.
+        Main agent cycle - routes to appropriate workflow handler.
 
-        The method routes the request through action selection, execution, and
-        follow-up scheduling while logging to the event stream. Errors are
-        captured and recorded without crashing the outer loop.
+        This method handles 4 distinct workflows:
+        1. MEMORY: Background memory processing tasks
+        2. GUI TASK: Visual interaction with screen elements
+        3. COMPLEX TASK: Multi-step tasks with todo management
+        4. SIMPLE TASK: Quick tasks that auto-complete
+        5. CONVERSATION: No active task, handle user messages
 
         Args:
-            trigger: The :class:`Trigger` wakes agent up, and describes when and why the agent
-                should act, including session context and payload.
+            trigger: The Trigger that wakes the agent up and describes
+                when and why the agent should act.
         """
         session_id = trigger.session_id
-        new_session_id = None
-        action_output = {}  # ensure safe reference in error paths
 
         try:
             logger.debug("[REACT] starting...")
-            
-            # Initialize session and extract trigger data
+
+            # ----- WORKFLOW 1: Special Processing (memory, proactive, onbaording, etc) -----
+            if self._is_memory_trigger(trigger):
+                task_created = await self._handle_memory_workflow(trigger)
+                if not task_created:
+                    return  # No events to process
+
+            # Initialize session for all other workflows
             trigger_data: TriggerData = self._extract_trigger_data(trigger)
             await self._initialize_session(trigger_data.gui_mode, session_id)
 
-            # Handle GUI mode task execution (early return path)
-            if self._should_handle_gui_task():
-                gui_response = await self._handle_gui_task_execution(
-                    trigger_data, session_id
-                )
-                # GUI events are now logged to main event stream directly, no summary passback needed
-                await self._finalize_action_execution(gui_response.get("new_session_id"), gui_response.get("action_output"), session_id)
+            # ----- WORKFLOW 2: GUI Task Mode -----
+            if self._is_gui_task_mode():
+                await self._handle_gui_task_workflow(trigger_data, session_id)
                 return
 
-            # Select and execute action (standard path)
-            action_decision, reasoning = await self._select_action(trigger_data)
-            action, action_params, parent_id = await self._retrieve_and_prepare_action(
-                action_decision, trigger_data.parent_id
-            )
-            
-            action_output = await self._execute_action(
-                action, action_params, trigger_data, reasoning, parent_id, session_id
-            )
-            
-            # Post-action handling
-            new_session_id = action_output.get("task_id") or session_id
-            await self._finalize_action_execution(new_session_id, action_output, session_id)
-            return
+            # ----- WORKFLOW 3: Complex Task Mode -----
+            if self._is_complex_task_mode():
+                await self._handle_complex_task_workflow(trigger_data, session_id)
+                return
+
+            # ----- WORKFLOW 4: Simple Task Mode -----
+            if self._is_simple_task_mode():
+                await self._handle_simple_task_workflow(trigger_data, session_id)
+                return
+
+            # ----- WORKFLOW 5: Conversation Mode (default) -----
+            await self._handle_conversation_workflow(trigger_data, session_id)
 
         except Exception as e:
-            await self._handle_react_error(e, new_session_id, session_id, action_output)
-            return
+            await self._handle_react_error(e, None, session_id, {})
         finally:
             self._cleanup_session()
 
     # =====================================
-    # Internal Methods
+    # Memory Processing
+    # =====================================
+
+    def create_process_memory_task(self) -> str:
+        """
+        Create a task to process unprocessed events and move them to memory.
+
+        This creates a task that uses the 'memory-processor' skill to guide
+        the agent through:
+        1. Read EVENT_UNPROCESSED.md for unprocessed events
+        2. Evaluate event importance for long-term memory
+        3. Check for duplicate memories using memory_search
+        4. Write important, unique events to MEMORY.md
+        5. Clear processed events from EVENT_UNPROCESSED.md
+
+        Returns:
+            The task ID of the created task.
+        """
+        logger.info("[MEMORY] Creating process memory task")
+
+        # Enable skip_unprocessed_logging to prevent infinite loops
+        # (events generated during memory processing won't be added to EVENT_UNPROCESSED.md)
+        # This flag is automatically reset when the task ends (in task_manager._end_task)
+        self.event_stream_manager.set_skip_unprocessed_logging(True)
+
+        # Create task using the memory-processor skill
+        task_id = create_memory_processing_task(self.task_manager)
+        logger.info(f"[MEMORY] Process memory task created: {task_id}")
+
+        return task_id
+
+    async def _process_memory_at_startup(self) -> None:
+        """
+        Process unprocessed events into memory at startup.
+
+        This checks if there are unprocessed events and fires a memory
+        processing trigger if needed. The trigger goes through normal
+        processing flow which creates the task and executes it.
+        """
+        import time
+
+        try:
+            unprocessed_file = AGENT_FILE_SYSTEM_PATH / "EVENT_UNPROCESSED.md"
+            if not unprocessed_file.exists():
+                logger.debug("[MEMORY] EVENT_UNPROCESSED.md not found, skipping startup processing")
+                return
+
+            # Check if there are events to process (more than just headers)
+            content = unprocessed_file.read_text(encoding="utf-8")
+            lines = content.strip().split("\n")
+            # Filter out empty lines and header lines (starting with # or empty)
+            event_lines = [l for l in lines if l.strip() and l.strip().startswith("[")]
+
+            if not event_lines:
+                logger.info("[MEMORY] No unprocessed events found at startup")
+                return
+
+            logger.info(f"[MEMORY] Found {len(event_lines)} unprocessed events at startup, firing processing trigger")
+
+            # Fire a memory_processing trigger (not scheduled, so won't reschedule)
+            trigger = Trigger(
+                fire_at=time.time(),
+                priority=50,
+                next_action_description="Process unprocessed events into long-term memory (startup)",
+                payload={
+                    "type": "memory_processing",
+                    "scheduled": False,  # Don't reschedule after this
+                },
+                session_id="memory_processing_startup",
+            )
+            await self.triggers.put(trigger)
+
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to process memory at startup: {e}")
+
+    async def _schedule_daily_memory_processing(self) -> None:
+        """
+        Schedule a trigger for daily memory processing at the configured hour.
+
+        Creates a trigger that fires at MEMORY_PROCESSING_SCHEDULE_HOUR (default 3am)
+        daily to process unprocessed events into long-term memory.
+        """
+        import time
+        from datetime import datetime, timedelta
+
+        try:
+            now = datetime.now()
+            # Calculate next occurrence of the scheduled hour
+            scheduled_time = now.replace(
+                hour=MEMORY_PROCESSING_SCHEDULE_HOUR,
+                minute=0,
+                second=0,
+                microsecond=0
+            )
+
+            # If the scheduled time has already passed today, schedule for tomorrow
+            if scheduled_time <= now:
+                scheduled_time += timedelta(days=1)
+
+            fire_at = scheduled_time.timestamp()
+
+            trigger = Trigger(
+                fire_at=fire_at,
+                priority=100,  # Low priority - background task
+                next_action_description="Process unprocessed events into long-term memory (daily scheduled task)",
+                payload={
+                    "type": "memory_processing",
+                    "scheduled": True,
+                },
+                session_id="memory_processing_daily",
+            )
+
+            await self.triggers.put(trigger)
+            logger.info(
+                f"[MEMORY] Scheduled daily memory processing at "
+                f"{scheduled_time.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"(in {(scheduled_time - now).total_seconds() / 3600:.1f} hours)"
+            )
+
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to schedule daily memory processing: {e}")
+
+    async def _handle_memory_processing_trigger(self, reschedule: bool = True) -> bool:
+        """
+        Handle the memory processing trigger.
+
+        This is called when a memory processing trigger fires (startup or scheduled).
+        It creates a task to process unprocessed events, and optionally reschedules.
+
+        Args:
+            reschedule: If True, schedule the next daily processing trigger.
+
+        Returns:
+            True if a task was created and processing should continue,
+            False if no task was created and react() should return.
+        """
+        logger.info("[MEMORY] Memory processing trigger fired")
+        task_created = False
+
+        try:
+            # Check if there are events to process
+            unprocessed_file = AGENT_FILE_SYSTEM_PATH / "EVENT_UNPROCESSED.md"
+            if unprocessed_file.exists():
+                content = unprocessed_file.read_text(encoding="utf-8")
+                lines = content.strip().split("\n")
+                event_lines = [l for l in lines if l.strip() and l.strip().startswith("[")]
+
+                if event_lines:
+                    logger.info(f"[MEMORY] Processing {len(event_lines)} unprocessed events")
+                    self.create_process_memory_task()
+                    task_created = True
+                else:
+                    logger.info("[MEMORY] No unprocessed events to process")
+            else:
+                logger.debug("[MEMORY] EVENT_UNPROCESSED.md not found")
+
+        except Exception as e:
+            logger.warning(f"[MEMORY] Failed to process memory: {e}")
+
+        finally:
+            # Reschedule for the next day (only for scheduled triggers)
+            if reschedule:
+                await self._schedule_daily_memory_processing()
+
+        return task_created
+
+    # =====================================
+    # Workflow Routing
     # =====================================
 
     def _extract_trigger_data(self, trigger: Trigger) -> TriggerData:
@@ -282,13 +489,129 @@ class AgentBase:
         )
 
     async def _initialize_session(self, gui_mode: bool | None, session_id: str) -> None:
-        """Initialize the agent session and set current task ID."""
-        STATE.set_agent_property("current_task_id", session_id)
+        """Initialize the agent session and set current task ID.
+
+        Note: Only sets current_task_id if no task is running, since create_task()
+        already sets the task_id which must be used for session cache lookups.
+        """
+        if not self.state_manager.is_running_task():
+            STATE.set_agent_property("current_task_id", session_id)
         await self.state_manager.start_session(gui_mode)
 
-    def _should_handle_gui_task(self) -> bool:
-        """Check if we should handle GUI task execution."""
+    # ----- Mode Checks -----
+
+    def _is_memory_trigger(self, trigger: Trigger) -> bool:
+        """Check if trigger is for memory processing."""
+        return trigger.payload.get("type") == "memory_processing"
+
+    def _is_gui_task_mode(self) -> bool:
+        """Check if in GUI task execution mode."""
         return self.state_manager.is_running_task() and STATE.gui_mode
+
+    def _is_complex_task_mode(self) -> bool:
+        """Check if running a complex task."""
+        return self.state_manager.is_running_task() and not self.task_manager.is_simple_task()
+
+    def _is_simple_task_mode(self) -> bool:
+        """Check if running a simple task."""
+        return self.state_manager.is_running_task() and self.task_manager.is_simple_task()
+
+    # ----- Workflow Handlers -----
+
+    async def _handle_memory_workflow(self, trigger: Trigger) -> bool:
+        """
+        Handle memory processing workflow.
+
+        Args:
+            trigger: The memory processing trigger.
+
+        Returns:
+            True if a task was created and processing should continue,
+            False if no task was created.
+        """
+        is_scheduled = trigger.payload.get("scheduled", False)
+        return await self._handle_memory_processing_trigger(reschedule=is_scheduled)
+
+    async def _handle_conversation_workflow(self, trigger_data: TriggerData, session_id: str) -> None:
+        """
+        Handle conversation mode - no active task.
+        Routes user queries to appropriate actions (send_message, task_start, etc.)
+        Uses prefix caching only (no session caching for conversation mode).
+        """
+        logger.debug(f"[WORKFLOW: CONVERSATION] Query: {trigger_data.query}")
+
+        # Use _select_action to maintain proper call chain
+        action_decision, reasoning = await self._select_action(trigger_data)
+
+        action, action_params, parent_id = await self._retrieve_and_prepare_action(
+            action_decision, trigger_data.parent_id
+        )
+
+        action_output = await self._execute_action(
+            action, action_params, trigger_data, reasoning, parent_id, session_id
+        )
+
+        new_session_id = action_output.get("task_id") or session_id
+        await self._finalize_action_execution(new_session_id, action_output, session_id)
+
+    async def _handle_simple_task_workflow(self, trigger_data: TriggerData, session_id: str) -> None:
+        """
+        Handle simple task mode - streamlined execution without todos.
+        Quick tasks that auto-complete after delivering results.
+        Uses session caching for efficient multi-turn execution.
+        """
+        logger.debug(f"[WORKFLOW: SIMPLE TASK] Query: {trigger_data.query}")
+
+        # Use _select_action to maintain proper call chain with session caching
+        action_decision, reasoning = await self._select_action(trigger_data)
+
+        action, action_params, parent_id = await self._retrieve_and_prepare_action(
+            action_decision, trigger_data.parent_id
+        )
+
+        action_output = await self._execute_action(
+            action, action_params, trigger_data, reasoning, parent_id, session_id
+        )
+
+        new_session_id = action_output.get("task_id") or session_id
+        await self._finalize_action_execution(new_session_id, action_output, session_id)
+
+    async def _handle_complex_task_workflow(self, trigger_data: TriggerData, session_id: str) -> None:
+        """
+        Handle complex task mode - full todo workflow with planning.
+        Multi-step tasks with todo management and user verification.
+        Uses session caching for efficient multi-turn execution.
+        """
+        logger.debug(f"[WORKFLOW: COMPLEX TASK] Query: {trigger_data.query}")
+
+        # Use _select_action to maintain proper call chain with session caching
+        action_decision, reasoning = await self._select_action(trigger_data)
+
+        action, action_params, parent_id = await self._retrieve_and_prepare_action(
+            action_decision, trigger_data.parent_id
+        )
+
+        action_output = await self._execute_action(
+            action, action_params, trigger_data, reasoning, parent_id, session_id
+        )
+
+        new_session_id = action_output.get("task_id") or session_id
+        await self._finalize_action_execution(new_session_id, action_output, session_id)
+
+    async def _handle_gui_task_workflow(self, trigger_data: TriggerData, session_id: str) -> None:
+        """
+        Handle GUI task mode - visual interaction workflow.
+        Tasks requiring screen interaction via mouse/keyboard.
+        """
+        logger.debug("[WORKFLOW: GUI TASK] Entered GUI mode.")
+
+        gui_response = await self._handle_gui_task_execution(trigger_data, session_id)
+
+        await self._finalize_action_execution(
+            gui_response.get("new_session_id"), gui_response.get("action_output"), session_id
+        )
+
+    # ----- GUI Task Helpers -----
 
     async def _handle_gui_task_execution(
         self, trigger_data: TriggerData, session_id: str
@@ -322,10 +645,17 @@ class AgentBase:
             "new_session_id": new_session_id,
         }
 
+    # ----- Action Selection -----
+
     @profile("agent_select_action", OperationCategory.AGENT_LOOP)
     async def _select_action(self, trigger_data: TriggerData) -> tuple[dict, str]:
         """
         Select an action based on current task state.
+
+        Routes to appropriate action selection method:
+        - Complex task: _select_action_in_task (with session caching)
+        - Simple task: _select_action_in_simple_task (with session caching)
+        - Conversation: action_router.select_action (prefix caching only)
 
         Returns:
             Tuple of (action_decision, reasoning) where reasoning is empty string
@@ -407,9 +737,19 @@ class AgentBase:
         reasoning = action_decision.get("reasoning", "")
         logger.debug(f"[AGENT REASONING - SIMPLE TASK] {reasoning}")
 
-        # Don't log to event stream for simple tasks (efficiency)
+        # Log reasoning to event stream
+        if self.event_stream_manager and reasoning:
+            self.event_stream_manager.log(
+                "agent reasoning",
+                reasoning,
+                severity="DEBUG",
+                display_message=None,
+            )
+            self.state_manager.bump_event_stream()
 
         return action_decision, reasoning
+
+    # ----- Action Execution -----
 
     async def _retrieve_and_prepare_action(
         self, action_decision: dict, initial_parent_id: str | None
@@ -473,6 +813,8 @@ class AgentBase:
             return
         await self._create_new_trigger(new_session_id, action_output, STATE)
 
+    # ----- Error Handling -----
+
     async def _handle_react_error(
         self,
         error: Exception,
@@ -503,12 +845,16 @@ class AgentBase:
                 exc_info=True,
             )
 
+    # ----- Session Management -----
+
     def _cleanup_session(self) -> None:
         """Safely cleanup session state."""
         try:
             self.state_manager.clean_state()
         except Exception as e:
             logger.warning(f"[REACT] Failed to end session safely: {e}")
+
+    # ----- Agent Limits -----
 
     async def _check_agent_limits(self) -> bool:
         agent_properties = STATE.get_agent_properties()
@@ -568,9 +914,7 @@ class AgentBase:
         # No limits close or reached
         return True
 
-    # NOTE: _perform_reasoning method was removed.
-    # Reasoning is now integrated directly into action selection prompts,
-    # reducing the number of LLM calls from 2N to N for N action cycles.
+    # ----- Trigger Management -----
 
     @profile("agent_create_new_trigger", OperationCategory.TRIGGER)
     async def _create_new_trigger(self, new_session_id, action_output, STATE):
@@ -615,13 +959,16 @@ class AgentBase:
                         payload={
                             "gui_mode": STATE.gui_mode,
                         },
-                    )
+                    ),
+                    skip_merge=True,  # Session is already explicitly set, no LLM merge check needed
                 )
             except Exception as e:
                 logger.error(f"[TRIGGER] Failed to enqueue trigger for session {new_session_id}: {e}", exc_info=True)
 
         except Exception as e:
             logger.error(f"[TRIGGER] Unexpected error in create_new_trigger: {e}", exc_info=True)
+
+    # ----- Chat Handling -----
 
     async def _handle_chat_message(self, payload: Dict):
         try:
@@ -678,7 +1025,7 @@ class AgentBase:
         )
 
     # =====================================
-    # Internals
+    # State Management
     # =====================================
 
     async def reset_agent_state(self) -> str:
@@ -906,6 +1253,13 @@ class AgentBase:
 
         # Initialize skills system
         await self._initialize_skills()
+
+        # Process unprocessed events into memory at startup (if enabled)
+        if PROCESS_MEMORY_AT_STARTUP:
+            await self._process_memory_at_startup()
+
+        # Schedule daily memory processing
+        await self._schedule_daily_memory_processing()
 
         try:
             # Allow the TUI to present provider/api-key configuration before chat starts.
