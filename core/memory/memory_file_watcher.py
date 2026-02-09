@@ -9,7 +9,7 @@ incremental indexing in the MemoryManager when files are created, modified,
 or deleted.
 
 Features:
-- Watches only markdown (.md) files
+- Watches only specific target files (AGENT.md, PROACTIVE.md, MEMORY.md, USER.md, EVENT_UNPROCESSED.md)
 - Debounces rapid changes to avoid excessive indexing
 - Thread-safe integration with MemoryManager
 - Graceful start/stop lifecycle
@@ -20,15 +20,13 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Set
+from typing import Optional, Set
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from core.logger import logger
-
-if TYPE_CHECKING:
-    from core.memory.memory_manager import MemoryManager
+from core.memory.memory_manager import MemoryManager
 
 
 class MemoryFileWatcher:
@@ -85,12 +83,16 @@ class MemoryFileWatcher:
             return
 
         self._observer = Observer()
-        event_handler = _MarkdownEventHandler(self._on_file_change)
+        event_handler = _TargetFileEventHandler(
+            self._on_file_change,
+            self.watch_path,
+            MemoryManager.INDEX_TARGET_FILES,
+        )
 
         self._observer.schedule(
             event_handler,
             str(self.watch_path),
-            recursive=True,
+            recursive=False,  # Target files are in root directory
         )
 
         self._observer.start()
@@ -179,41 +181,46 @@ class MemoryFileWatcher:
         return self._is_running
 
 
-class _MarkdownEventHandler(FileSystemEventHandler):
+class _TargetFileEventHandler(FileSystemEventHandler):
     """
-    Event handler that filters for markdown files and forwards events.
+    Event handler that filters for specific target files and forwards events.
     """
 
-    def __init__(self, callback):
+    def __init__(self, callback, watch_path: Path, target_files: list):
         """
         Initialize the handler.
 
         Args:
             callback: Function to call with (file_path, event_type) on changes
+            watch_path: The base directory being watched
+            target_files: List of filenames to watch (e.g., ["AGENT.md", "MEMORY.md"])
         """
         super().__init__()
         self._callback = callback
+        self._watch_path = watch_path
+        self._target_files = set(target_files)
 
-    def _is_markdown(self, path: str) -> bool:
-        """Check if the path is a markdown file."""
-        return path.lower().endswith('.md')
+    def _is_target_file(self, path: str) -> bool:
+        """Check if the path is one of the target files."""
+        filename = Path(path).name
+        return filename in self._target_files
 
     def on_created(self, event: FileSystemEvent) -> None:
-        if not event.is_directory and self._is_markdown(event.src_path):
+        if not event.is_directory and self._is_target_file(event.src_path):
             self._callback(event.src_path, 'created')
 
     def on_modified(self, event: FileSystemEvent) -> None:
-        if not event.is_directory and self._is_markdown(event.src_path):
+        if not event.is_directory and self._is_target_file(event.src_path):
             self._callback(event.src_path, 'modified')
 
     def on_deleted(self, event: FileSystemEvent) -> None:
-        if not event.is_directory and self._is_markdown(event.src_path):
+        if not event.is_directory and self._is_target_file(event.src_path):
             self._callback(event.src_path, 'deleted')
 
     def on_moved(self, event: FileSystemEvent) -> None:
         # Handle both source and destination for moves
         if not event.is_directory:
-            if self._is_markdown(event.src_path):
+            if self._is_target_file(event.src_path):
                 self._callback(event.src_path, 'deleted')
-            if self._is_markdown(event.dest_path):
+            if self._is_target_file(event.dest_path):
                 self._callback(event.dest_path, 'created')

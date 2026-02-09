@@ -224,6 +224,7 @@ class MemoryManager:
             where_filter = {"file_path": {"$in": file_filter}}
 
         # Query ChromaDB
+        logger.info(f"[MEMORY QUERY] Query: {query}")
         try:
             results = self.collection.query(
                 query_texts=[query],
@@ -835,13 +836,27 @@ class MemoryManager:
 
     # ───────────────────────────── Utilities ─────────────────────────────
 
+    # Files to index for memory retrieval
+    INDEX_TARGET_FILES = [
+        "AGENT.md",
+        "PROACTIVE.md",
+        "MEMORY.md",
+        "USER.md",
+        "EVENT_UNPROCESSED.md",
+    ]
+
     def _get_all_markdown_files(self) -> List[Path]:
-        """Get all markdown files in the agent file system."""
+        """Get the target markdown files in the agent file system."""
         if not self.agent_fs_path.exists():
             logger.warning(f"Agent file system path does not exist: {self.agent_fs_path}")
             return []
 
-        return list(self.agent_fs_path.rglob("*.md"))
+        files = []
+        for filename in self.INDEX_TARGET_FILES:
+            file_path = self.agent_fs_path / filename
+            if file_path.exists():
+                files.append(file_path)
+        return files
 
     @staticmethod
     def _compute_file_hash(file_path: Path) -> str:

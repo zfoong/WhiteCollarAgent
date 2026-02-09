@@ -203,6 +203,8 @@ class InternalActionInterface:
         logger.info(f"[TASK] Final action sets: {all_action_sets}")
 
         # Create task with selected skills and action sets
+        # Note: Session caches are now created automatically by TaskManager.create_task()
+        # for complex tasks, so we don't need to create them here
         task_id = cls.task_manager.create_task(
             task_name, task_description,
             mode=task_mode,
@@ -211,27 +213,6 @@ class InternalActionInterface:
         )
         task: Optional[Task] = cls.task_manager.get_task()
         cls.state_manager.add_to_active_task(task)
-
-        # Create session caches for complex tasks only (expensive operation, skip for simple tasks)
-        if task_mode == "complex" and cls.llm_interface and cls.context_engine:
-            try:
-                # Generate the static system prompt for the session
-                system_prompt, _ = cls.context_engine.make_prompt(
-                    user_flags={"query": False, "expected_output": False},
-                    system_flags={"policy": False},
-                )
-                # Create a session cache for EACH call type so they don't pollute each other's KV cache
-                for call_type in [
-                    LLMCallType.REASONING,
-                    LLMCallType.ACTION_SELECTION,
-                    LLMCallType.GUI_REASONING,
-                    LLMCallType.GUI_ACTION_SELECTION,
-                ]:
-                    cache_id = cls.llm_interface.create_session_cache(task_id, call_type, system_prompt)
-                    if cache_id:
-                        logger.debug(f"[TASK] Created session cache {cache_id} for task {task_id}:{call_type}")
-            except Exception as e:
-                logger.warning(f"[TASK] Failed to create session caches for task {task_id}: {e}")
 
         return {
             "task_id": task_id,

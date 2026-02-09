@@ -8,7 +8,7 @@ mechanism. The agent manages todos directly without LLM-based planning.
 
 import uuid
 import shutil
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from pathlib import Path
 import re
 
@@ -20,6 +20,11 @@ from core.event_stream.event_stream_manager import EventStreamManager
 from core.config import AGENT_WORKSPACE_ROOT
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
+from core.llm import LLMCallType
+
+if TYPE_CHECKING:
+    from core.llm import LLMInterface
+    from core.context_engine import ContextEngine
 
 
 class TaskManager:
@@ -35,6 +40,8 @@ class TaskManager:
         db_interface: DatabaseInterface,
         event_stream_manager: EventStreamManager,
         state_manager: StateManager,
+        llm_interface: Optional["LLMInterface"] = None,
+        context_engine: Optional["ContextEngine"] = None,
     ):
         """
         Initialize the task manager.
@@ -43,10 +50,14 @@ class TaskManager:
             db_interface: Persistence layer for task logging.
             event_stream_manager: Event stream for user-visible progress.
             state_manager: State tracker for sharing task context.
+            llm_interface: LLM interface for creating session caches (optional).
+            context_engine: Context engine for generating system prompts (optional).
         """
         self.db_interface = db_interface
         self.event_stream_manager = event_stream_manager
         self.state_manager = state_manager
+        self.llm_interface = llm_interface
+        self.context_engine = context_engine
         self.active: Optional[Task] = None
         self.workspace_root = Path(AGENT_WORKSPACE_ROOT)
 
@@ -118,8 +129,43 @@ class TaskManager:
         )
 
         STATE.set_agent_property("current_task_id", task_id)
+
+        # Create session caches for all tasks (enables efficient multi-turn execution)
+        if self.llm_interface and self.context_engine:
+            self._create_session_caches(task_id)
+
         logger.debug(f"[TaskManager] Task {task_id} created")
         return task_id
+
+    def _create_session_caches(self, task_id: str) -> None:
+        """
+        Create session caches for a task.
+
+        Session caches enable efficient multi-turn LLM interactions by caching
+        the static parts of prompts. Each call type gets its own session to
+        prevent KV cache pollution. Used for both simple and complex tasks.
+
+        Args:
+            task_id: The task ID to create caches for.
+        """
+        try:
+            # Generate the static system prompt for the session
+            system_prompt, _ = self.context_engine.make_prompt(
+                user_flags={"query": False, "expected_output": False},
+                system_flags={"policy": False},
+            )
+            # Create a session cache for EACH call type so they don't pollute each other's KV cache
+            for call_type in [
+                LLMCallType.REASONING,
+                LLMCallType.ACTION_SELECTION,
+                LLMCallType.GUI_REASONING,
+                LLMCallType.GUI_ACTION_SELECTION,
+            ]:
+                cache_id = self.llm_interface.create_session_cache(task_id, call_type, system_prompt)
+                if cache_id:
+                    logger.debug(f"[TaskManager] Created session cache {cache_id} for task {task_id}:{call_type}")
+        except Exception as e:
+            logger.warning(f"[TaskManager] Failed to create session caches for task {task_id}: {e}")
 
     # ─────────────────────── Todo Management ─────────────────────────────────
 
@@ -305,9 +351,8 @@ class TaskManager:
         if self.state_manager:
             self.state_manager.remove_active_task()
 
-        # Cleanup temp directory on successful completion
-        if status == "completed":
-            self._cleanup_task_temp_dir(task)
+        # Cleanup temp directory on task end (completed, error, or cancelled)
+        self._cleanup_task_temp_dir(task)
 
     def _sync_state_manager(self, task: Optional[Task]) -> None:
         """Sync task state to the state manager."""
@@ -331,6 +376,39 @@ class TaskManager:
             logger.debug(f"[TaskManager] Cleaned up temp dir for task {task.id}")
         except Exception:
             logger.warning(f"[TaskManager] Failed to clean temp dir for {task.id}", exc_info=True)
+
+    def cleanup_all_temp_dirs(self) -> int:
+        """
+        Remove all temporary directories in workspace/tmp/.
+
+        This should be called on agent startup to clean up any leftover
+        temp directories from tasks that ended unexpectedly (e.g., due to
+        crashes or forced termination).
+
+        Returns:
+            Number of directories cleaned up.
+        """
+        temp_root = self.workspace_root / "tmp"
+        if not temp_root.exists():
+            return 0
+
+        cleaned_count = 0
+        try:
+            for item in temp_root.iterdir():
+                if item.is_dir():
+                    try:
+                        shutil.rmtree(item, ignore_errors=True)
+                        cleaned_count += 1
+                        logger.debug(f"[TaskManager] Cleaned up leftover temp dir: {item.name}")
+                    except Exception:
+                        logger.warning(f"[TaskManager] Failed to clean leftover temp dir: {item.name}", exc_info=True)
+
+            if cleaned_count > 0:
+                logger.info(f"[TaskManager] Cleaned up {cleaned_count} leftover temp directories on startup")
+        except Exception:
+            logger.warning("[TaskManager] Failed to enumerate temp directories", exc_info=True)
+
+        return cleaned_count
 
     def _sanitize_task_id(self, s: str) -> str:
         """Sanitize a string for use as a task ID."""
