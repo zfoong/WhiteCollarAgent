@@ -42,6 +42,10 @@ SLACK_SHARED_CLIENT_SECRET: str = os.environ.get("SLACK_SHARED_CLIENT_SECRET", "
 TELEGRAM_SHARED_BOT_TOKEN: str = os.environ.get("TELEGRAM_SHARED_BOT_TOKEN", "")
 TELEGRAM_SHARED_BOT_USERNAME: str = os.environ.get("TELEGRAM_SHARED_BOT_USERNAME", "")
 
+# Telegram API credentials for MTProto user login (from https://my.telegram.org)
+TELEGRAM_API_ID: str = os.environ.get("TELEGRAM_API_ID", "")
+TELEGRAM_API_HASH: str = os.environ.get("TELEGRAM_API_HASH", "")
+
 # Shared Notion Integration (CraftOS-hosted)
 NOTION_SHARED_CLIENT_ID: str = os.environ.get("NOTION_SHARED_CLIENT_ID", "")
 NOTION_SHARED_CLIENT_SECRET: str = os.environ.get("NOTION_SHARED_CLIENT_SECRET", "")

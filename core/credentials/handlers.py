@@ -11,6 +11,9 @@ from urllib.parse import urlencode
 LOCAL_USER_ID = "local"
 REDIRECT_URI = "http://localhost:8765"
 
+# Pending Telegram MTProto auth state: {phone_number: {phone_code_hash, session_string, api_id, api_hash}}
+_pending_telegram_auth: dict[str, dict] = {}
+
 
 class IntegrationHandler(ABC):
     @abstractmethod
@@ -522,18 +525,107 @@ class TelegramHandler(IntegrationHandler):
         return True, f"Telegram bot connected: @{info.get('username')} ({info.get('id')})"
 
     async def _login_user(self, args):
-        if len(args) < 3: return False, "Usage: /telegram login-user <api_id> <api_hash> <session_string> [phone]"
-        try: api_id_int = int(args[0])
-        except ValueError: return False, "api_id must be a number."
+        if not args:
+            return False, (
+                "Usage:\n"
+                "  Step 1: /telegram login-user <phone_number>\n"
+                "  Step 2: /telegram login-user <phone_number> <code> [2fa_password]\n\n"
+                "Requires TELEGRAM_API_ID and TELEGRAM_API_HASH env vars.\n"
+                "Get them from https://my.telegram.org"
+            )
 
-        from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
-        from core.external_libraries.telegram.credentials import TelegramCredential
-        TelegramAppLibrary.initialize()
-        TelegramAppLibrary.get_credential_store().add(TelegramCredential(
-            user_id=LOCAL_USER_ID, connection_type="mtproto",
-            api_id=api_id_int, api_hash=args[1], session_string=args[2],
-            phone_number=args[3] if len(args) > 3 else "unknown"))
-        return True, "Telegram user account connected via MTProto."
+        phone = args[0]
+
+        from core.config import TELEGRAM_API_ID, TELEGRAM_API_HASH
+        if not TELEGRAM_API_ID or not TELEGRAM_API_HASH:
+            return False, (
+                "Not configured. Set TELEGRAM_API_ID and TELEGRAM_API_HASH env vars.\n"
+                "Get them from https://my.telegram.org → API development tools."
+            )
+
+        try:
+            api_id = int(TELEGRAM_API_ID)
+        except ValueError:
+            return False, "TELEGRAM_API_ID must be a number."
+
+        # Step 2: phone + code → complete auth
+        if len(args) >= 2:
+            code = args[1]
+            password = args[2] if len(args) > 2 else None
+
+            pending = _pending_telegram_auth.get(phone)
+            if not pending:
+                return False, f"No pending auth for {phone}. Run /telegram login-user {phone} first to send the code."
+
+            try:
+                from core.external_libraries.telegram.helpers.telegram_mtproto_helpers import complete_auth
+            except ImportError:
+                return False, "Telethon not installed. Run: pip install telethon"
+
+            result = await complete_auth(
+                api_id=api_id,
+                api_hash=TELEGRAM_API_HASH,
+                phone_number=phone,
+                code=code,
+                phone_code_hash=pending["phone_code_hash"],
+                password=password,
+                pending_session_string=pending["session_string"],
+            )
+
+            if "error" in result:
+                details = result.get("details", {})
+                if details.get("status") == "2fa_required":
+                    return False, "Two-factor authentication is enabled.\nUsage: /telegram login-user <phone> <code> <2fa_password>"
+                if details.get("status") == "invalid_code":
+                    return False, "Invalid verification code. Try again with: /telegram login-user <phone> <code>"
+                if details.get("status") == "code_expired":
+                    _pending_telegram_auth.pop(phone, None)
+                    return False, "Code expired. Run /telegram login-user <phone> again to get a new code."
+                return False, f"Auth failed: {result['error']}"
+
+            # Success — store credential
+            auth = result["result"]
+            _pending_telegram_auth.pop(phone, None)
+
+            from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
+            from core.external_libraries.telegram.credentials import TelegramCredential
+            TelegramAppLibrary.initialize()
+
+            account_name = f"{auth.get('first_name', '')} {auth.get('last_name', '')}".strip()
+            TelegramAppLibrary.get_credential_store().add(TelegramCredential(
+                user_id=LOCAL_USER_ID, connection_type="mtproto",
+                phone_number=auth.get("phone", phone),
+                api_id=api_id, api_hash=TELEGRAM_API_HASH,
+                session_string=auth["session_string"],
+                account_name=account_name,
+                telegram_user_id=auth.get("user_id", 0),
+            ))
+
+            username = f" (@{auth['username']})" if auth.get("username") else ""
+            return True, f"Telegram user connected: {account_name}{username}"
+
+        # Step 1: phone only → send OTP
+        try:
+            from core.external_libraries.telegram.helpers.telegram_mtproto_helpers import start_auth
+        except ImportError:
+            return False, "Telethon not installed. Run: pip install telethon"
+
+        result = await start_auth(api_id=api_id, api_hash=TELEGRAM_API_HASH, phone_number=phone)
+
+        if "error" in result:
+            return False, f"Failed to send code: {result['error']}"
+
+        # Store pending auth state
+        _pending_telegram_auth[phone] = {
+            "phone_code_hash": result["result"]["phone_code_hash"],
+            "session_string": result["result"]["session_string"],
+        }
+
+        return True, (
+            f"Verification code sent to {phone}.\n"
+            f"Check your Telegram app (or SMS) for the code, then run:\n"
+            f"  /telegram login-user {phone} <code>"
+        )
 
     async def logout(self, args):
         from core.external_libraries.telegram.external_app_library import TelegramAppLibrary

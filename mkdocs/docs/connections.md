@@ -67,7 +67,8 @@ Send messages/photos, get updates, look up chats, and search contacts.
 |---------|-------------|
 | `/telegram invite` | Connect the CraftOS Telegram bot (opens t.me link) |
 | `/telegram login <bot_token>` | Connect your own bot from @BotFather |
-| `/telegram login-user <api_id> <api_hash> <session_string> [phone]` | Connect a Telegram user account (MTProto) |
+| `/telegram login-user <phone_number>` | Step 1: Send verification code to your phone |
+| `/telegram login-user <phone_number> <code> [2fa_password]` | Step 2: Complete user account login |
 | `/telegram status` | Show all Telegram connections |
 | `/telegram logout [id]` | Remove a connection |
 
@@ -75,7 +76,7 @@ Send messages/photos, get updates, look up chats, and search contacts.
 
 - **Invite:** Requires `TELEGRAM_SHARED_BOT_TOKEN` and `TELEGRAM_SHARED_BOT_USERNAME` env vars
 - **Login:** Message [@BotFather](https://t.me/BotFather) on Telegram to create a bot and get the token
-- **Login-user:** Get API credentials from [my.telegram.org](https://my.telegram.org), generate a session string with Telethon
+- **Login-user:** Requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` env vars. Get them from [my.telegram.org](https://my.telegram.org) → API development tools. Also requires Telethon (`pip install telethon`).
 
 ---
 
@@ -223,5 +224,7 @@ Set these in your environment or `.env` file:
 | `SLACK_SHARED_CLIENT_SECRET` | Slack | `/slack invite` |
 | `TELEGRAM_SHARED_BOT_TOKEN` | Telegram | `/telegram invite` |
 | `TELEGRAM_SHARED_BOT_USERNAME` | Telegram | `/telegram invite` |
+| `TELEGRAM_API_ID` | Telegram | `/telegram login-user` |
+| `TELEGRAM_API_HASH` | Telegram | `/telegram login-user` |
 | `NOTION_SHARED_CLIENT_ID` | Notion | `/notion invite` |
 | `NOTION_SHARED_CLIENT_SECRET` | Notion | `/notion invite` |
