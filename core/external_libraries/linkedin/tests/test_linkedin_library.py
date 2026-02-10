@@ -85,25 +85,25 @@ class LinkedInTester:
         self.created_post_urn = None  # Store for cleanup
         self.created_comment_urn = None
 
-    def run_test(self, name: str, func, *args, **kwargs) -> Dict[str, Any]:
+    def run_test(self, test_name: str, func, *args, **kwargs) -> Dict[str, Any]:
         """Run a single test and record result."""
-        print(f"\n  Testing: {name}...")
+        print(f"\n  Testing: {test_name}...")
         try:
             result = func(*args, **kwargs)
             status = result.get('status', 'unknown')
 
             if status == 'success':
-                print_success(f"{name} - SUCCESS")
-                self.test_results[name] = 'PASS'
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
             else:
                 reason = result.get('reason', result.get('details', 'Unknown error'))
-                print_error(f"{name} - FAILED: {reason}")
-                self.test_results[name] = 'FAIL'
+                print_error(f"{test_name} - FAILED: {reason}")
+                self.test_results[test_name] = 'FAIL'
 
             return result
         except Exception as e:
-            print_error(f"{name} - EXCEPTION: {str(e)}")
-            self.test_results[name] = 'ERROR'
+            print_error(f"{test_name} - EXCEPTION: {str(e)}")
+            self.test_results[test_name] = 'ERROR'
             return {"status": "error", "reason": str(e)}
 
     def test_profile_operations(self):

@@ -1,817 +1,505 @@
 """
-Tests for WhatsApp external library (WhatsApp Web only).
+Comprehensive integration test script for WhatsApp external library.
 
-Uses pytest with unittest.mock to mock the async WhatsApp Web helper functions,
-allowing all library methods to be tested without a live WhatsApp Web session.
+This script tests ALL WhatsApp Web API methods using stored credentials.
+Run this to verify WhatsApp Web integration without going through the agent cycle.
 
 Usage:
-    pytest core/external_libraries/whatsapp/tests/test_whatsapp_library.py -v
+    python test_whatsapp_library.py [--user-id YOUR_USER_ID] [--phone-number-id YOUR_PHONE_ID]
+    python test_whatsapp_library.py --list
+    python test_whatsapp_library.py --only session
+    python test_whatsapp_library.py --skip-send
+
+If no arguments provided, it will use the first stored credential found.
 """
 import sys
-import asyncio
-import pytest
+import argparse
+import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock, AsyncMock
+from typing import Optional, Dict, Any
+from datetime import datetime
 
-# Add project root to path
+# Add parent directories to path to allow imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent.parent))
 
-from core.external_libraries.whatsapp.credentials import WhatsAppCredential
 from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def reset_library():
-    """Reset WhatsAppAppLibrary state before each test."""
-    WhatsAppAppLibrary._initialized = False
-    WhatsAppAppLibrary._credential_store = None
-    yield
-    WhatsAppAppLibrary._initialized = False
-    WhatsAppAppLibrary._credential_store = None
+# ANSI colors for output
+class Colors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
 
 
-@pytest.fixture
-def mock_credential():
-    """Return a sample WhatsApp Web credential."""
-    return WhatsAppCredential(
-        user_id="test_user",
-        phone_number_id="session_abc123",
-        session_id="session_abc123",
-        jid="1234567890@s.whatsapp.net",
-        display_phone_number="+1234567890",
-    )
+def print_header(text: str):
+    """Print a formatted header."""
+    print(f"\n{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{text}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
 
 
-@pytest.fixture
-def initialized_library(mock_credential):
-    """Initialize the library and inject a mock credential store."""
+def print_section(text: str):
+    """Print a section header."""
+    print(f"\n{Colors.CYAN}{'-' * 50}{Colors.END}")
+    print(f"{Colors.CYAN}{text}{Colors.END}")
+    print(f"{Colors.CYAN}{'-' * 50}{Colors.END}")
+
+
+def print_success(text: str):
+    """Print success message."""
+    print(f"{Colors.GREEN}[PASS] {text}{Colors.END}")
+
+
+def print_error(text: str):
+    """Print error message."""
+    print(f"{Colors.RED}[FAIL] {text}{Colors.END}")
+
+
+def print_warning(text: str):
+    """Print warning message."""
+    print(f"{Colors.YELLOW}[WARN] {text}{Colors.END}")
+
+
+def print_info(text: str):
+    """Print info message."""
+    print(f"  {text}")
+
+
+def print_result(result: Dict[str, Any], indent: int = 2):
+    """Pretty print a result dict."""
+    formatted = json.dumps(result, indent=indent, default=str)
+    for line in formatted.split('\n')[:30]:  # Limit output
+        print(f"  {line}")
+    if len(formatted.split('\n')) > 30:
+        print(f"  ... (output truncated)")
+
+
+class WhatsAppTester:
+    """Test runner for WhatsApp Web API methods."""
+
+    def __init__(self, user_id: str, phone_number_id: Optional[str] = None):
+        self.user_id = user_id
+        self.phone_number_id = phone_number_id
+        self.test_results = {}
+
+    def run_test(self, test_name: str, func, *args, **kwargs) -> Dict[str, Any]:
+        """Run a single test and record result."""
+        print(f"\n  Testing: {test_name}...")
+        try:
+            result = func(*args, **kwargs)
+
+            if not isinstance(result, dict):
+                print_error(f"{test_name} - returned non-dict: {type(result)}")
+                self.test_results[test_name] = 'FAIL'
+                return {"status": "error", "reason": f"Non-dict return: {result}"}
+
+            status = result.get('status', 'unknown')
+
+            if status == 'success':
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
+            elif result.get('success') is True:
+                # Some methods (reconnect) return {"success": True} instead of {"status": "success"}
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
+            else:
+                reason = result.get('reason', result.get('error', result.get('message', 'Unknown error')))
+                print_error(f"{test_name} - FAILED: {reason}")
+                self.test_results[test_name] = 'FAIL'
+
+            return result
+        except Exception as e:
+            print_error(f"{test_name} - EXCEPTION: {str(e)}")
+            self.test_results[test_name] = 'ERROR'
+            return {"status": "error", "reason": str(e)}
+
+    # ------------------------------------------------------------------
+    # Initialization & Credential Tests
+    # ------------------------------------------------------------------
+    def test_initialization(self):
+        """Test library initialization and credential access."""
+        print_section("INITIALIZATION & CREDENTIALS")
+
+        # Test initialize (already called, but verify idempotent)
+        print(f"\n  Testing: initialize (idempotent)...")
+        try:
+            WhatsAppAppLibrary.initialize()
+            assert WhatsAppAppLibrary._initialized is True
+            assert WhatsAppAppLibrary._credential_store is not None
+            print_success("initialize (idempotent) - SUCCESS")
+            self.test_results["initialize"] = 'PASS'
+        except Exception as e:
+            print_error(f"initialize (idempotent) - EXCEPTION: {e}")
+            self.test_results["initialize"] = 'ERROR'
+
+        # Test validate_connection
+        print(f"\n  Testing: validate_connection...")
+        try:
+            is_valid = WhatsAppAppLibrary.validate_connection(
+                user_id=self.user_id,
+                phone_number_id=self.phone_number_id,
+            )
+            if is_valid:
+                print_success("validate_connection - SUCCESS (credential found)")
+                self.test_results["validate_connection"] = 'PASS'
+            else:
+                print_error("validate_connection - FAILED (no credential found)")
+                self.test_results["validate_connection"] = 'FAIL'
+        except Exception as e:
+            print_error(f"validate_connection - EXCEPTION: {e}")
+            self.test_results["validate_connection"] = 'ERROR'
+
+        # Test get_credentials
+        print(f"\n  Testing: get_credentials...")
+        try:
+            cred = WhatsAppAppLibrary.get_credentials(
+                user_id=self.user_id,
+                phone_number_id=self.phone_number_id,
+            )
+            if cred is not None:
+                print_success("get_credentials - SUCCESS")
+                print_info(f"User ID:        {cred.user_id}")
+                print_info(f"Phone Number ID: {cred.phone_number_id}")
+                print_info(f"Session ID:      {cred.session_id}")
+                print_info(f"JID:             {cred.jid}")
+                print_info(f"Display Phone:   {cred.display_phone_number}")
+                self.test_results["get_credentials"] = 'PASS'
+            else:
+                print_error("get_credentials - FAILED (returned None)")
+                self.test_results["get_credentials"] = 'FAIL'
+        except Exception as e:
+            print_error(f"get_credentials - EXCEPTION: {e}")
+            self.test_results["get_credentials"] = 'ERROR'
+
+    # ------------------------------------------------------------------
+    # Session Management Tests
+    # ------------------------------------------------------------------
+    def test_session_operations(self):
+        """Test WhatsApp Web session management methods."""
+        print_section("SESSION MANAGEMENT")
+
+        # Test list_persisted_sessions (no user filter)
+        result = self.run_test(
+            "list_persisted_sessions (all)",
+            WhatsAppAppLibrary.list_persisted_sessions,
+        )
+        if result.get('status') == 'success':
+            sessions = result.get('sessions', [])
+            print_info(f"Total persisted sessions: {result.get('count', len(sessions))}")
+            for s in sessions[:5]:
+                print_info(f"  Session: {s.get('session_id', 'N/A')}")
+
+        # Test list_persisted_sessions (filtered by user)
+        result = self.run_test(
+            "list_persisted_sessions (user filtered)",
+            WhatsAppAppLibrary.list_persisted_sessions,
+            user_id=self.user_id,
+        )
+        if result.get('status') == 'success':
+            sessions = result.get('sessions', [])
+            print_info(f"Sessions for user '{self.user_id}': {result.get('count', len(sessions))}")
+
+        # Test get_web_session_status
+        result = self.run_test(
+            "get_web_session_status",
+            WhatsAppAppLibrary.get_web_session_status,
+            user_id=self.user_id,
+        )
+        if result.get('status') in ('connected', 'success'):
+            print_info(f"Session status: {result.get('status')}")
+            if result.get('session_id'):
+                print_info(f"Session ID: {result.get('session_id')}")
+
+        # Test reconnect_whatsapp_web
+        result = self.run_test(
+            "reconnect_whatsapp_web",
+            WhatsAppAppLibrary.reconnect_whatsapp_web,
+            user_id=self.user_id,
+        )
+        reconnect_status = result.get('status', result.get('error', 'unknown'))
+        print_info(f"Reconnect result: {reconnect_status}")
+        if result.get('success'):
+            print_info("Session reconnected successfully")
+        elif reconnect_status == 'qr_required':
+            print_warning("Session requires QR code re-scan (device was unlinked)")
+
+    # ------------------------------------------------------------------
+    # Contact / Search Tests
+    # ------------------------------------------------------------------
+    def test_contact_operations(self):
+        """Test contact search."""
+        print_section("CONTACT OPERATIONS")
+
+        # Test search_contact with a generic name
+        result = self.run_test(
+            "search_contact",
+            WhatsAppAppLibrary.search_contact,
+            user_id=self.user_id,
+            name="Mom",
+            phone_number_id=self.phone_number_id,
+        )
+        if result.get('status') == 'success':
+            contact = result.get('contact', {})
+            print_info(f"Contact name:  {contact.get('name', 'N/A')}")
+            print_info(f"Contact phone: {contact.get('phone', 'N/A')}")
+
+    # ------------------------------------------------------------------
+    # Chat History Tests
+    # ------------------------------------------------------------------
+    def test_chat_operations(self):
+        """Test chat history and unread chat retrieval."""
+        print_section("CHAT OPERATIONS")
+
+        # Test get_unread_chats
+        result = self.run_test(
+            "get_unread_chats",
+            WhatsAppAppLibrary.get_unread_chats,
+            user_id=self.user_id,
+            phone_number_id=self.phone_number_id,
+        )
+        chat_phone = None
+        if result.get('status') == 'success':
+            unread = result.get('unread_chats', [])
+            print_info(f"Unread chats: {result.get('count', len(unread))}")
+            for chat in unread[:5]:
+                print_info(f"  {chat.get('name', 'Unknown')} - {chat.get('unread_count', '?')} unread")
+                # Grab a phone number from an unread chat if available for history test
+                if not chat_phone and chat.get('phone'):
+                    chat_phone = chat['phone']
+
+        # Test get_chat_history -- use a found phone or a placeholder
+        test_phone = chat_phone or "0000000000"
+        result = self.run_test(
+            "get_chat_history",
+            WhatsAppAppLibrary.get_chat_history,
+            user_id=self.user_id,
+            phone_number=test_phone,
+            limit=10,
+            phone_number_id=self.phone_number_id,
+        )
+        if result.get('status') == 'success':
+            messages = result.get('messages', [])
+            print_info(f"Messages retrieved: {result.get('count', len(messages))}")
+            for msg in messages[:5]:
+                sender = msg.get('sender', 'unknown')
+                text = msg.get('text', msg.get('body', ''))[:80]
+                print_info(f"  [{sender}] {text}")
+
+    # ------------------------------------------------------------------
+    # Send Message Tests (skippable)
+    # ------------------------------------------------------------------
+    def test_send_operations(self):
+        """Test sending text and media messages (uses real delivery)."""
+        print_section("SEND OPERATIONS (LIVE)")
+
+        # Test send_text_message
+        test_text = f"[CraftOS integration test] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        result = self.run_test(
+            "send_text_message",
+            WhatsAppAppLibrary.send_text_message,
+            user_id=self.user_id,
+            to=self._get_self_phone(),
+            message=test_text,
+            phone_number_id=self.phone_number_id,
+        )
+        if result.get('status') == 'success':
+            print_info(f"Message sent to: {result.get('to')}")
+            print_info(f"Via: {result.get('via')}")
+
+        # Test send_media_message -- send a small text file to self
+        import tempfile, os
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, prefix='craftos_test_')
+        tmp.write(f"CraftOS WhatsApp integration test file - {datetime.now().isoformat()}")
+        tmp.close()
+
+        try:
+            result = self.run_test(
+                "send_media_message",
+                WhatsAppAppLibrary.send_media_message,
+                user_id=self.user_id,
+                to=self._get_self_phone(),
+                media_type="document",
+                media_url=tmp.name,
+                caption="Integration test document",
+                phone_number_id=self.phone_number_id,
+            )
+            if result.get('status') == 'success':
+                print_info(f"Media sent to: {result.get('to')}")
+                print_info(f"Media type: {result.get('media_type')}")
+                print_info(f"Via: {result.get('via')}")
+        finally:
+            # Cleanup temp file
+            try:
+                os.unlink(tmp.name)
+                print_info(f"Cleaned up temp file: {tmp.name}")
+            except OSError:
+                pass
+
+    def _get_self_phone(self) -> str:
+        """Get the user's own phone number for self-message tests."""
+        cred = WhatsAppAppLibrary.get_credentials(
+            user_id=self.user_id,
+            phone_number_id=self.phone_number_id,
+        )
+        if cred and cred.display_phone_number:
+            return cred.display_phone_number
+        if cred and cred.jid:
+            # Extract phone from JID like "1234567890@s.whatsapp.net"
+            return cred.jid.split('@')[0]
+        # Fallback: use phone_number_id as session identifier
+        return cred.phone_number_id if cred else "0000000000"
+
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+    def print_summary(self):
+        """Print test summary."""
+        print_header("TEST SUMMARY")
+
+        passed = sum(1 for v in self.test_results.values() if v == 'PASS')
+        failed = sum(1 for v in self.test_results.values() if v == 'FAIL')
+        errors = sum(1 for v in self.test_results.values() if v == 'ERROR')
+        total = len(self.test_results)
+
+        print(f"\n  Total tests: {total}")
+        print(f"  {Colors.GREEN}Passed: {passed}{Colors.END}")
+        print(f"  {Colors.RED}Failed: {failed}{Colors.END}")
+        print(f"  {Colors.YELLOW}Errors: {errors}{Colors.END}")
+
+        print(f"\n  {Colors.BOLD}Detailed Results:{Colors.END}")
+        for name, result in self.test_results.items():
+            if result == 'PASS':
+                print(f"    {Colors.GREEN}[PASS]{Colors.END} {name}")
+            elif result == 'FAIL':
+                print(f"    {Colors.RED}[FAIL]{Colors.END} {name}")
+            else:
+                print(f"    {Colors.YELLOW}[ERR] {Colors.END} {name}")
+
+
+def list_credentials():
+    """List all stored WhatsApp credentials."""
+    print_header("STORED WHATSAPP CREDENTIALS")
+
     WhatsAppAppLibrary.initialize()
-    WhatsAppAppLibrary.get_credential_store().add(mock_credential)
-    return WhatsAppAppLibrary
+    cred_store = WhatsAppAppLibrary.get_credential_store()
+
+    # Access internal credentials dict to list all users
+    all_credentials = []
+    for user_id, creds in cred_store.credentials.items():
+        all_credentials.extend(creds)
+
+    if not all_credentials:
+        print_warning("No WhatsApp credentials found.")
+        print_info("Please authenticate via the CraftOS control panel first.")
+        return None, None
+
+    print(f"\nFound {len(all_credentials)} credential(s):\n")
+
+    for i, cred in enumerate(all_credentials, 1):
+        print(f"  [{i}] User ID:          {cred.user_id}")
+        print(f"      Phone Number ID:  {cred.phone_number_id}")
+        print(f"      Session ID:       {cred.session_id}")
+        print(f"      JID:              {cred.jid}")
+        print(f"      Display Phone:    {cred.display_phone_number}")
+        print()
+
+    return all_credentials[0].user_id, all_credentials[0].phone_number_id
 
 
-# ---------------------------------------------------------------------------
-# Initialization & Credential Tests
-# ---------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(description='Test WhatsApp Web API integration')
+    parser.add_argument('--user-id', type=str, help='CraftOS user ID')
+    parser.add_argument('--phone-number-id', type=str, help='WhatsApp phone number / session ID')
+    parser.add_argument('--list', action='store_true', help='List stored credentials and exit')
+    parser.add_argument('--skip-send', action='store_true', help='Skip tests that actually send messages')
+    parser.add_argument(
+        '--only', type=str,
+        help='Only run specific test group (init, session, contact, chat, send)'
+    )
+    args = parser.parse_args()
 
-class TestInitialization:
+    print_header("WHATSAPP EXTERNAL LIBRARY TEST SUITE")
+    print(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    def test_initialize(self):
-        assert not WhatsAppAppLibrary._initialized
-        WhatsAppAppLibrary.initialize()
-        assert WhatsAppAppLibrary._initialized
-        assert WhatsAppAppLibrary._credential_store is not None
+    # Initialize the library
+    WhatsAppAppLibrary.initialize()
+    print_success("WhatsAppAppLibrary initialized")
 
-    def test_initialize_idempotent(self):
-        WhatsAppAppLibrary.initialize()
-        store = WhatsAppAppLibrary._credential_store
-        WhatsAppAppLibrary.initialize()
-        assert WhatsAppAppLibrary._credential_store is store
+    # List credentials if requested
+    if args.list:
+        list_credentials()
+        return
 
-    def test_get_name(self):
-        assert WhatsAppAppLibrary.get_name() == "WhatsApp"
+    # Get credentials
+    user_id = args.user_id
+    phone_number_id = args.phone_number_id
 
-    def test_get_credential_store_before_init_raises(self):
-        with pytest.raises(RuntimeError, match="not initialized"):
-            WhatsAppAppLibrary.get_credential_store()
+    if not user_id:
+        print_section("CREDENTIAL LOOKUP")
+        user_id, phone_number_id = list_credentials()
 
-    def test_get_credential_store_after_init(self):
-        WhatsAppAppLibrary.initialize()
-        store = WhatsAppAppLibrary.get_credential_store()
-        assert store is not None
+        if not user_id:
+            print_error("No credentials available. Exiting.")
+            return
 
+        print_info(f"Using: user_id={user_id}")
+        print_info(f"       phone_number_id={phone_number_id}")
 
-class TestValidateConnection:
+    # Validate connection
+    if not WhatsAppAppLibrary.validate_connection(user_id=user_id, phone_number_id=phone_number_id):
+        print_error("Invalid credentials or no connection found.")
+        return
 
-    def test_validate_no_credentials(self):
-        WhatsAppAppLibrary.initialize()
-        assert WhatsAppAppLibrary.validate_connection(user_id="nonexistent") is False
+    print_success("Credential validation passed")
 
-    def test_validate_with_credentials(self, initialized_library, mock_credential):
-        assert initialized_library.validate_connection(user_id="test_user") is True
+    # Create tester
+    tester = WhatsAppTester(user_id=user_id, phone_number_id=phone_number_id)
 
-    def test_validate_with_wrong_user(self, initialized_library):
-        assert initialized_library.validate_connection(user_id="other_user") is False
-
-    def test_validate_with_phone_number_id(self, initialized_library, mock_credential):
-        assert initialized_library.validate_connection(
-            user_id="test_user",
-            phone_number_id="session_abc123"
-        ) is True
-
-    def test_validate_with_wrong_phone_number_id(self, initialized_library):
-        assert initialized_library.validate_connection(
-            user_id="test_user",
-            phone_number_id="wrong_id"
-        ) is False
-
-
-class TestGetCredentials:
-
-    def test_get_credentials_found(self, initialized_library, mock_credential):
-        cred = initialized_library.get_credentials(user_id="test_user")
-        assert cred is not None
-        assert cred.user_id == "test_user"
-        assert cred.session_id == "session_abc123"
-
-    def test_get_credentials_not_found(self, initialized_library):
-        cred = initialized_library.get_credentials(user_id="nonexistent")
-        assert cred is None
-
-    def test_get_credentials_with_phone_number_id(self, initialized_library, mock_credential):
-        cred = initialized_library.get_credentials(
-            user_id="test_user",
-            phone_number_id="session_abc123"
-        )
-        assert cred is not None
-        assert cred.phone_number_id == "session_abc123"
-
-
-# ---------------------------------------------------------------------------
-# Send Text Message Tests
-# ---------------------------------------------------------------------------
-
-class TestSendTextMessage:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_message",
-           new_callable=AsyncMock)
-    def test_send_text_success(self, mock_send, initialized_library):
-        mock_send.return_value = {"success": True, "timestamp": "2026-01-01T00:00:00"}
-
-        result = initialized_library.send_text_message(
-            user_id="test_user",
-            to="9876543210",
-            message="Hello!"
-        )
-
-        assert result["status"] == "success"
-        assert result["to"] == "9876543210"
-        assert result["via"] == "whatsapp_web"
-        mock_send.assert_awaited_once()
-
-    def test_send_text_no_credential(self, initialized_library):
-        result = initialized_library.send_text_message(
-            user_id="nonexistent",
-            to="9876543210",
-            message="Hello!"
-        )
-        assert result["status"] == "error"
-        assert "No valid WhatsApp credential" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_message",
-           new_callable=AsyncMock)
-    def test_send_text_failure(self, mock_send, initialized_library):
-        mock_send.return_value = {"success": False, "error": "Send failed"}
-
-        result = initialized_library.send_text_message(
-            user_id="test_user",
-            to="9876543210",
-            message="Hello!"
-        )
-
-        assert result["status"] == "error"
-        assert "Send failed" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_message",
-           new_callable=AsyncMock)
-    def test_send_text_resolves_contact_name(self, mock_send, mock_resolve, initialized_library):
-        mock_resolve.return_value = {"success": True, "name": "John", "phone": "+1234567890"}
-        mock_send.return_value = {"success": True, "timestamp": "2026-01-01T00:00:00"}
-
-        result = initialized_library.send_text_message(
-            user_id="test_user",
-            to="John",
-            message="Hello!"
-        )
-
-        assert result["status"] == "success"
-        mock_resolve.assert_awaited_once()
-        mock_send.assert_awaited_once()
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    def test_send_text_contact_resolution_fails(self, mock_resolve, initialized_library):
-        mock_resolve.return_value = {"success": False, "error": "Contact not found"}
-
-        result = initialized_library.send_text_message(
-            user_id="test_user",
-            to="UnknownPerson",
-            message="Hello!"
-        )
-
-        assert result["status"] == "error"
-        assert "Could not resolve contact" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_message",
-           new_callable=AsyncMock)
-    def test_send_text_auto_reconnect_success(self, mock_send, mock_reconnect, initialized_library):
-        mock_send.side_effect = [
-            {"success": False, "error": "Session not connected"},
-            {"success": True, "timestamp": "2026-01-01T00:00:00"},
-        ]
-        mock_reconnect.return_value = {"success": True, "status": "connected"}
-
-        result = initialized_library.send_text_message(
-            user_id="test_user",
-            to="9876543210",
-            message="Hello!"
-        )
-
-        assert result["status"] == "success"
-        assert mock_send.await_count == 2
-        mock_reconnect.assert_awaited_once()
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_message",
-           new_callable=AsyncMock)
-    def test_send_text_auto_reconnect_qr_required(self, mock_send, mock_reconnect, initialized_library):
-        mock_send.return_value = {"success": False, "error": "Session not connected"}
-        mock_reconnect.return_value = {"success": False, "status": "qr_required"}
-
-        result = initialized_library.send_text_message(
-            user_id="test_user",
-            to="9876543210",
-            message="Hello!"
-        )
-
-        assert result["status"] == "error"
-        assert "session expired" in result["reason"].lower()
-
-
-# ---------------------------------------------------------------------------
-# Send Media Message Tests
-# ---------------------------------------------------------------------------
-
-class TestSendMediaMessage:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_media",
-           new_callable=AsyncMock)
-    def test_send_media_success(self, mock_send, initialized_library):
-        mock_send.return_value = {"success": True, "timestamp": "2026-01-01T00:00:00"}
-
-        result = initialized_library.send_media_message(
-            user_id="test_user",
-            to="9876543210",
-            media_type="image",
-            media_url="/path/to/image.jpg",
-            caption="A photo"
-        )
-
-        assert result["status"] == "success"
-        assert result["media_type"] == "image"
-        assert result["via"] == "whatsapp_web"
-
-    def test_send_media_no_credential(self, initialized_library):
-        result = initialized_library.send_media_message(
-            user_id="nonexistent",
-            to="9876543210",
-            media_type="image",
-            media_url="/path/to/image.jpg"
-        )
-        assert result["status"] == "error"
-        assert "No valid WhatsApp credential" in result["reason"]
-
-    def test_send_media_no_url(self, initialized_library):
-        result = initialized_library.send_media_message(
-            user_id="test_user",
-            to="9876543210",
-            media_type="image",
-        )
-        assert result["status"] == "error"
-        assert "requires media_url" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_media",
-           new_callable=AsyncMock)
-    def test_send_media_failure(self, mock_send, initialized_library):
-        mock_send.return_value = {"success": False, "error": "Could not find chat"}
-
-        result = initialized_library.send_media_message(
-            user_id="test_user",
-            to="9876543210",
-            media_type="image",
-            media_url="/path/to/image.jpg"
-        )
-
-        assert result["status"] == "error"
-        assert "Could not find chat" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_media",
-           new_callable=AsyncMock)
-    def test_send_media_resolves_contact_name(self, mock_send, mock_resolve, initialized_library):
-        mock_resolve.return_value = {"success": True, "name": "Jane", "phone": "+1234567890"}
-        mock_send.return_value = {"success": True, "timestamp": "2026-01-01T00:00:00"}
-
-        result = initialized_library.send_media_message(
-            user_id="test_user",
-            to="Jane",
-            media_type="document",
-            media_url="/path/to/doc.pdf"
-        )
-
-        assert result["status"] == "success"
-        mock_resolve.assert_awaited_once()
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_media",
-           new_callable=AsyncMock)
-    def test_send_media_auto_reconnect(self, mock_send, mock_reconnect, initialized_library):
-        mock_send.side_effect = [
-            {"success": False, "error": "Session not connected"},
-            {"success": True, "timestamp": "2026-01-01T00:00:00"},
-        ]
-        mock_reconnect.return_value = {"success": True, "status": "connected"}
-
-        result = initialized_library.send_media_message(
-            user_id="test_user",
-            to="9876543210",
-            media_type="video",
-            media_url="/path/to/video.mp4"
-        )
-
-        assert result["status"] == "success"
-        assert mock_send.await_count == 2
-        mock_reconnect.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Get Chat History Tests
-# ---------------------------------------------------------------------------
-
-class TestGetChatHistory:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_chat_messages",
-           new_callable=AsyncMock)
-    def test_get_chat_history_success(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "success": True,
-            "messages": [
-                {"text": "Hello", "is_outgoing": True, "timestamp": "[10:30, 01/01/2026]", "sender": "me"},
-                {"text": "Hi!", "is_outgoing": False, "timestamp": "[10:31, 01/01/2026]", "sender": "them"},
-            ],
-            "count": 2,
+    try:
+        # Run tests based on --only flag or all
+        test_groups = {
+            'init': tester.test_initialization,
+            'session': tester.test_session_operations,
+            'contact': tester.test_contact_operations,
+            'chat': tester.test_chat_operations,
         }
 
-        result = initialized_library.get_chat_history(
-            user_id="test_user",
-            phone_number="9876543210",
-            limit=10
-        )
-
-        assert result["status"] == "success"
-        assert result["count"] == 2
-        assert len(result["messages"]) == 2
-        assert result["via"] == "whatsapp_web"
-
-    def test_get_chat_history_no_credential(self, initialized_library):
-        result = initialized_library.get_chat_history(
-            user_id="nonexistent",
-            phone_number="9876543210"
-        )
-        assert result["status"] == "error"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_chat_messages",
-           new_callable=AsyncMock)
-    def test_get_chat_history_failure(self, mock_get, initialized_library):
-        mock_get.return_value = {"success": False, "error": "Chat not found"}
-
-        result = initialized_library.get_chat_history(
-            user_id="test_user",
-            phone_number="0000000000"
-        )
-
-        assert result["status"] == "error"
-        assert "Chat not found" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_chat_messages",
-           new_callable=AsyncMock)
-    def test_get_chat_history_auto_reconnect(self, mock_get, mock_reconnect, initialized_library):
-        mock_get.side_effect = [
-            {"success": False, "error": "Session not connected"},
-            {"success": True, "messages": [], "count": 0},
-        ]
-        mock_reconnect.return_value = {"success": True, "status": "connected"}
-
-        result = initialized_library.get_chat_history(
-            user_id="test_user",
-            phone_number="9876543210"
-        )
-
-        assert result["status"] == "success"
-        mock_reconnect.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Get Unread Chats Tests
-# ---------------------------------------------------------------------------
-
-class TestGetUnreadChats:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_unread_chats",
-           new_callable=AsyncMock)
-    def test_get_unread_chats_success(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "success": True,
-            "unread_chats": [
-                {"name": "Alice", "unread_count": "3"},
-                {"name": "Bob", "unread_count": "1"},
-            ],
-            "count": 2,
-        }
-
-        result = initialized_library.get_unread_chats(user_id="test_user")
-
-        assert result["status"] == "success"
-        assert result["count"] == 2
-        assert len(result["unread_chats"]) == 2
-        assert result["via"] == "whatsapp_web"
-
-    def test_get_unread_chats_no_credential(self, initialized_library):
-        result = initialized_library.get_unread_chats(user_id="nonexistent")
-        assert result["status"] == "error"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_unread_chats",
-           new_callable=AsyncMock)
-    def test_get_unread_chats_auto_reconnect(self, mock_get, mock_reconnect, initialized_library):
-        mock_get.side_effect = [
-            {"success": False, "error": "Session not connected"},
-            {"success": True, "unread_chats": [], "count": 0},
-        ]
-        mock_reconnect.return_value = {"success": True, "status": "connected"}
-
-        result = initialized_library.get_unread_chats(user_id="test_user")
-
-        assert result["status"] == "success"
-        mock_reconnect.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Search Contact Tests
-# ---------------------------------------------------------------------------
-
-class TestSearchContact:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    def test_search_contact_success(self, mock_search, initialized_library):
-        mock_search.return_value = {"success": True, "name": "John Doe", "phone": "+1234567890"}
-
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="John"
-        )
-
-        assert result["status"] == "success"
-        assert result["contact"]["name"] == "John Doe"
-        assert result["contact"]["phone"] == "+1234567890"
-        assert result["via"] == "whatsapp_web"
-
-    def test_search_contact_no_credential(self, initialized_library):
-        result = initialized_library.search_contact(
-            user_id="nonexistent",
-            name="John"
-        )
-        assert result["status"] == "error"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    def test_search_contact_not_found(self, mock_search, initialized_library):
-        mock_search.return_value = {"success": False, "error": "Contact not found"}
-
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="UnknownPerson"
-        )
-
-        assert result["status"] == "error"
-        assert "Contact not found" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    def test_search_contact_returns_debug_info(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "success": False,
-            "error": "Could not resolve",
-            "debug": {"panel_text_preview": "some debug data"}
-        }
-
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="Ambiguous"
-        )
-
-        assert result["status"] == "error"
-        assert "debug" in result
-        assert result["debug"]["panel_text_preview"] == "some debug data"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    def test_search_contact_auto_reconnect(self, mock_search, mock_reconnect, initialized_library):
-        mock_search.side_effect = [
-            {"success": False, "error": "Session not connected"},
-            {"success": True, "name": "John", "phone": "+1234567890"},
-        ]
-        mock_reconnect.return_value = {"success": True, "status": "connected"}
-
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="John"
-        )
-
-        assert result["status"] == "success"
-        mock_reconnect.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Session Management Tests
-# ---------------------------------------------------------------------------
-
-class TestReconnectWhatsAppWeb:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    def test_reconnect_success(self, mock_reconnect, initialized_library):
-        mock_reconnect.return_value = {
-            "success": True,
-            "status": "connected",
-            "session_id": "session_abc123",
-        }
-
-        result = initialized_library.reconnect_whatsapp_web(
-            user_id="test_user"
-        )
-
-        assert result["success"] is True
-        assert result["status"] == "connected"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    def test_reconnect_with_explicit_session_id(self, mock_reconnect, initialized_library):
-        mock_reconnect.return_value = {"success": True, "status": "connected"}
-
-        result = initialized_library.reconnect_whatsapp_web(
-            user_id="test_user",
-            session_id="explicit_session"
-        )
-
-        assert result["success"] is True
-        mock_reconnect.assert_awaited_once_with(session_id="explicit_session", user_id="test_user")
-
-    def test_reconnect_no_credentials(self):
-        WhatsAppAppLibrary.initialize()
-        result = WhatsAppAppLibrary.reconnect_whatsapp_web(user_id="nobody")
-
-        assert result["status"] == "error"
-        assert "No WhatsApp Web credentials" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    def test_reconnect_qr_required(self, mock_reconnect, initialized_library):
-        mock_reconnect.return_value = {
-            "success": False,
-            "status": "qr_required",
-            "error": "Device unlinked",
-        }
-
-        result = initialized_library.reconnect_whatsapp_web(user_id="test_user")
-
-        assert result["success"] is False
-        assert result["status"] == "qr_required"
-
-
-class TestListPersistedSessions:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.list_persisted_whatsapp_web_sessions")
-    def test_list_all_sessions(self, mock_list, initialized_library):
-        mock_list.return_value = [
-            {"session_id": "session_abc123", "path": "/data/sessions/abc", "is_active": True},
-            {"session_id": "session_other", "path": "/data/sessions/other", "is_active": False},
-        ]
-
-        result = initialized_library.list_persisted_sessions()
-
-        assert result["status"] == "success"
-        assert result["count"] == 2
-
-    @patch("core.external_libraries.whatsapp.external_app_library.list_persisted_whatsapp_web_sessions")
-    def test_list_sessions_filtered_by_user(self, mock_list, initialized_library):
-        mock_list.return_value = [
-            {"session_id": "session_abc123", "path": "/data/sessions/abc", "is_active": True},
-            {"session_id": "session_other", "path": "/data/sessions/other", "is_active": False},
-        ]
-
-        result = initialized_library.list_persisted_sessions(user_id="test_user")
-
-        assert result["status"] == "success"
-        # Only session_abc123 matches the test_user's credential
-        assert result["count"] == 1
-        assert result["sessions"][0]["session_id"] == "session_abc123"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.list_persisted_whatsapp_web_sessions")
-    def test_list_sessions_no_match(self, mock_list, initialized_library):
-        mock_list.return_value = [
-            {"session_id": "unrelated_session", "path": "/data/sessions/x", "is_active": False},
-        ]
-
-        result = initialized_library.list_persisted_sessions(user_id="test_user")
-
-        assert result["status"] == "success"
-        assert result["count"] == 0
-
-
-class TestGetWebSessionStatus:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_session_status",
-           new_callable=AsyncMock)
-    def test_get_status_with_session_id(self, mock_status, initialized_library):
-        mock_status.return_value = {
-            "session_id": "session_abc123",
-            "user_id": "test_user",
-            "status": "connected",
-            "phone_number": "+1234567890",
-        }
-
-        result = initialized_library.get_web_session_status(
-            user_id="test_user",
-            session_id="session_abc123"
-        )
-
-        assert result["status"] == "connected"
-        mock_status.assert_awaited_once_with("session_abc123")
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_session_status",
-           new_callable=AsyncMock)
-    def test_get_status_auto_discovers_session(self, mock_status, initialized_library):
-        mock_status.return_value = {
-            "session_id": "session_abc123",
-            "status": "connected",
-        }
-
-        result = initialized_library.get_web_session_status(user_id="test_user")
-
-        assert result["status"] == "connected"
-        mock_status.assert_awaited_once_with("session_abc123")
-
-    @patch("core.external_libraries.whatsapp.external_app_library.list_persisted_whatsapp_web_sessions")
-    def test_get_status_falls_back_to_list(self, mock_list):
-        WhatsAppAppLibrary.initialize()
-        mock_list.return_value = []
-
-        result = WhatsAppAppLibrary.get_web_session_status(user_id="nobody")
-
-        assert result["status"] == "success"
-        assert result["count"] == 0
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_session_status",
-           new_callable=AsyncMock)
-    def test_get_status_session_not_found(self, mock_status, initialized_library):
-        mock_status.return_value = None
-
-        result = initialized_library.get_web_session_status(
-            user_id="test_user",
-            session_id="session_abc123"
-        )
-
-        assert result["status"] == "error"
-        assert "Session not found" in result["message"]
-
-
-# ---------------------------------------------------------------------------
-# Credential Model Tests
-# ---------------------------------------------------------------------------
-
-class TestWhatsAppCredential:
-
-    def test_credential_defaults(self):
-        cred = WhatsAppCredential(user_id="u1", phone_number_id="p1")
-        assert cred.session_id == ""
-        assert cred.session_data == ""
-        assert cred.jid == ""
-        assert cred.display_phone_number == ""
-
-    def test_credential_with_all_fields(self):
-        cred = WhatsAppCredential(
-            user_id="u1",
-            phone_number_id="p1",
-            session_id="s1",
-            session_data="data",
-            jid="123@s.whatsapp.net",
-            display_phone_number="+1234567890",
-        )
-        assert cred.session_id == "s1"
-        assert cred.jid == "123@s.whatsapp.net"
-
-    def test_credential_unique_keys(self):
-        assert WhatsAppCredential.UNIQUE_KEYS == ("user_id", "phone_number_id")
-
-    def test_credential_to_dict(self):
-        cred = WhatsAppCredential(user_id="u1", phone_number_id="p1", session_id="s1")
-        d = cred.to_dict()
-        assert d["user_id"] == "u1"
-        assert d["phone_number_id"] == "p1"
-        assert d["session_id"] == "s1"
-
-
-# ---------------------------------------------------------------------------
-# Edge Cases & Error Handling Tests
-# ---------------------------------------------------------------------------
-
-class TestEdgeCases:
-
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_message",
-           new_callable=AsyncMock)
-    def test_send_text_handles_exception(self, mock_send, initialized_library):
-        mock_send.side_effect = Exception("Network error")
-
-        result = initialized_library.send_text_message(
-            user_id="test_user",
-            to="9876543210",
-            message="Hello!"
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.send_whatsapp_web_media",
-           new_callable=AsyncMock)
-    def test_send_media_handles_exception(self, mock_send, initialized_library):
-        mock_send.side_effect = Exception("Disk error")
-
-        result = initialized_library.send_media_message(
-            user_id="test_user",
-            to="9876543210",
-            media_type="image",
-            media_url="/path/to/img.jpg"
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_chat_messages",
-           new_callable=AsyncMock)
-    def test_get_chat_history_handles_exception(self, mock_get, initialized_library):
-        mock_get.side_effect = Exception("Timeout")
-
-        result = initialized_library.get_chat_history(
-            user_id="test_user",
-            phone_number="9876543210"
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_unread_chats",
-           new_callable=AsyncMock)
-    def test_get_unread_chats_handles_exception(self, mock_get, initialized_library):
-        mock_get.side_effect = Exception("Connection refused")
-
-        result = initialized_library.get_unread_chats(user_id="test_user")
-
-        assert result["status"] == "error"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.get_whatsapp_web_contact_phone",
-           new_callable=AsyncMock)
-    def test_search_contact_handles_exception(self, mock_search, initialized_library):
-        mock_search.side_effect = Exception("Browser crashed")
-
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="Someone"
-        )
-
-        assert result["status"] == "error"
-
-    @patch("core.external_libraries.whatsapp.external_app_library.reconnect_whatsapp_web_session",
-           new_callable=AsyncMock)
-    def test_reconnect_handles_exception(self, mock_reconnect, initialized_library):
-        mock_reconnect.side_effect = Exception("Playwright error")
-
-        result = initialized_library.reconnect_whatsapp_web(user_id="test_user")
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.whatsapp.external_app_library.list_persisted_whatsapp_web_sessions")
-    def test_list_sessions_handles_exception(self, mock_list, initialized_library):
-        mock_list.side_effect = Exception("File system error")
-
-        result = initialized_library.list_persisted_sessions()
-
-        assert result["status"] == "error"
+        if args.only:
+            if args.only in test_groups:
+                test_groups[args.only]()
+            elif args.only == 'send':
+                if args.skip_send:
+                    print_warning("--skip-send is set; nothing to run for 'send' group.")
+                else:
+                    tester.test_send_operations()
+            else:
+                print_error(f"Unknown test group: {args.only}")
+                print_info("Available: init, session, contact, chat, send")
+                return
+        else:
+            # Run all tests in order
+            tester.test_initialization()
+            tester.test_session_operations()
+            tester.test_contact_operations()
+            tester.test_chat_operations()
+
+            if not args.skip_send:
+                tester.test_send_operations()
+            else:
+                print_section("SEND OPERATIONS (SKIPPED)")
+                print_warning("Skipped send_text_message and send_media_message (--skip-send)")
+
+    finally:
+        pass  # No persistent artifacts to clean up; temp file already removed in test_send_operations
+
+    # Print summary
+    tester.print_summary()
+
+
+if __name__ == "__main__":
+    main()

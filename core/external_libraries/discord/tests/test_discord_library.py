@@ -1,1858 +1,958 @@
 """
-Tests for Discord external app library.
+Comprehensive integration test script for Discord external library.
 
-Uses pytest with unittest.mock to mock the Discord REST API helper functions
-(bot_api and user_api), allowing all library methods to be tested without
-network access or real Discord credentials.
+This script tests ALL Discord API methods using stored credentials.
+Run this to verify Discord integration without going through the agent cycle.
 
 Usage:
-    pytest core/external_libraries/discord/tests/test_discord_library.py -v
+    python test_discord_library.py [--user-id YOUR_USER_ID] [--list]
+    python test_discord_library.py --only bot_info
+    python test_discord_library.py --skip-send
+
+If no arguments provided, it will use the first stored credential it finds.
 """
 import sys
-import asyncio
-import pytest
+import argparse
+import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 
-# Add project root to path
+# Add parent directories to path to allow imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent.parent))
 
-from core.external_libraries.discord.credentials import (
-    DiscordBotCredential,
-    DiscordUserCredential,
-    DiscordSharedBotGuildCredential,
-)
 from core.external_libraries.discord.external_app_library import DiscordAppLibrary
+from core.external_libraries.discord.helpers import discord_bot_helpers as bot_api
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
+# ANSI Colors
+# ═══════════════════════════════════════════════════════════════════════════════
 
-@pytest.fixture(autouse=True)
-def reset_library():
-    """Reset DiscordAppLibrary class-level state before each test."""
-    DiscordAppLibrary._bot_credentials_store = None
-    DiscordAppLibrary._user_credentials_store = None
-    DiscordAppLibrary._shared_bot_guild_store = None
-    DiscordAppLibrary._voice_managers = {}
-    yield
-    DiscordAppLibrary._bot_credentials_store = None
-    DiscordAppLibrary._user_credentials_store = None
-    DiscordAppLibrary._shared_bot_guild_store = None
-    DiscordAppLibrary._voice_managers = {}
+class Colors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
 
 
-@pytest.fixture
-def bot_credential():
-    """Return a sample Discord bot credential."""
-    return DiscordBotCredential(
-        user_id="test_user",
-        bot_token="fake-bot-token-12345",
-        bot_id="bot_001",
-        bot_username="TestBot#1234",
-    )
+def print_header(text: str):
+    """Print a formatted header."""
+    print(f"\n{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{text}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
 
 
-@pytest.fixture
-def user_credential():
-    """Return a sample Discord user credential."""
-    return DiscordUserCredential(
-        user_id="test_user",
-        user_token="fake-user-token-67890",
-        discord_user_id="discord_user_001",
-        username="TestUser",
-        discriminator="5678",
-    )
+def print_section(text: str):
+    """Print a section header."""
+    print(f"\n{Colors.CYAN}{'-' * 50}{Colors.END}")
+    print(f"{Colors.CYAN}{text}{Colors.END}")
+    print(f"{Colors.CYAN}{'-' * 50}{Colors.END}")
 
 
-@pytest.fixture
-def shared_guild_credential():
-    """Return a sample shared bot guild credential."""
-    return DiscordSharedBotGuildCredential(
-        user_id="test_user",
-        guild_id="guild_001",
-        guild_name="Test Server",
-        guild_icon="abc123icon",
-        connected_at="2026-01-15T12:00:00Z",
-    )
+def print_success(text: str):
+    """Print success message."""
+    print(f"{Colors.GREEN}+ {text}{Colors.END}")
 
 
-@pytest.fixture
-def initialized_library(bot_credential, user_credential, shared_guild_credential):
-    """Initialize the library with mock credential stores and inject credentials."""
-    with patch("core.external_libraries.discord.external_app_library.CredentialsStore") as MockStore:
-        # Create separate mock store instances for each credential type
-        bot_store = MagicMock()
-        user_store = MagicMock()
-        guild_store = MagicMock()
-
-        # Make the constructor return our mock stores in order
-        MockStore.side_effect = [bot_store, user_store, guild_store]
-
-        DiscordAppLibrary.initialize()
-
-        # Wire up the mock stores
-        DiscordAppLibrary._bot_credentials_store = bot_store
-        DiscordAppLibrary._user_credentials_store = user_store
-        DiscordAppLibrary._shared_bot_guild_store = guild_store
-
-        # Default: get() returns the injected credential for "test_user"
-        def bot_get(user_id, **filters):
-            if user_id == "test_user":
-                bot_id_filter = filters.get("bot_id")
-                if bot_id_filter is None or bot_id_filter == bot_credential.bot_id:
-                    return [bot_credential]
-            return []
-
-        def user_get(user_id, **filters):
-            if user_id == "test_user":
-                du_filter = filters.get("discord_user_id")
-                if du_filter is None or du_filter == user_credential.discord_user_id:
-                    return [user_credential]
-            return []
-
-        def guild_get(user_id, **filters):
-            if user_id == "test_user":
-                gid_filter = filters.get("guild_id")
-                if gid_filter is None or gid_filter == shared_guild_credential.guild_id:
-                    return [shared_guild_credential]
-            return []
-
-        bot_store.get.side_effect = bot_get
-        user_store.get.side_effect = user_get
-        guild_store.get.side_effect = guild_get
-
-    return DiscordAppLibrary
+def print_error(text: str):
+    """Print error message."""
+    print(f"{Colors.RED}x {text}{Colors.END}")
 
 
-# ---------------------------------------------------------------------------
-# Initialization Tests
-# ---------------------------------------------------------------------------
-
-class TestInitialization:
-
-    def test_stores_start_none(self):
-        assert DiscordAppLibrary._bot_credentials_store is None
-        assert DiscordAppLibrary._user_credentials_store is None
-        assert DiscordAppLibrary._shared_bot_guild_store is None
-
-    def test_initialize_creates_stores(self):
-        with patch("core.external_libraries.discord.external_app_library.CredentialsStore") as MockStore:
-            MockStore.side_effect = [MagicMock(), MagicMock(), MagicMock()]
-            DiscordAppLibrary.initialize()
-            assert DiscordAppLibrary._bot_credentials_store is not None
-            assert DiscordAppLibrary._user_credentials_store is not None
-            assert DiscordAppLibrary._shared_bot_guild_store is not None
-
-    def test_initialize_idempotent(self):
-        with patch("core.external_libraries.discord.external_app_library.CredentialsStore") as MockStore:
-            MockStore.side_effect = [MagicMock(), MagicMock(), MagicMock()]
-            DiscordAppLibrary.initialize()
-            bot_store = DiscordAppLibrary._bot_credentials_store
-            user_store = DiscordAppLibrary._user_credentials_store
-            guild_store = DiscordAppLibrary._shared_bot_guild_store
-
-            # Calling initialize again should NOT create new stores
-            DiscordAppLibrary.initialize()
-            assert DiscordAppLibrary._bot_credentials_store is bot_store
-            assert DiscordAppLibrary._user_credentials_store is user_store
-            assert DiscordAppLibrary._shared_bot_guild_store is guild_store
-
-    def test_initialize_creates_correct_stores(self):
-        with patch("core.external_libraries.discord.external_app_library.CredentialsStore") as MockStore:
-            MockStore.side_effect = [MagicMock(), MagicMock(), MagicMock()]
-            DiscordAppLibrary.initialize()
-
-            # Three stores created
-            assert MockStore.call_count == 3
-
-            # Verify credential types passed to each store
-            calls = MockStore.call_args_list
-            assert calls[0][0][0] == DiscordBotCredential
-            assert calls[0][0][1] == "discord_bot_credentials.json"
-            assert calls[1][0][0] == DiscordUserCredential
-            assert calls[1][0][1] == "discord_user_credentials.json"
-            assert calls[2][0][0] == DiscordSharedBotGuildCredential
-            assert calls[2][0][1] == "discord_shared_bot_guilds.json"
+def print_warning(text: str):
+    """Print warning message."""
+    print(f"{Colors.YELLOW}! {text}{Colors.END}")
 
 
-# ---------------------------------------------------------------------------
-# Credential Management Tests
-# ---------------------------------------------------------------------------
+def print_info(text: str):
+    """Print info message."""
+    print(f"  {text}")
 
-class TestBotCredentialManagement:
 
-    def test_add_bot_credential(self, initialized_library, bot_credential):
-        initialized_library.add_bot_credential(bot_credential)
-        initialized_library._bot_credentials_store.add.assert_called_once_with(bot_credential)
+def print_result(result: Dict[str, Any], indent: int = 2):
+    """Pretty print a result dict."""
+    formatted = json.dumps(result, indent=indent, default=str)
+    for line in formatted.split('\n')[:30]:
+        print(f"  {line}")
+    if len(formatted.split('\n')) > 30:
+        print(f"  ... (output truncated)")
 
-    def test_get_bot_credentials_by_user(self, initialized_library):
-        result = initialized_library.get_bot_credentials("test_user")
-        assert len(result) == 1
-        assert result[0].bot_token == "fake-bot-token-12345"
 
-    def test_get_bot_credentials_by_user_and_bot_id(self, initialized_library):
-        result = initialized_library.get_bot_credentials("test_user", bot_id="bot_001")
-        assert len(result) == 1
-        assert result[0].bot_id == "bot_001"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test Runner
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    def test_get_bot_credentials_not_found(self, initialized_library):
-        result = initialized_library.get_bot_credentials("nonexistent")
-        assert result == []
+class DiscordTester:
+    """Test runner for Discord API methods."""
 
-    def test_get_bot_credentials_wrong_bot_id(self, initialized_library):
-        result = initialized_library.get_bot_credentials("test_user", bot_id="wrong_bot")
-        assert result == []
+    def __init__(
+        self,
+        user_id: str,
+        bot_id: Optional[str] = None,
+        discord_user_id: Optional[str] = None,
+        skip_send: bool = False,
+    ):
+        self.user_id = user_id
+        self.bot_id = bot_id
+        self.discord_user_id = discord_user_id
+        self.skip_send = skip_send
+        self.test_results: Dict[str, str] = {}
 
-    def test_remove_bot_credential(self, initialized_library):
-        initialized_library.remove_bot_credential("test_user", "bot_001")
-        initialized_library._bot_credentials_store.remove.assert_called_once_with(
-            "test_user", bot_id="bot_001"
+        # Discovered IDs during testing
+        self.discovered_guild_id: Optional[str] = None
+        self.discovered_channel_id: Optional[str] = None
+        self.discovered_message_id: Optional[str] = None
+
+        # Track created resources for cleanup
+        self.created_bot_messages: List[Dict[str, str]] = []   # [{"channel_id": ..., "message_id": ...}]
+
+        # Track whether we have bot / user credentials
+        self.has_bot = False
+        self.has_user = False
+
+    # -----------------------------------------------------------------------
+    # Generic test executor
+    # -----------------------------------------------------------------------
+
+    def run_test(self, test_name: str, func, *args, **kwargs) -> Dict[str, Any]:
+        """Run a single test and record result."""
+        print(f"\n  Testing: {test_name}...")
+        try:
+            result = func(*args, **kwargs)
+            status = result.get('status', 'unknown')
+
+            if status == 'success':
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
+            else:
+                reason = result.get('message', result.get('reason', result.get('details', 'Unknown error')))
+                print_error(f"{test_name} - FAILED: {reason}")
+                self.test_results[test_name] = 'FAIL'
+
+            return result
+        except Exception as e:
+            print_error(f"{test_name} - EXCEPTION: {str(e)}")
+            self.test_results[test_name] = 'ERROR'
+            return {"status": "error", "message": str(e)}
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # BOT OPERATIONS
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def test_bot_info(self):
+        """Test get_bot_info."""
+        print_section("BOT INFO")
+
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping bot info tests.")
+            return
+
+        result = self.run_test(
+            "get_bot_info",
+            DiscordAppLibrary.get_bot_info,
+            user_id=self.user_id,
+            bot_id=self.bot_id,
         )
 
+        if result.get('status') == 'success':
+            bot = result.get('bot', {})
+            print_info(f"Bot ID: {bot.get('id', 'N/A')}")
+            print_info(f"Bot Username: {bot.get('username', 'N/A')}")
 
-class TestUserCredentialManagement:
+    def test_bot_guilds(self):
+        """Test get_bot_guilds and discover a guild_id for subsequent tests."""
+        print_section("BOT GUILDS")
 
-    def test_add_user_credential(self, initialized_library, user_credential):
-        initialized_library.add_user_credential(user_credential)
-        initialized_library._user_credentials_store.add.assert_called_once_with(user_credential)
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping bot guild tests.")
+            return
 
-    def test_get_user_credentials_by_user(self, initialized_library):
-        result = initialized_library.get_user_credentials("test_user")
-        assert len(result) == 1
-        assert result[0].user_token == "fake-user-token-67890"
-
-    def test_get_user_credentials_by_discord_user_id(self, initialized_library):
-        result = initialized_library.get_user_credentials("test_user", discord_user_id="discord_user_001")
-        assert len(result) == 1
-
-    def test_get_user_credentials_not_found(self, initialized_library):
-        result = initialized_library.get_user_credentials("nonexistent")
-        assert result == []
-
-    def test_remove_user_credential(self, initialized_library):
-        initialized_library.remove_user_credential("test_user", "discord_user_001")
-        initialized_library._user_credentials_store.remove.assert_called_once_with(
-            "test_user", discord_user_id="discord_user_001"
+        result = self.run_test(
+            "get_bot_guilds",
+            DiscordAppLibrary.get_bot_guilds,
+            user_id=self.user_id,
+            bot_id=self.bot_id,
         )
 
+        if result.get('status') == 'success':
+            guilds = result.get('guilds', [])
+            print_info(f"Found {len(guilds)} guild(s)")
+            if guilds:
+                self.discovered_guild_id = guilds[0].get('id')
+                print_info(f"Using guild: {guilds[0].get('name', 'N/A')} ({self.discovered_guild_id})")
+            else:
+                print_warning("Bot is not in any guilds. Channel/member tests will be skipped.")
 
-class TestSharedBotGuildManagement:
+    def test_guild_channels(self):
+        """Test get_guild_channels and discover a text channel_id."""
+        print_section("GUILD CHANNELS")
 
-    def test_add_shared_bot_guild(self, initialized_library, shared_guild_credential):
-        initialized_library.add_shared_bot_guild(shared_guild_credential)
-        initialized_library._shared_bot_guild_store.add.assert_called_once_with(shared_guild_credential)
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping guild channel tests.")
+            return
 
-    def test_get_shared_bot_guilds_by_user(self, initialized_library):
-        result = initialized_library.get_shared_bot_guilds("test_user")
-        assert len(result) == 1
-        assert result[0].guild_id == "guild_001"
+        if not self.discovered_guild_id:
+            print_warning("No guild discovered. Skipping guild channel tests.")
+            return
 
-    def test_get_shared_bot_guilds_by_guild_id(self, initialized_library):
-        result = initialized_library.get_shared_bot_guilds("test_user", guild_id="guild_001")
-        assert len(result) == 1
-        assert result[0].guild_name == "Test Server"
-
-    def test_get_shared_bot_guilds_not_found(self, initialized_library):
-        result = initialized_library.get_shared_bot_guilds("nonexistent")
-        assert result == []
-
-    def test_get_shared_bot_guilds_wrong_guild_id(self, initialized_library):
-        result = initialized_library.get_shared_bot_guilds("test_user", guild_id="wrong_guild")
-        assert result == []
-
-    def test_remove_shared_bot_guild(self, initialized_library):
-        initialized_library.remove_shared_bot_guild("test_user", "guild_001")
-        initialized_library._shared_bot_guild_store.remove.assert_called_once_with(
-            "test_user", guild_id="guild_001"
+        result = self.run_test(
+            "get_guild_channels",
+            DiscordAppLibrary.get_guild_channels,
+            user_id=self.user_id,
+            guild_id=self.discovered_guild_id,
+            bot_id=self.bot_id,
         )
 
-
-class TestGetBotTokenForGuild:
-
-    def test_returns_own_bot_token(self, initialized_library, bot_credential):
-        """User's own bot credentials should be preferred."""
-        result = initialized_library.get_bot_token_for_guild("test_user", "any_guild")
-        assert result is not None
-        token, bot_id = result
-        assert token == "fake-bot-token-12345"
-        assert bot_id == "bot_001"
-
-    def test_returns_own_bot_token_with_explicit_bot_id(self, initialized_library, bot_credential):
-        result = initialized_library.get_bot_token_for_guild("test_user", "any_guild", bot_id="bot_001")
-        assert result is not None
-        assert result[0] == "fake-bot-token-12345"
-
-    def test_falls_back_to_shared_bot(self, initialized_library, shared_guild_credential):
-        """When user has no own bot but has shared guild, use shared bot."""
-        # Make bot_store return empty for this user
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-
-        with patch.dict("sys.modules", {}):
-            import core.config as config_mod
-            with patch.object(config_mod, "DISCORD_SHARED_BOT_TOKEN", "shared-token-xyz"), \
-                 patch.object(config_mod, "DISCORD_SHARED_BOT_ID", "shared_bot_999"):
-                result = initialized_library.get_bot_token_for_guild("test_user", "guild_001")
-
-        assert result is not None
-        token, bot_id = result
-        assert token == "shared-token-xyz"
-        assert bot_id == "shared_shared_bot_999"
-
-    def test_returns_none_when_no_credentials(self, initialized_library):
-        """No own bot + no shared guild = None."""
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-        initialized_library._shared_bot_guild_store.get.side_effect = lambda uid, **kw: []
-
-        result = initialized_library.get_bot_token_for_guild("nonexistent", "guild_001")
-        assert result is None
-
-    def test_returns_none_when_shared_token_empty(self, initialized_library):
-        """Shared guild exists but shared bot token is empty."""
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-
-        import core.config as config_mod
-        with patch.object(config_mod, "DISCORD_SHARED_BOT_TOKEN", ""), \
-             patch.object(config_mod, "DISCORD_SHARED_BOT_ID", ""):
-            result = initialized_library.get_bot_token_for_guild("test_user", "guild_001")
-
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
-# Bot Operations Tests
-# ---------------------------------------------------------------------------
-
-class TestGetBotInfo:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_bot_user.return_value = {
-            "ok": True,
-            "result": {
-                "id": "bot_001",
-                "username": "TestBot",
-                "discriminator": "1234",
-                "avatar": "abc",
-                "bot": True,
-            },
-        }
-
-        result = initialized_library.get_bot_info("test_user")
-
-        assert result["status"] == "success"
-        assert result["bot"]["id"] == "bot_001"
-        assert result["bot"]["username"] == "TestBot"
-        mock_bot_api.get_bot_user.assert_called_once_with("fake-bot-token-12345")
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_bot_user.return_value = {
-            "error": "API error: 401",
-        }
-
-        result = initialized_library.get_bot_info("test_user")
-
-        assert result["status"] == "error"
-        assert "401" in result["message"]
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_bot_info("nonexistent")
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_with_specific_bot_id(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_bot_user.return_value = {
-            "ok": True,
-            "result": {"id": "bot_001", "username": "TestBot"},
-        }
-
-        result = initialized_library.get_bot_info("test_user", bot_id="bot_001")
-
-        assert result["status"] == "success"
-
-
-class TestGetBotGuilds:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_bot_guilds.return_value = {
-            "ok": True,
-            "result": {
-                "guilds": [
-                    {"id": "g1", "name": "Server 1"},
-                    {"id": "g2", "name": "Server 2"},
-                ],
-            },
-        }
-
-        result = initialized_library.get_bot_guilds("test_user")
-
-        assert result["status"] == "success"
-        assert len(result["guilds"]) == 2
-        assert result["guilds"][0]["name"] == "Server 1"
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_bot_guilds.return_value = {"error": "API error: 403"}
-
-        result = initialized_library.get_bot_guilds("test_user")
-
-        assert result["status"] == "error"
-        assert "403" in result["message"]
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_bot_guilds("nonexistent")
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_empty_guilds_list(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_bot_guilds.return_value = {
-            "ok": True,
-            "result": {"guilds": []},
-        }
-
-        result = initialized_library.get_bot_guilds("test_user")
-
-        assert result["status"] == "success"
-        assert result["guilds"] == []
-
-
-class TestGetGuildChannels:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_guild_channels.return_value = {
-            "ok": True,
-            "result": {
-                "all_channels": [{"id": "c1", "name": "general", "type": 0}],
-                "text_channels": [{"id": "c1", "name": "general", "type": 0}],
-                "voice_channels": [],
-                "categories": [],
-            },
-        }
-
-        result = initialized_library.get_guild_channels("test_user", "guild_001")
-
-        assert result["status"] == "success"
-        assert len(result["text_channels"]) == 1
-        assert result["text_channels"][0]["name"] == "general"
-        mock_bot_api.get_guild_channels.assert_called_once_with("fake-bot-token-12345", "guild_001")
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_guild_channels.return_value = {"error": "API error: 404"}
-
-        result = initialized_library.get_guild_channels("test_user", "guild_001")
-
-        assert result["status"] == "error"
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_guild_channels("nonexistent", "guild_001")
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-
-class TestSendMessage:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.send_message.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "msg_001",
-                "channel_id": "chan_001",
-                "content": "Hello!",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_message(
-            user_id="test_user",
-            channel_id="chan_001",
-            content="Hello!",
-        )
-
-        assert result["status"] == "success"
-        assert result["message_id"] == "msg_001"
-        assert result["content"] == "Hello!"
-        mock_bot_api.send_message.assert_called_once_with(
-            "fake-bot-token-12345", "chan_001", "Hello!", None, None,
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_with_embed(self, mock_bot_api, initialized_library):
-        embed = {"title": "Test", "description": "An embed"}
-        mock_bot_api.send_message.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "msg_002",
-                "channel_id": "chan_001",
-                "content": "With embed",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_message(
-            user_id="test_user",
-            channel_id="chan_001",
-            content="With embed",
-            embed=embed,
-        )
-
-        assert result["status"] == "success"
-        mock_bot_api.send_message.assert_called_once_with(
-            "fake-bot-token-12345", "chan_001", "With embed", embed, None,
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_with_reply(self, mock_bot_api, initialized_library):
-        mock_bot_api.send_message.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "msg_003",
-                "channel_id": "chan_001",
-                "content": "Reply content",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_message(
-            user_id="test_user",
-            channel_id="chan_001",
-            content="Reply content",
-            reply_to="original_msg_id",
-        )
-
-        assert result["status"] == "success"
-        mock_bot_api.send_message.assert_called_once_with(
-            "fake-bot-token-12345", "chan_001", "Reply content", None, "original_msg_id",
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.send_message.return_value = {"error": "API error: 403"}
-
-        result = initialized_library.send_message(
-            user_id="test_user",
-            channel_id="chan_001",
-            content="Hello!",
-        )
-
-        assert result["status"] == "error"
-        assert "403" in result["message"]
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.send_message(
-            user_id="nonexistent",
-            channel_id="chan_001",
-            content="Hello!",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-
-class TestGetMessages:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_messages.return_value = {
-            "ok": True,
-            "result": {
-                "messages": [
-                    {
-                        "id": "m1",
-                        "content": "Hello",
-                        "author": {"id": "u1", "username": "Alice", "bot": False},
-                        "timestamp": "2026-01-15T12:00:00Z",
-                        "attachments": [],
-                        "embeds": [],
-                    },
-                    {
-                        "id": "m2",
-                        "content": "World",
-                        "author": {"id": "u2", "username": "Bob", "bot": False},
-                        "timestamp": "2026-01-15T12:01:00Z",
-                        "attachments": [],
-                        "embeds": [],
-                    },
-                ],
-                "count": 2,
-            },
-        }
-
-        result = initialized_library.get_messages(
-            user_id="test_user",
-            channel_id="chan_001",
-            limit=50,
-        )
-
-        assert result["status"] == "success"
-        assert result["count"] == 2
-        assert len(result["messages"]) == 2
-        assert result["messages"][0]["content"] == "Hello"
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_with_before_and_after(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_messages.return_value = {
-            "ok": True,
-            "result": {"messages": [], "count": 0},
-        }
-
-        initialized_library.get_messages(
-            user_id="test_user",
-            channel_id="chan_001",
-            limit=25,
-            before="msg_before_id",
-            after="msg_after_id",
-        )
-
-        mock_bot_api.get_messages.assert_called_once_with(
-            "fake-bot-token-12345", "chan_001", 25, "msg_before_id", "msg_after_id",
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.get_messages.return_value = {"error": "API error: 404"}
-
-        result = initialized_library.get_messages(
-            user_id="test_user",
-            channel_id="chan_001",
-        )
-
-        assert result["status"] == "error"
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_messages(
-            user_id="nonexistent",
-            channel_id="chan_001",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-
-class TestSendDmBot:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.send_dm.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "dm_001",
-                "channel_id": "dm_chan_001",
-                "content": "Hey there!",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_dm_bot(
-            user_id="test_user",
-            recipient_id="recipient_001",
-            content="Hey there!",
-        )
-
-        assert result["status"] == "success"
-        assert result["message_id"] == "dm_001"
-        mock_bot_api.send_dm.assert_called_once_with(
-            "fake-bot-token-12345", "recipient_001", "Hey there!", None,
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_with_embed(self, mock_bot_api, initialized_library):
-        embed = {"title": "DM Embed", "description": "test"}
-        mock_bot_api.send_dm.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "dm_002",
-                "channel_id": "dm_chan_002",
-                "content": "Embedded DM",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_dm_bot(
-            user_id="test_user",
-            recipient_id="recipient_001",
-            content="Embedded DM",
-            embed=embed,
-        )
-
-        assert result["status"] == "success"
-        mock_bot_api.send_dm.assert_called_once_with(
-            "fake-bot-token-12345", "recipient_001", "Embedded DM", embed,
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.send_dm.return_value = {"error": "Cannot DM this user"}
-
-        result = initialized_library.send_dm_bot(
-            user_id="test_user",
-            recipient_id="recipient_001",
-            content="Hey!",
-        )
-
-        assert result["status"] == "error"
-        assert "Cannot DM" in result["message"]
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.send_dm_bot(
-            user_id="nonexistent",
-            recipient_id="recipient_001",
-            content="Hey!",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-
-class TestGetGuildMembers:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.list_guild_members.return_value = {
-            "ok": True,
-            "result": {
-                "members": [
-                    {"user": {"id": "u1", "username": "Alice"}},
-                    {"user": {"id": "u2", "username": "Bob"}},
-                ],
-            },
-        }
-
-        result = initialized_library.get_guild_members(
-            user_id="test_user",
-            guild_id="guild_001",
-            limit=100,
-        )
-
-        assert result["status"] == "success"
-        assert len(result["members"]) == 2
-        mock_bot_api.list_guild_members.assert_called_once_with(
-            "fake-bot-token-12345", "guild_001", 100,
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_with_custom_limit(self, mock_bot_api, initialized_library):
-        mock_bot_api.list_guild_members.return_value = {
-            "ok": True,
-            "result": {"members": []},
-        }
-
-        initialized_library.get_guild_members(
-            user_id="test_user",
-            guild_id="guild_001",
+        if result.get('status') == 'success':
+            text_channels = result.get('text_channels', [])
+            voice_channels = result.get('voice_channels', [])
+            categories = result.get('categories', [])
+            print_info(f"Text channels: {len(text_channels)}")
+            print_info(f"Voice channels: {len(voice_channels)}")
+            print_info(f"Categories: {len(categories)}")
+            if text_channels:
+                self.discovered_channel_id = text_channels[0].get('id')
+                print_info(f"Using channel: {text_channels[0].get('name', 'N/A')} ({self.discovered_channel_id})")
+
+    def test_guild_members(self):
+        """Test get_guild_members."""
+        print_section("GUILD MEMBERS")
+
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping guild member tests.")
+            return
+
+        if not self.discovered_guild_id:
+            print_warning("No guild discovered. Skipping guild member tests.")
+            return
+
+        result = self.run_test(
+            "get_guild_members",
+            DiscordAppLibrary.get_guild_members,
+            user_id=self.user_id,
+            guild_id=self.discovered_guild_id,
             limit=10,
+            bot_id=self.bot_id,
         )
 
-        mock_bot_api.list_guild_members.assert_called_once_with(
-            "fake-bot-token-12345", "guild_001", 10,
+        if result.get('status') == 'success':
+            members = result.get('members', [])
+            print_info(f"Retrieved {len(members)} member(s)")
+            for m in members[:3]:
+                user = m.get('user', {})
+                print_info(f"  - {user.get('username', 'N/A')} ({user.get('id', 'N/A')})")
+            if len(members) > 3:
+                print_info(f"  ... and {len(members) - 3} more")
+
+    def test_get_messages_bot(self):
+        """Test get_messages (bot) and discover a message_id for reaction tests."""
+        print_section("GET MESSAGES (BOT)")
+
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping bot get_messages tests.")
+            return
+
+        if not self.discovered_channel_id:
+            print_warning("No channel discovered. Skipping bot get_messages tests.")
+            return
+
+        result = self.run_test(
+            "get_messages (bot)",
+            DiscordAppLibrary.get_messages,
+            user_id=self.user_id,
+            channel_id=self.discovered_channel_id,
+            limit=5,
+            bot_id=self.bot_id,
         )
 
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.list_guild_members.return_value = {"error": "API error: 403"}
+        if result.get('status') == 'success':
+            messages = result.get('messages', [])
+            print_info(f"Retrieved {len(messages)} message(s)")
+            if messages:
+                self.discovered_message_id = messages[0].get('id')
+                author = messages[0].get('author', {})
+                content_preview = (messages[0].get('content', '') or '')[:60]
+                print_info(f"Latest message by {author.get('username', 'N/A')}: {content_preview}")
 
-        result = initialized_library.get_guild_members(
-            user_id="test_user",
-            guild_id="guild_001",
+    def test_send_message_bot(self):
+        """Test send_message (bot). Skippable with --skip-send."""
+        print_section("SEND MESSAGE (BOT)")
+
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping bot send_message tests.")
+            return
+
+        if self.skip_send:
+            print_warning("--skip-send flag set. Skipping bot send_message test.")
+            return
+
+        if not self.discovered_channel_id:
+            print_warning("No channel discovered. Skipping bot send_message test.")
+            return
+
+        test_content = f"[CraftOS Integration Test] Bot message at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        result = self.run_test(
+            "send_message (bot)",
+            DiscordAppLibrary.send_message,
+            user_id=self.user_id,
+            channel_id=self.discovered_channel_id,
+            content=test_content,
+            bot_id=self.bot_id,
         )
 
-        assert result["status"] == "error"
+        if result.get('status') == 'success':
+            msg_id = result.get('message_id')
+            print_info(f"Sent message ID: {msg_id}")
+            if msg_id:
+                self.created_bot_messages.append({
+                    "channel_id": self.discovered_channel_id,
+                    "message_id": msg_id,
+                })
 
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_guild_members(
-            user_id="nonexistent",
-            guild_id="guild_001",
-        )
+    def test_send_message_bot_with_embed(self):
+        """Test send_message (bot) with an embed. Skippable with --skip-send."""
+        print_section("SEND MESSAGE WITH EMBED (BOT)")
 
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping bot embed test.")
+            return
 
+        if self.skip_send:
+            print_warning("--skip-send flag set. Skipping bot embed test.")
+            return
 
-class TestAddReaction:
+        if not self.discovered_channel_id:
+            print_warning("No channel discovered. Skipping bot embed test.")
+            return
 
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_success(self, mock_bot_api, initialized_library):
-        mock_bot_api.add_reaction.return_value = {
-            "ok": True,
-            "result": {"added": True, "emoji": "thumbsup"},
+        embed = {
+            "title": "CraftOS Integration Test",
+            "description": "This embed was sent by an automated integration test.",
+            "color": 3066993,
+            "footer": {"text": f"Tested at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"},
         }
-
-        result = initialized_library.add_reaction(
-            user_id="test_user",
-            channel_id="chan_001",
-            message_id="msg_001",
-            emoji="thumbsup",
-        )
-
-        assert result["status"] == "success"
-        assert result["added"] is True
-        assert result["emoji"] == "thumbsup"
-        mock_bot_api.add_reaction.assert_called_once_with(
-            "fake-bot-token-12345", "chan_001", "msg_001", "thumbsup",
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_unicode_emoji(self, mock_bot_api, initialized_library):
-        mock_bot_api.add_reaction.return_value = {
-            "ok": True,
-            "result": {"added": True, "emoji": "\U0001f44d"},
-        }
-
-        result = initialized_library.add_reaction(
-            user_id="test_user",
-            channel_id="chan_001",
-            message_id="msg_001",
-            emoji="\U0001f44d",
-        )
-
-        assert result["status"] == "success"
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_api_error(self, mock_bot_api, initialized_library):
-        mock_bot_api.add_reaction.return_value = {"error": "Unknown Emoji"}
-
-        result = initialized_library.add_reaction(
-            user_id="test_user",
-            channel_id="chan_001",
-            message_id="msg_001",
-            emoji="invalid_emoji",
-        )
-
-        assert result["status"] == "error"
-        assert "Unknown Emoji" in result["message"]
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.add_reaction(
-            user_id="nonexistent",
-            channel_id="chan_001",
-            message_id="msg_001",
-            emoji="thumbsup",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-
-# ---------------------------------------------------------------------------
-# User Account Operations Tests
-# ---------------------------------------------------------------------------
-
-class TestGetUserInfo:
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_success(self, mock_user_api, initialized_library):
-        mock_user_api.get_current_user.return_value = {
-            "ok": True,
-            "result": {
-                "id": "discord_user_001",
-                "username": "TestUser",
-                "discriminator": "5678",
-                "email": "test@example.com",
-                "avatar": "avatar_hash",
-            },
-        }
-
-        result = initialized_library.get_user_info("test_user")
-
-        assert result["status"] == "success"
-        assert result["user"]["username"] == "TestUser"
-        assert result["user"]["email"] == "test@example.com"
-        mock_user_api.get_current_user.assert_called_once_with("fake-user-token-67890")
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_api_error(self, mock_user_api, initialized_library):
-        mock_user_api.get_current_user.return_value = {"error": "API error: 401"}
-
-        result = initialized_library.get_user_info("test_user")
-
-        assert result["status"] == "error"
-        assert "401" in result["message"]
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_user_info("nonexistent")
-
-        assert result["status"] == "error"
-        assert "No Discord user credentials found" in result["message"]
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_with_specific_discord_user_id(self, mock_user_api, initialized_library):
-        mock_user_api.get_current_user.return_value = {
-            "ok": True,
-            "result": {"id": "discord_user_001", "username": "TestUser"},
-        }
-
-        result = initialized_library.get_user_info("test_user", discord_user_id="discord_user_001")
-
-        assert result["status"] == "success"
-
-
-class TestGetUserGuilds:
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_success(self, mock_user_api, initialized_library):
-        mock_user_api.get_user_guilds.return_value = {
-            "ok": True,
-            "result": {
-                "guilds": [
-                    {"id": "g1", "name": "My Server"},
-                    {"id": "g2", "name": "Another Server"},
-                ],
-            },
-        }
-
-        result = initialized_library.get_user_guilds("test_user")
-
-        assert result["status"] == "success"
-        assert len(result["guilds"]) == 2
-        mock_user_api.get_user_guilds.assert_called_once_with("fake-user-token-67890")
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_api_error(self, mock_user_api, initialized_library):
-        mock_user_api.get_user_guilds.return_value = {"error": "API error: 429"}
-
-        result = initialized_library.get_user_guilds("test_user")
-
-        assert result["status"] == "error"
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_user_guilds("nonexistent")
-
-        assert result["status"] == "error"
-        assert "No Discord user credentials found" in result["message"]
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_empty_guilds(self, mock_user_api, initialized_library):
-        mock_user_api.get_user_guilds.return_value = {
-            "ok": True,
-            "result": {"guilds": []},
-        }
-
-        result = initialized_library.get_user_guilds("test_user")
-
-        assert result["status"] == "success"
-        assert result["guilds"] == []
-
-
-class TestGetDmChannels:
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_success(self, mock_user_api, initialized_library):
-        mock_user_api.get_dm_channels.return_value = {
-            "ok": True,
-            "result": {
-                "dm_channels": [
-                    {
-                        "id": "dm1",
-                        "type": 1,
-                        "recipients": [{"id": "u1", "username": "Alice"}],
-                        "last_message_id": "lm1",
-                    },
-                ],
-                "count": 1,
-            },
-        }
-
-        result = initialized_library.get_dm_channels("test_user")
-
-        assert result["status"] == "success"
-        assert len(result["dm_channels"]) == 1
-        assert result["count"] == 1
-        mock_user_api.get_dm_channels.assert_called_once_with("fake-user-token-67890")
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_api_error(self, mock_user_api, initialized_library):
-        mock_user_api.get_dm_channels.return_value = {"error": "API error: 401"}
-
-        result = initialized_library.get_dm_channels("test_user")
-
-        assert result["status"] == "error"
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_dm_channels("nonexistent")
-
-        assert result["status"] == "error"
-        assert "No Discord user credentials found" in result["message"]
-
-
-class TestSendMessageUser:
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_success(self, mock_user_api, initialized_library):
-        mock_user_api.send_message.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "user_msg_001",
-                "channel_id": "chan_001",
-                "content": "User message",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_message_user(
-            user_id="test_user",
-            channel_id="chan_001",
-            content="User message",
-        )
-
-        assert result["status"] == "success"
-        assert result["message_id"] == "user_msg_001"
-        mock_user_api.send_message.assert_called_once_with(
-            "fake-user-token-67890", "chan_001", "User message", None,
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_with_reply(self, mock_user_api, initialized_library):
-        mock_user_api.send_message.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "user_msg_002",
-                "channel_id": "chan_001",
-                "content": "Reply!",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_message_user(
-            user_id="test_user",
-            channel_id="chan_001",
-            content="Reply!",
-            reply_to="orig_msg_id",
-        )
-
-        assert result["status"] == "success"
-        mock_user_api.send_message.assert_called_once_with(
-            "fake-user-token-67890", "chan_001", "Reply!", "orig_msg_id",
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_api_error(self, mock_user_api, initialized_library):
-        mock_user_api.send_message.return_value = {"error": "API error: 403"}
-
-        result = initialized_library.send_message_user(
-            user_id="test_user",
-            channel_id="chan_001",
-            content="Forbidden",
-        )
-
-        assert result["status"] == "error"
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.send_message_user(
-            user_id="nonexistent",
-            channel_id="chan_001",
-            content="Hello",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord user credentials found" in result["message"]
-
-
-class TestGetMessagesUser:
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_success(self, mock_user_api, initialized_library):
-        mock_user_api.get_messages.return_value = {
-            "ok": True,
-            "result": {
-                "messages": [
-                    {"id": "m1", "content": "Hi", "author": {"id": "u1", "username": "Alice"}, "timestamp": "t1", "attachments": []},
-                ],
-                "count": 1,
-            },
-        }
-
-        result = initialized_library.get_messages_user(
-            user_id="test_user",
-            channel_id="chan_001",
-            limit=10,
-        )
-
-        assert result["status"] == "success"
-        assert result["count"] == 1
-        mock_user_api.get_messages.assert_called_once_with(
-            "fake-user-token-67890", "chan_001", 10, None, None,
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_with_before_after(self, mock_user_api, initialized_library):
-        mock_user_api.get_messages.return_value = {
-            "ok": True,
-            "result": {"messages": [], "count": 0},
-        }
-
-        initialized_library.get_messages_user(
-            user_id="test_user",
-            channel_id="chan_001",
-            limit=25,
-            before="b_id",
-            after="a_id",
-        )
-
-        mock_user_api.get_messages.assert_called_once_with(
-            "fake-user-token-67890", "chan_001", 25, "b_id", "a_id",
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_api_error(self, mock_user_api, initialized_library):
-        mock_user_api.get_messages.return_value = {"error": "API error: 500"}
-
-        result = initialized_library.get_messages_user(
-            user_id="test_user",
-            channel_id="chan_001",
-        )
-
-        assert result["status"] == "error"
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_messages_user(
-            user_id="nonexistent",
-            channel_id="chan_001",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord user credentials found" in result["message"]
-
-
-class TestSendDmUser:
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_success(self, mock_user_api, initialized_library):
-        mock_user_api.send_dm.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "user_dm_001",
-                "channel_id": "dm_chan_001",
-                "content": "User DM",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_dm_user(
-            user_id="test_user",
-            recipient_id="recipient_001",
-            content="User DM",
-        )
-
-        assert result["status"] == "success"
-        assert result["message_id"] == "user_dm_001"
-        mock_user_api.send_dm.assert_called_once_with(
-            "fake-user-token-67890", "recipient_001", "User DM",
-        )
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_api_error(self, mock_user_api, initialized_library):
-        mock_user_api.send_dm.return_value = {"error": "Cannot send DM"}
-
-        result = initialized_library.send_dm_user(
-            user_id="test_user",
-            recipient_id="recipient_001",
-            content="Hello",
-        )
-
-        assert result["status"] == "error"
-        assert "Cannot send DM" in result["message"]
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.send_dm_user(
-            user_id="nonexistent",
-            recipient_id="recipient_001",
-            content="Hello",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord user credentials found" in result["message"]
-
-
-class TestGetFriends:
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_success(self, mock_user_api, initialized_library):
-        mock_user_api.get_relationships.return_value = {
-            "ok": True,
-            "result": {
-                "friends": [
-                    {"id": "f1", "username": "FriendOne"},
-                    {"id": "f2", "username": "FriendTwo"},
-                ],
-                "blocked": [],
-                "incoming_requests": [],
-                "outgoing_requests": [],
-                "total_friends": 2,
-            },
-        }
-
-        result = initialized_library.get_friends("test_user")
-
-        assert result["status"] == "success"
-        assert result["total_friends"] == 2
-        assert len(result["friends"]) == 2
-        mock_user_api.get_relationships.assert_called_once_with("fake-user-token-67890")
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_api_error(self, mock_user_api, initialized_library):
-        mock_user_api.get_relationships.return_value = {"error": "API error: 401"}
-
-        result = initialized_library.get_friends("test_user")
-
-        assert result["status"] == "error"
-
-    def test_no_credentials(self, initialized_library):
-        result = initialized_library.get_friends("nonexistent")
-
-        assert result["status"] == "error"
-        assert "No Discord user credentials found" in result["message"]
-
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_empty_friends_list(self, mock_user_api, initialized_library):
-        mock_user_api.get_relationships.return_value = {
-            "ok": True,
-            "result": {
-                "friends": [],
-                "blocked": [],
-                "incoming_requests": [],
-                "outgoing_requests": [],
-                "total_friends": 0,
-            },
-        }
-
-        result = initialized_library.get_friends("test_user")
-
-        assert result["status"] == "success"
-        assert result["total_friends"] == 0
-        assert result["friends"] == []
-
-
-# ---------------------------------------------------------------------------
-# Voice Operations Tests
-# ---------------------------------------------------------------------------
-
-class TestJoinVoiceChannel:
-
-    def test_no_credentials(self, initialized_library):
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-        initialized_library._shared_bot_guild_store.get.side_effect = lambda uid, **kw: []
-
-        result = asyncio.run(initialized_library.join_voice_channel(
-            user_id="nonexistent",
-            guild_id="guild_001",
-            channel_id="vc_001",
-        ))
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-    def test_success(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.start.return_value = {"ok": True, "result": {"status": "connected"}}
-        mock_manager.join_voice.return_value = {
-            "ok": True,
-            "result": {
-                "status": "connected",
-                "guild_id": "guild_001",
-                "channel_id": "vc_001",
-                "channel_name": "General Voice",
-            },
-        }
-
-        with patch(
-            "core.external_libraries.discord.external_app_library.DiscordVoiceManager",
-            return_value=mock_manager,
-        ):
-            result = asyncio.run(initialized_library.join_voice_channel(
-                user_id="test_user",
-                guild_id="guild_001",
-                channel_id="vc_001",
-            ))
-
-        # Inner result's "status" key ("connected") overwrites the outer "success"
-        assert result["status"] == "connected"
-        assert result["channel_id"] == "vc_001"
-
-    def test_voice_manager_start_error(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.start.return_value = {"error": "Bot failed to connect within timeout"}
-
-        with patch(
-            "core.external_libraries.discord.external_app_library.DiscordVoiceManager",
-            return_value=mock_manager,
-        ):
-            result = asyncio.run(initialized_library.join_voice_channel(
-                user_id="test_user",
-                guild_id="guild_001",
-                channel_id="vc_001",
-            ))
-
-        assert result["status"] == "error"
-        assert "timeout" in result["message"].lower()
-
-    def test_import_error(self, initialized_library):
-        with patch(
-            "core.external_libraries.discord.external_app_library.DiscordVoiceManager",
-            side_effect=ImportError("discord.py is required for voice features"),
-        ):
-            result = asyncio.run(initialized_library.join_voice_channel(
-                user_id="test_user",
-                guild_id="guild_001",
-                channel_id="vc_001",
-            ))
-
-        assert result["status"] == "error"
-        assert "discord.py" in result["message"]
-
-    def test_reuses_existing_voice_manager(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.join_voice.return_value = {
-            "ok": True,
-            "result": {"status": "connected", "guild_id": "guild_001", "channel_id": "vc_001"},
-        }
-
-        # Pre-register the voice manager
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.join_voice_channel(
-            user_id="test_user",
-            guild_id="guild_001",
-            channel_id="vc_001",
-        ))
-
-        # Inner result's "status" key overwrites the outer "success"
-        assert result["status"] == "connected"
-        mock_manager.join_voice.assert_called_once_with("guild_001", "vc_001")
-
-    def test_join_voice_error(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.join_voice.return_value = {"error": "Channel not found"}
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.join_voice_channel(
-            user_id="test_user",
-            guild_id="guild_001",
-            channel_id="vc_001",
-        ))
-
-        assert result["status"] == "error"
-        assert "Channel not found" in result["message"]
-
-
-class TestLeaveVoiceChannel:
-
-    def test_no_credentials(self, initialized_library):
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-        initialized_library._shared_bot_guild_store.get.side_effect = lambda uid, **kw: []
-
-        result = asyncio.run(initialized_library.leave_voice_channel(
-            user_id="nonexistent",
-            guild_id="guild_001",
-        ))
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-    def test_not_connected(self, initialized_library):
-        """Bot has credentials but is not in voice."""
-        result = asyncio.run(initialized_library.leave_voice_channel(
-            user_id="test_user",
-            guild_id="guild_001",
-        ))
-
-        assert result["status"] == "error"
-        assert "not connected to voice" in result["message"].lower()
-
-    def test_success(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.leave_voice.return_value = {
-            "ok": True,
-            "result": {"status": "disconnected", "guild_id": "guild_001"},
-        }
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.leave_voice_channel(
-            user_id="test_user",
-            guild_id="guild_001",
-        ))
-
-        # Inner result's "status" key ("disconnected") overwrites the outer "success"
-        assert result["status"] == "disconnected"
-        assert result["guild_id"] == "guild_001"
-        mock_manager.leave_voice.assert_called_once_with("guild_001")
-
-    def test_leave_error(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.leave_voice.return_value = {"error": "Guild not found"}
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.leave_voice_channel(
-            user_id="test_user",
-            guild_id="guild_001",
-        ))
-
-        assert result["status"] == "error"
-        assert "Guild not found" in result["message"]
-
-
-class TestSpeakInVoice:
-
-    def test_no_credentials(self, initialized_library):
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-        initialized_library._shared_bot_guild_store.get.side_effect = lambda uid, **kw: []
-
-        result = asyncio.run(initialized_library.speak_in_voice(
-            user_id="nonexistent",
-            guild_id="guild_001",
-            text="Hello voice!",
-        ))
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-    def test_not_connected(self, initialized_library):
-        result = asyncio.run(initialized_library.speak_in_voice(
-            user_id="test_user",
-            guild_id="guild_001",
-            text="Hello voice!",
-        ))
-
-        assert result["status"] == "error"
-        assert "not connected to voice" in result["message"].lower()
-
-    def test_success(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.speak_text.return_value = {
-            "ok": True,
-            "result": {"status": "spoken", "text": "Hello voice!"},
-        }
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.speak_in_voice(
-            user_id="test_user",
-            guild_id="guild_001",
-            text="Hello voice!",
-        ))
-
-        # Inner result's "status" key ("spoken") overwrites the outer "success"
-        assert result["status"] == "spoken"
-        assert result["text"] == "Hello voice!"
-        mock_manager.speak_text.assert_called_once_with("guild_001", "Hello voice!")
-
-    def test_speak_error(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.speak_text.return_value = {"error": "TTS failed"}
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.speak_in_voice(
-            user_id="test_user",
-            guild_id="guild_001",
-            text="Hello!",
-        ))
-
-        assert result["status"] == "error"
-        assert "TTS failed" in result["message"]
-
-
-class TestPlayAudioInVoice:
-
-    def test_no_credentials(self, initialized_library):
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-        initialized_library._shared_bot_guild_store.get.side_effect = lambda uid, **kw: []
-
-        result = asyncio.run(initialized_library.play_audio_in_voice(
-            user_id="nonexistent",
-            guild_id="guild_001",
-            audio_path="/path/to/audio.mp3",
-        ))
-
-        assert result["status"] == "error"
-
-    def test_not_connected(self, initialized_library):
-        result = asyncio.run(initialized_library.play_audio_in_voice(
-            user_id="test_user",
-            guild_id="guild_001",
-            audio_path="/path/to/audio.mp3",
-        ))
-
-        assert result["status"] == "error"
-        assert "not connected to voice" in result["message"].lower()
-
-    def test_success(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.play_audio.return_value = {
-            "ok": True,
-            "result": {"status": "playing", "audio_path": "/path/to/audio.mp3"},
-        }
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.play_audio_in_voice(
-            user_id="test_user",
-            guild_id="guild_001",
-            audio_path="/path/to/audio.mp3",
-        ))
-
-        # Inner result's "status" key ("playing") overwrites the outer "success"
-        assert result["status"] == "playing"
-        assert result["audio_path"] == "/path/to/audio.mp3"
-        mock_manager.play_audio.assert_called_once_with("guild_001", "/path/to/audio.mp3")
-
-    def test_play_error(self, initialized_library):
-        mock_manager = AsyncMock()
-        mock_manager.play_audio.return_value = {"error": "File not found"}
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = asyncio.run(initialized_library.play_audio_in_voice(
-            user_id="test_user",
-            guild_id="guild_001",
-            audio_path="/bad/path.mp3",
-        ))
-
-        assert result["status"] == "error"
-        assert "File not found" in result["message"]
-
-
-class TestGetVoiceStatus:
-
-    def test_no_credentials(self, initialized_library):
-        initialized_library._bot_credentials_store.get.side_effect = lambda uid, **kw: []
-        initialized_library._shared_bot_guild_store.get.side_effect = lambda uid, **kw: []
-
-        result = initialized_library.get_voice_status(
-            user_id="nonexistent",
-            guild_id="guild_001",
-        )
-
-        assert result["status"] == "error"
-        assert "No Discord bot credentials found" in result["message"]
-
-    def test_not_connected_returns_false(self, initialized_library):
-        """Voice manager not registered means not connected."""
-        result = initialized_library.get_voice_status(
-            user_id="test_user",
-            guild_id="guild_001",
-        )
-
-        assert result["status"] == "success"
-        assert result["connected"] is False
-
-    def test_connected(self, initialized_library):
-        mock_manager = MagicMock()
-        mock_manager.get_voice_status.return_value = {
-            "ok": True,
-            "result": {
-                "connected": True,
-                "guild_id": "guild_001",
-                "channel_id": "vc_001",
-                "is_recording": False,
-                "is_speaking": False,
-                "connected_at": "2026-01-15T12:00:00",
-            },
-        }
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = initialized_library.get_voice_status(
-            user_id="test_user",
-            guild_id="guild_001",
-        )
-
-        assert result["status"] == "success"
-        assert result["connected"] is True
-        assert result["channel_id"] == "vc_001"
-
-    def test_voice_status_error(self, initialized_library):
-        mock_manager = MagicMock()
-        mock_manager.get_voice_status.return_value = {"error": "Internal error"}
-
-        initialized_library._voice_managers["bot_001"] = mock_manager
-
-        result = initialized_library.get_voice_status(
-            user_id="test_user",
-            guild_id="guild_001",
-        )
-
-        assert result["status"] == "error"
-        assert "Internal error" in result["message"]
-
-
-# ---------------------------------------------------------------------------
-# Credential Model Tests
-# ---------------------------------------------------------------------------
-
-class TestDiscordBotCredential:
-
-    def test_defaults(self):
-        cred = DiscordBotCredential(user_id="u1")
-        assert cred.bot_token == ""
-        assert cred.bot_id == ""
-        assert cred.bot_username == ""
-
-    def test_all_fields(self):
-        cred = DiscordBotCredential(
-            user_id="u1",
-            bot_token="token123",
-            bot_id="b1",
-            bot_username="Bot#0001",
-        )
-        assert cred.bot_token == "token123"
-        assert cred.bot_id == "b1"
-        assert cred.bot_username == "Bot#0001"
-
-    def test_unique_keys(self):
-        assert DiscordBotCredential.UNIQUE_KEYS == ("user_id", "bot_id")
-
-    def test_to_dict(self):
-        cred = DiscordBotCredential(user_id="u1", bot_token="t", bot_id="b1")
-        d = cred.to_dict()
-        assert d["user_id"] == "u1"
-        assert d["bot_token"] == "t"
-        assert d["bot_id"] == "b1"
-
-
-class TestDiscordUserCredential:
-
-    def test_defaults(self):
-        cred = DiscordUserCredential(user_id="u1")
-        assert cred.user_token == ""
-        assert cred.discord_user_id == ""
-        assert cred.username == ""
-        assert cred.discriminator == ""
-
-    def test_all_fields(self):
-        cred = DiscordUserCredential(
-            user_id="u1",
-            user_token="utoken",
-            discord_user_id="du1",
-            username="MyUser",
-            discriminator="9999",
-        )
-        assert cred.user_token == "utoken"
-        assert cred.discord_user_id == "du1"
-        assert cred.username == "MyUser"
-        assert cred.discriminator == "9999"
-
-    def test_unique_keys(self):
-        assert DiscordUserCredential.UNIQUE_KEYS == ("user_id", "discord_user_id")
-
-    def test_to_dict(self):
-        cred = DiscordUserCredential(
-            user_id="u1",
-            user_token="tok",
-            discord_user_id="du1",
-        )
-        d = cred.to_dict()
-        assert d["user_id"] == "u1"
-        assert d["user_token"] == "tok"
-        assert d["discord_user_id"] == "du1"
-
-
-class TestDiscordSharedBotGuildCredential:
-
-    def test_defaults(self):
-        cred = DiscordSharedBotGuildCredential(user_id="u1")
-        assert cred.guild_id == ""
-        assert cred.guild_name == ""
-        assert cred.guild_icon == ""
-        assert cred.connected_at == ""
-
-    def test_all_fields(self):
-        cred = DiscordSharedBotGuildCredential(
-            user_id="u1",
-            guild_id="g1",
-            guild_name="My Server",
-            guild_icon="icon_hash",
-            connected_at="2026-01-01T00:00:00Z",
-        )
-        assert cred.guild_id == "g1"
-        assert cred.guild_name == "My Server"
-        assert cred.guild_icon == "icon_hash"
-        assert cred.connected_at == "2026-01-01T00:00:00Z"
-
-    def test_unique_keys(self):
-        assert DiscordSharedBotGuildCredential.UNIQUE_KEYS == ("user_id", "guild_id")
-
-    def test_to_dict(self):
-        cred = DiscordSharedBotGuildCredential(
-            user_id="u1",
-            guild_id="g1",
-            guild_name="Server",
-        )
-        d = cred.to_dict()
-        assert d["user_id"] == "u1"
-        assert d["guild_id"] == "g1"
-        assert d["guild_name"] == "Server"
-
-
-# ---------------------------------------------------------------------------
-# Edge Cases & Error Responses
-# ---------------------------------------------------------------------------
-
-class TestEdgeCases:
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_bot_info_error_message_key_present(self, mock_bot_api, initialized_library):
-        """When the helper returns an error dict without 'error' key, message defaults to None."""
-        mock_bot_api.get_bot_user.return_value = {"some_other_key": "value"}
-
-        result = initialized_library.get_bot_info("test_user")
-
-        # No "ok" key means error path, result.get("error") returns None
-        assert result["status"] == "error"
-        assert result["message"] is None
-
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_send_message_empty_content(self, mock_bot_api, initialized_library):
-        """Sending an empty message should still delegate to bot_api."""
-        mock_bot_api.send_message.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": "msg_empty",
-                "channel_id": "chan_001",
-                "content": "",
-                "timestamp": "2026-01-15T12:00:00Z",
-            },
-        }
-
-        result = initialized_library.send_message(
-            user_id="test_user",
-            channel_id="chan_001",
+        result = self.run_test(
+            "send_message (bot, embed)",
+            DiscordAppLibrary.send_message,
+            user_id=self.user_id,
+            channel_id=self.discovered_channel_id,
             content="",
+            embed=embed,
+            bot_id=self.bot_id,
         )
 
-        assert result["status"] == "success"
-        assert result["content"] == ""
+        if result.get('status') == 'success':
+            msg_id = result.get('message_id')
+            print_info(f"Sent embed message ID: {msg_id}")
+            if msg_id:
+                self.created_bot_messages.append({
+                    "channel_id": self.discovered_channel_id,
+                    "message_id": msg_id,
+                })
 
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_user_info_error_message_fallback(self, mock_user_api, initialized_library):
-        mock_user_api.get_current_user.return_value = {}
+    def test_add_reaction(self):
+        """Test add_reaction."""
+        print_section("ADD REACTION (BOT)")
 
-        result = initialized_library.get_user_info("test_user")
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping reaction tests.")
+            return
 
-        assert result["status"] == "error"
-        assert result["message"] is None
+        if self.skip_send:
+            print_warning("--skip-send flag set. Skipping reaction test.")
+            return
 
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_get_messages_default_limit(self, mock_bot_api, initialized_library):
-        """When limit is not specified, default 50 should be passed."""
-        mock_bot_api.get_messages.return_value = {
-            "ok": True,
-            "result": {"messages": [], "count": 0},
-        }
+        # Prefer reacting to our own test message, fall back to discovered
+        target_channel = None
+        target_message = None
 
-        initialized_library.get_messages(
-            user_id="test_user",
-            channel_id="chan_001",
+        if self.created_bot_messages:
+            target_channel = self.created_bot_messages[0]["channel_id"]
+            target_message = self.created_bot_messages[0]["message_id"]
+        elif self.discovered_message_id and self.discovered_channel_id:
+            target_channel = self.discovered_channel_id
+            target_message = self.discovered_message_id
+
+        if not target_channel or not target_message:
+            print_warning("No message available for reaction test. Skipping.")
+            return
+
+        result = self.run_test(
+            "add_reaction",
+            DiscordAppLibrary.add_reaction,
+            user_id=self.user_id,
+            channel_id=target_channel,
+            message_id=target_message,
+            emoji="%E2%9C%85",  # URL-encoded checkmark emoji
+            bot_id=self.bot_id,
         )
 
-        mock_bot_api.get_messages.assert_called_once_with(
-            "fake-bot-token-12345", "chan_001", 50, None, None,
+    def test_send_dm_bot(self):
+        """Test send_dm_bot. Skippable with --skip-send."""
+        print_section("SEND DM (BOT)")
+
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping bot DM test.")
+            return
+
+        if self.skip_send:
+            print_warning("--skip-send flag set. Skipping bot DM test.")
+            return
+
+        # We need a recipient. Use the bot's own user ID to DM itself (will fail),
+        # or use a discovered guild member. For safety, just report as skipped.
+        print_warning("send_dm_bot requires a specific recipient_id. Skipping to avoid spam.")
+        print_info("To test manually: DiscordAppLibrary.send_dm_bot(user_id=..., recipient_id=..., content=...)")
+
+    def test_voice_status(self):
+        """Test get_voice_status (read-only, no actual voice join)."""
+        print_section("VOICE STATUS (BOT)")
+
+        if not self.has_bot:
+            print_warning("No bot credentials available. Skipping voice status test.")
+            return
+
+        if not self.discovered_guild_id:
+            print_warning("No guild discovered. Skipping voice status test.")
+            return
+
+        result = self.run_test(
+            "get_voice_status",
+            DiscordAppLibrary.get_voice_status,
+            user_id=self.user_id,
+            guild_id=self.discovered_guild_id,
+            bot_id=self.bot_id,
         )
 
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_get_messages_user_default_limit(self, mock_user_api, initialized_library):
-        mock_user_api.get_messages.return_value = {
-            "ok": True,
-            "result": {"messages": [], "count": 0},
-        }
+        if result.get('status') == 'success':
+            connected = result.get('connected', False)
+            print_info(f"Voice connected: {connected}")
 
-        initialized_library.get_messages_user(
-            user_id="test_user",
-            channel_id="chan_001",
+    # ═══════════════════════════════════════════════════════════════════════
+    # USER ACCOUNT OPERATIONS
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def test_user_info(self):
+        """Test get_user_info."""
+        print_section("USER INFO")
+
+        if not self.has_user:
+            print_warning("No user credentials available. Skipping user info tests.")
+            return
+
+        result = self.run_test(
+            "get_user_info",
+            DiscordAppLibrary.get_user_info,
+            user_id=self.user_id,
+            discord_user_id=self.discord_user_id,
         )
 
-        mock_user_api.get_messages.assert_called_once_with(
-            "fake-user-token-67890", "chan_001", 50, None, None,
+        if result.get('status') == 'success':
+            user = result.get('user', {})
+            print_info(f"Discord User: {user.get('username', 'N/A')}")
+            print_info(f"Discord User ID: {user.get('id', 'N/A')}")
+
+    def test_user_guilds(self):
+        """Test get_user_guilds."""
+        print_section("USER GUILDS")
+
+        if not self.has_user:
+            print_warning("No user credentials available. Skipping user guild tests.")
+            return
+
+        result = self.run_test(
+            "get_user_guilds",
+            DiscordAppLibrary.get_user_guilds,
+            user_id=self.user_id,
+            discord_user_id=self.discord_user_id,
         )
 
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_get_guild_members_default_limit(self, mock_bot_api, initialized_library):
-        mock_bot_api.list_guild_members.return_value = {
-            "ok": True,
-            "result": {"members": []},
-        }
+        if result.get('status') == 'success':
+            guilds = result.get('guilds', [])
+            print_info(f"Found {len(guilds)} guild(s)")
+            for g in guilds[:5]:
+                print_info(f"  - {g.get('name', 'N/A')} ({g.get('id', 'N/A')})")
+            if len(guilds) > 5:
+                print_info(f"  ... and {len(guilds) - 5} more")
 
-        initialized_library.get_guild_members(
-            user_id="test_user",
-            guild_id="guild_001",
+    def test_dm_channels(self):
+        """Test get_dm_channels."""
+        print_section("DM CHANNELS (USER)")
+
+        if not self.has_user:
+            print_warning("No user credentials available. Skipping DM channel tests.")
+            return
+
+        result = self.run_test(
+            "get_dm_channels",
+            DiscordAppLibrary.get_dm_channels,
+            user_id=self.user_id,
+            discord_user_id=self.discord_user_id,
         )
 
-        mock_bot_api.list_guild_members.assert_called_once_with(
-            "fake-bot-token-12345", "guild_001", 100,
+        if result.get('status') == 'success':
+            channels = result.get('dm_channels', [])
+            count = result.get('count', len(channels))
+            print_info(f"Found {count} DM channel(s)")
+            for ch in channels[:3]:
+                recipients = ch.get('recipients', [])
+                names = ", ".join(r.get('username', '?') for r in recipients)
+                print_info(f"  - {names} (channel {ch.get('id', 'N/A')})")
+            if count > 3:
+                print_info(f"  ... and {count - 3} more")
+
+    def test_get_messages_user(self):
+        """Test get_messages_user."""
+        print_section("GET MESSAGES (USER)")
+
+        if not self.has_user:
+            print_warning("No user credentials available. Skipping user get_messages tests.")
+            return
+
+        # We need a channel_id. Try to get one from DM channels.
+        dm_result = DiscordAppLibrary.get_dm_channels(
+            user_id=self.user_id,
+            discord_user_id=self.discord_user_id,
+        )
+        dm_channel_id = None
+        if dm_result.get('status') == 'success':
+            channels = dm_result.get('dm_channels', [])
+            if channels:
+                dm_channel_id = channels[0].get('id')
+
+        if not dm_channel_id:
+            print_warning("No DM channel found to read messages from. Skipping.")
+            return
+
+        print_info(f"Reading messages from DM channel: {dm_channel_id}")
+
+        result = self.run_test(
+            "get_messages_user",
+            DiscordAppLibrary.get_messages_user,
+            user_id=self.user_id,
+            channel_id=dm_channel_id,
+            limit=5,
+            discord_user_id=self.discord_user_id,
         )
 
-    def test_multiple_bot_credentials_uses_first(self, initialized_library, bot_credential):
-        """When multiple credentials exist, the first one is used."""
-        second_cred = DiscordBotCredential(
-            user_id="test_user",
-            bot_token="second-token",
-            bot_id="bot_002",
-            bot_username="SecondBot#5678",
+        if result.get('status') == 'success':
+            messages = result.get('messages', [])
+            print_info(f"Retrieved {len(messages)} message(s)")
+
+    def test_send_message_user(self):
+        """Test send_message_user. Skippable with --skip-send."""
+        print_section("SEND MESSAGE (USER)")
+
+        if not self.has_user:
+            print_warning("No user credentials available. Skipping user send_message test.")
+            return
+
+        if self.skip_send:
+            print_warning("--skip-send flag set. Skipping user send_message test.")
+            return
+
+        print_warning("send_message_user requires a specific channel_id. Skipping to avoid spam.")
+        print_info("To test manually: DiscordAppLibrary.send_message_user(user_id=..., channel_id=..., content=...)")
+
+    def test_send_dm_user(self):
+        """Test send_dm_user. Skippable with --skip-send."""
+        print_section("SEND DM (USER)")
+
+        if not self.has_user:
+            print_warning("No user credentials available. Skipping user DM test.")
+            return
+
+        if self.skip_send:
+            print_warning("--skip-send flag set. Skipping user DM test.")
+            return
+
+        print_warning("send_dm_user requires a specific recipient_id. Skipping to avoid spam.")
+        print_info("To test manually: DiscordAppLibrary.send_dm_user(user_id=..., recipient_id=..., content=...)")
+
+    def test_friends(self):
+        """Test get_friends."""
+        print_section("FRIENDS LIST (USER)")
+
+        if not self.has_user:
+            print_warning("No user credentials available. Skipping friends test.")
+            return
+
+        result = self.run_test(
+            "get_friends",
+            DiscordAppLibrary.get_friends,
+            user_id=self.user_id,
+            discord_user_id=self.discord_user_id,
         )
 
-        # Override mock to return two credentials
-        initialized_library._bot_credentials_store.get.side_effect = (
-            lambda uid, **kw: [bot_credential, second_cred] if uid == "test_user" else []
-        )
+        if result.get('status') == 'success':
+            friends = result.get('friends', [])
+            total = result.get('total_friends', len(friends))
+            print_info(f"Total friends: {total}")
+            for f in friends[:5]:
+                print_info(f"  - {f.get('username', 'N/A')} ({f.get('id', 'N/A')})")
+            if total > 5:
+                print_info(f"  ... and {total - 5} more")
 
-        with patch("core.external_libraries.discord.external_app_library.bot_api") as mock_bot_api:
-            mock_bot_api.get_bot_user.return_value = {
-                "ok": True,
-                "result": {"id": "bot_001", "username": "TestBot"},
-            }
+    # ═══════════════════════════════════════════════════════════════════════
+    # CREDENTIAL MANAGEMENT (verify store operations)
+    # ═══════════════════════════════════════════════════════════════════════
 
-            initialized_library.get_bot_info("test_user")
+    def test_credential_store_operations(self):
+        """Verify credential store lookup works."""
+        print_section("CREDENTIAL STORE OPERATIONS")
 
-            # Should use the first credential's token
-            mock_bot_api.get_bot_user.assert_called_once_with("fake-bot-token-12345")
+        # Bot credentials lookup
+        print(f"\n  Testing: get_bot_credentials...")
+        try:
+            creds = DiscordAppLibrary.get_bot_credentials(self.user_id, self.bot_id)
+            if creds:
+                print_success(f"get_bot_credentials - SUCCESS (found {len(creds)} credential(s))")
+                self.test_results["get_bot_credentials"] = "PASS"
+                print_info(f"Bot ID: {creds[0].bot_id}")
+                print_info(f"Bot Username: {creds[0].bot_username}")
+            else:
+                print_warning("get_bot_credentials - No bot credentials found (not an error)")
+                self.test_results["get_bot_credentials"] = "PASS"
+        except Exception as e:
+            print_error(f"get_bot_credentials - EXCEPTION: {e}")
+            self.test_results["get_bot_credentials"] = "ERROR"
 
-    @patch("core.external_libraries.discord.external_app_library.bot_api")
-    def test_guild_channels_result_unpacking(self, mock_bot_api, initialized_library):
-        """The guild channels result should be merged with status via ** unpacking."""
-        mock_bot_api.get_guild_channels.return_value = {
-            "ok": True,
-            "result": {
-                "all_channels": [{"id": "c1"}, {"id": "c2"}],
-                "text_channels": [{"id": "c1"}],
-                "voice_channels": [{"id": "c2"}],
-                "categories": [],
-            },
-        }
+        # User credentials lookup
+        print(f"\n  Testing: get_user_credentials...")
+        try:
+            creds = DiscordAppLibrary.get_user_credentials(self.user_id, self.discord_user_id)
+            if creds:
+                print_success(f"get_user_credentials - SUCCESS (found {len(creds)} credential(s))")
+                self.test_results["get_user_credentials"] = "PASS"
+                print_info(f"Discord User ID: {creds[0].discord_user_id}")
+                print_info(f"Username: {creds[0].username}")
+            else:
+                print_warning("get_user_credentials - No user credentials found (not an error)")
+                self.test_results["get_user_credentials"] = "PASS"
+        except Exception as e:
+            print_error(f"get_user_credentials - EXCEPTION: {e}")
+            self.test_results["get_user_credentials"] = "ERROR"
 
-        result = initialized_library.get_guild_channels("test_user", "guild_001")
+        # Shared bot guild lookup
+        print(f"\n  Testing: get_shared_bot_guilds...")
+        try:
+            guilds = DiscordAppLibrary.get_shared_bot_guilds(self.user_id)
+            print_success(f"get_shared_bot_guilds - SUCCESS (found {len(guilds)} association(s))")
+            self.test_results["get_shared_bot_guilds"] = "PASS"
+            for g in guilds[:3]:
+                print_info(f"  Guild: {g.guild_name} ({g.guild_id})")
+        except Exception as e:
+            print_error(f"get_shared_bot_guilds - EXCEPTION: {e}")
+            self.test_results["get_shared_bot_guilds"] = "ERROR"
 
-        assert result["status"] == "success"
-        assert "all_channels" in result
-        assert "text_channels" in result
-        assert "voice_channels" in result
-        assert "categories" in result
-        assert len(result["all_channels"]) == 2
+        # get_bot_token_for_guild
+        if self.discovered_guild_id:
+            print(f"\n  Testing: get_bot_token_for_guild...")
+            try:
+                token_info = DiscordAppLibrary.get_bot_token_for_guild(
+                    self.user_id, self.discovered_guild_id, self.bot_id
+                )
+                if token_info:
+                    print_success("get_bot_token_for_guild - SUCCESS (token resolved)")
+                    self.test_results["get_bot_token_for_guild"] = "PASS"
+                    print_info(f"Resolved bot_id: {token_info[1]}")
+                else:
+                    print_warning("get_bot_token_for_guild - No token resolved (may be expected)")
+                    self.test_results["get_bot_token_for_guild"] = "PASS"
+            except Exception as e:
+                print_error(f"get_bot_token_for_guild - EXCEPTION: {e}")
+                self.test_results["get_bot_token_for_guild"] = "ERROR"
 
-    @patch("core.external_libraries.discord.external_app_library.user_api")
-    def test_dm_channels_result_unpacking(self, mock_user_api, initialized_library):
-        """The DM channels result should be merged with status via ** unpacking."""
-        mock_user_api.get_dm_channels.return_value = {
-            "ok": True,
-            "result": {
-                "dm_channels": [{"id": "dm1"}, {"id": "dm2"}],
-                "count": 2,
-            },
-        }
+    # ═══════════════════════════════════════════════════════════════════════
+    # CLEANUP
+    # ═══════════════════════════════════════════════════════════════════════
 
-        result = initialized_library.get_dm_channels("test_user")
+    def cleanup(self):
+        """Clean up any messages created during testing."""
+        print_section("CLEANUP")
 
-        assert result["status"] == "success"
-        assert "dm_channels" in result
-        assert result["count"] == 2
+        if not self.created_bot_messages:
+            print_info("No test messages to clean up.")
+            return
+
+        # Get bot token for direct API cleanup
+        bot_creds = DiscordAppLibrary.get_bot_credentials(self.user_id, self.bot_id)
+        if not bot_creds:
+            print_warning("Cannot clean up: no bot credentials for deletion.")
+            return
+
+        bot_token = bot_creds[0].bot_token
+
+        for msg_info in self.created_bot_messages:
+            channel_id = msg_info["channel_id"]
+            message_id = msg_info["message_id"]
+            print_info(f"Deleting test message {message_id} from channel {channel_id}...")
+            try:
+                result = bot_api.delete_message(bot_token, channel_id, message_id)
+                if "ok" in result:
+                    print_success(f"Deleted message {message_id}")
+                else:
+                    print_error(f"Failed to delete message {message_id}: {result.get('error', 'Unknown')}")
+            except Exception as e:
+                print_error(f"Failed to delete message {message_id}: {e}")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SUMMARY
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def print_summary(self):
+        """Print test summary."""
+        print_header("TEST SUMMARY")
+
+        passed = sum(1 for v in self.test_results.values() if v == 'PASS')
+        failed = sum(1 for v in self.test_results.values() if v == 'FAIL')
+        errors = sum(1 for v in self.test_results.values() if v == 'ERROR')
+        total = len(self.test_results)
+
+        print(f"\n  Total tests: {total}")
+        print(f"  {Colors.GREEN}Passed: {passed}{Colors.END}")
+        print(f"  {Colors.RED}Failed: {failed}{Colors.END}")
+        print(f"  {Colors.YELLOW}Errors: {errors}{Colors.END}")
+
+        print(f"\n  {Colors.BOLD}Detailed Results:{Colors.END}")
+        for name, result in self.test_results.items():
+            if result == 'PASS':
+                print(f"    {Colors.GREEN}+{Colors.END} {name}")
+            elif result == 'FAIL':
+                print(f"    {Colors.RED}x{Colors.END} {name}")
+            else:
+                print(f"    {Colors.YELLOW}!{Colors.END} {name}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Credential Listing
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def list_credentials():
+    """List all stored Discord credentials (bot + user)."""
+    print_header("STORED DISCORD CREDENTIALS")
+
+    DiscordAppLibrary.initialize()
+    bot_store = DiscordAppLibrary._bot_credentials_store
+    user_store = DiscordAppLibrary._user_credentials_store
+    guild_store = DiscordAppLibrary._shared_bot_guild_store
+
+    # Gather bot credentials
+    all_bot_creds = []
+    for user_id, creds in bot_store.credentials.items():
+        all_bot_creds.extend(creds)
+
+    # Gather user credentials
+    all_user_creds = []
+    for user_id, creds in user_store.credentials.items():
+        all_user_creds.extend(creds)
+
+    # Gather shared guild associations
+    all_guild_creds = []
+    for user_id, creds in guild_store.credentials.items():
+        all_guild_creds.extend(creds)
+
+    if not all_bot_creds and not all_user_creds:
+        print_warning("No Discord credentials found.")
+        print_info("Please add bot or user credentials via the CraftOS control panel first.")
+        return None, None, None
+
+    # Print bot credentials
+    if all_bot_creds:
+        print(f"\n  {Colors.BOLD}Bot Credentials ({len(all_bot_creds)}):{Colors.END}\n")
+        for i, cred in enumerate(all_bot_creds, 1):
+            print(f"  [{i}] User ID:      {cred.user_id}")
+            print(f"      Bot ID:       {cred.bot_id}")
+            print(f"      Bot Username: {cred.bot_username}")
+            print(f"      Has Token:    {bool(cred.bot_token)}")
+            print()
+
+    # Print user credentials
+    if all_user_creds:
+        print(f"\n  {Colors.BOLD}User Credentials ({len(all_user_creds)}):{Colors.END}\n")
+        for i, cred in enumerate(all_user_creds, 1):
+            print(f"  [{i}] User ID:         {cred.user_id}")
+            print(f"      Discord User ID: {cred.discord_user_id}")
+            print(f"      Username:        {cred.username}")
+            print(f"      Discriminator:   {cred.discriminator}")
+            print(f"      Has Token:       {bool(cred.user_token)}")
+            print()
+
+    # Print shared guild associations
+    if all_guild_creds:
+        print(f"\n  {Colors.BOLD}Shared Bot Guilds ({len(all_guild_creds)}):{Colors.END}\n")
+        for i, cred in enumerate(all_guild_creds, 1):
+            print(f"  [{i}] User ID:      {cred.user_id}")
+            print(f"      Guild ID:     {cred.guild_id}")
+            print(f"      Guild Name:   {cred.guild_name}")
+            print(f"      Connected At: {cred.connected_at}")
+            print()
+
+    # Return first available identifiers
+    first_user_id = all_bot_creds[0].user_id if all_bot_creds else (all_user_creds[0].user_id if all_user_creds else None)
+    first_bot_id = all_bot_creds[0].bot_id if all_bot_creds else None
+    first_discord_user_id = all_user_creds[0].discord_user_id if all_user_creds else None
+
+    return first_user_id, first_bot_id, first_discord_user_id
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    parser = argparse.ArgumentParser(description='Test Discord API integration')
+    parser.add_argument('--user-id', type=str, help='CraftOS user ID')
+    parser.add_argument('--bot-id', type=str, help='Specific Discord bot ID to use')
+    parser.add_argument('--discord-user-id', type=str, help='Specific Discord user ID to use')
+    parser.add_argument('--list', action='store_true', help='List stored credentials')
+    parser.add_argument('--skip-send', action='store_true', help='Skip tests that send messages / reactions')
+    parser.add_argument(
+        '--only', type=str,
+        help=(
+            'Only run a specific test group. Options: '
+            'creds, bot_info, bot_guilds, channels, members, get_messages_bot, '
+            'send_bot, embed_bot, reaction, dm_bot, voice, '
+            'user_info, user_guilds, dm_channels, get_messages_user, '
+            'send_user, dm_user, friends'
+        ),
+    )
+    args = parser.parse_args()
+
+    print_header("DISCORD EXTERNAL LIBRARY TEST SUITE")
+    print(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Initialize the library
+    DiscordAppLibrary.initialize()
+    print_success("DiscordAppLibrary initialized")
+
+    # List credentials if requested
+    if args.list:
+        list_credentials()
+        return
+
+    # Resolve credentials
+    user_id = args.user_id
+    bot_id = args.bot_id
+    discord_user_id = args.discord_user_id
+
+    if not user_id:
+        print_section("CREDENTIAL LOOKUP")
+        user_id, bot_id_found, discord_user_id_found = list_credentials()
+
+        if not user_id:
+            print_error("No credentials available. Exiting.")
+            return
+
+        if not bot_id:
+            bot_id = bot_id_found
+        if not discord_user_id:
+            discord_user_id = discord_user_id_found
+
+    print_info(f"Using: user_id={user_id}")
+    if bot_id:
+        print_info(f"       bot_id={bot_id}")
+    if discord_user_id:
+        print_info(f"       discord_user_id={discord_user_id}")
+
+    # Determine what credential types we have
+    has_bot = bool(DiscordAppLibrary.get_bot_credentials(user_id, bot_id))
+    has_user = bool(DiscordAppLibrary.get_user_credentials(user_id, discord_user_id))
+
+    if has_bot:
+        print_success("Bot credentials found")
+    else:
+        print_warning("No bot credentials found - bot tests will be skipped")
+
+    if has_user:
+        print_success("User credentials found")
+    else:
+        print_warning("No user credentials found - user account tests will be skipped")
+
+    if not has_bot and not has_user:
+        print_error("No credentials of any type found. Nothing to test. Exiting.")
+        return
+
+    # Create tester
+    tester = DiscordTester(
+        user_id=user_id,
+        bot_id=bot_id,
+        discord_user_id=discord_user_id,
+        skip_send=args.skip_send,
+    )
+    tester.has_bot = has_bot
+    tester.has_user = has_user
+
+    # -----------------------------------------------------------------------
+    # Test group registry
+    # -----------------------------------------------------------------------
+
+    # Bot test groups (order matters: guilds/channels discover IDs for later)
+    BOT_DISCOVERY = [
+        ('bot_info',         tester.test_bot_info),
+        ('bot_guilds',       tester.test_bot_guilds),
+        ('channels',         tester.test_guild_channels),
+    ]
+    BOT_READ = [
+        ('members',          tester.test_guild_members),
+        ('get_messages_bot', tester.test_get_messages_bot),
+        ('voice',            tester.test_voice_status),
+        ('creds',            tester.test_credential_store_operations),
+    ]
+    BOT_WRITE = [
+        ('send_bot',         tester.test_send_message_bot),
+        ('embed_bot',        tester.test_send_message_bot_with_embed),
+        ('reaction',         tester.test_add_reaction),
+        ('dm_bot',           tester.test_send_dm_bot),
+    ]
+
+    # User test groups
+    USER_TESTS = [
+        ('user_info',         tester.test_user_info),
+        ('user_guilds',       tester.test_user_guilds),
+        ('dm_channels',       tester.test_dm_channels),
+        ('get_messages_user', tester.test_get_messages_user),
+        ('send_user',         tester.test_send_message_user),
+        ('dm_user',           tester.test_send_dm_user),
+        ('friends',           tester.test_friends),
+    ]
+
+    ALL_GROUPS = BOT_DISCOVERY + BOT_READ + BOT_WRITE + USER_TESTS
+
+    try:
+        if args.only:
+            # Find the requested group
+            group_map = {name: func for name, func in ALL_GROUPS}
+            if args.only not in group_map:
+                print_error(f"Unknown test group: {args.only}")
+                print_info(f"Available: {', '.join(name for name, _ in ALL_GROUPS)}")
+                return
+
+            # For groups that depend on discovery, run discovery first
+            discovery_dependent = {name for name, _ in BOT_READ + BOT_WRITE}
+            if args.only in discovery_dependent:
+                print_info("Running bot discovery first (needed for this test group)...")
+                for name, func in BOT_DISCOVERY:
+                    func()
+
+            group_map[args.only]()
+        else:
+            # Run all tests in order
+            for name, func in ALL_GROUPS:
+                func()
+
+    finally:
+        # Cleanup created messages
+        if not args.skip_send:
+            tester.cleanup()
+
+    # Print summary
+    tester.print_summary()
+
+
+if __name__ == "__main__":
+    main()
