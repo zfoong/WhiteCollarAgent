@@ -74,6 +74,33 @@ def read_pdf_file(input_data: dict) -> dict:
     import json, sys, os, re, importlib, subprocess
     from typing import Any, Dict, List
 
+    simulated_mode = input_data.get('simulated_mode', False)
+
+    if simulated_mode:
+        # Return mock result for testing
+        return {
+            'status': 'success',
+            'message': '',
+            'content': {
+                'document_metadata': {
+                    'file_name': 'test.pdf',
+                    'mimetype': 'application/pdf',
+                    'docling_version': '1.7.0'
+                },
+                'pages': [{'page_number': 1, 'width': 595.44, 'height': 841.68}],
+                'elements': [
+                    {
+                        'page_number': 1,
+                        'element_type': 'text',
+                        'text': 'Test PDF content',
+                        'bbox_abs': {'x0': 10, 'y0': 20, 'x1': 100, 'y1': 40, 'coord_origin': 'BOTTOMLEFT'},
+                        'bbox_norm': {'x0': 0.05, 'y0': 0.02, 'x1': 0.2, 'y1': 0.05},
+                        'is_form_field_candidate': False
+                    }
+                ]
+            }
+        }
+
     # -------------------
     # Safe dependency install
     # -------------------

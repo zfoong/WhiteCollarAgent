@@ -46,7 +46,7 @@ from core.action.action_framework.registry import action
             "description": "Error message if status is 'error'."
         }
     },
-    requirement=["duckduckgo-search", "google-api-python-client"],
+    requirement=["ddgs", "google-api-python-client"],
     test_payload={
         "query": "latest AI developments 2025",
         "num_results": 5,
@@ -125,19 +125,19 @@ def web_search(input_data: dict) -> dict:
 
     # Real search implementation
     def duckduckgo_search(q, n=5):
-        """Search using DuckDuckGo."""
-        from duckduckgo_search import DDGS
+        """Search using DuckDuckGo via ddgs package."""
+        from ddgs import DDGS
         results = []
         try:
-            with DDGS() as ddgs:
-                hits = list(ddgs.text(q, max_results=n + 10))  # Get extra for filtering
-                for hit in hits:
-                    url = hit.get('href') or hit.get('url', '')
-                    results.append({
-                        'title': hit.get('title', 'Untitled'),
-                        'url': url,
-                        'snippet': hit.get('body', hit.get('description', ''))
-                    })
+            ddgs = DDGS()
+            hits = list(ddgs.text(q, max_results=n + 10))  # Get extra for filtering
+            for hit in hits:
+                url = hit.get('href') or hit.get('url', '')
+                results.append({
+                    'title': hit.get('title', 'Untitled'),
+                    'url': url,
+                    'snippet': hit.get('body', hit.get('description', ''))
+                })
         except Exception as e:
             raise Exception(f"DuckDuckGo search failed: {str(e)}")
         return results

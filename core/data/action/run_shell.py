@@ -207,6 +207,18 @@ def shell_exec(input_data: dict) -> dict:
 def shell_exec_windows(input_data: dict) -> dict:
     import os, json, subprocess
 
+    simulated_mode = input_data.get('simulated_mode', False)
+
+    if simulated_mode:
+        # Return mock result for testing
+        return {
+            'status': 'success',
+            'stdout': 'Simulated command output',
+            'stderr': '',
+            'return_code': 0,
+            'message': ''
+        }
+
     command = str(input_data.get('command', '')).strip()
     shell_choice = str(input_data.get('shell', 'cmd')).strip().lower()
     if shell_choice == 'auto':
@@ -337,6 +349,18 @@ def shell_exec_windows(input_data: dict) -> dict:
 )
 def shell_exec_darwin(input_data: dict) -> dict:
     import os, json, subprocess
+
+    simulated_mode = input_data.get('simulated_mode', False)
+
+    if simulated_mode:
+        # Return mock result for testing
+        return {
+            'status': 'success',
+            'stdout': 'Simulated command output',
+            'stderr': '',
+            'return_code': 0,
+            'message': ''
+        }
 
     command = str(input_data.get('command', '')).strip()
     shell_choice = str(input_data.get('shell', 'bash')).strip().lower()

@@ -535,37 +535,47 @@ class ActionRouter:
         return base_prompt + feedback_block
 
     def _format_candidates(self, candidates: List[Dict[str, Any]]) -> str:
+        """Format action candidates with compact schema for reduced prompt size.
+
+        Compact format combines type, required/optional, and short description
+        into a single string per parameter, reducing prompt size by ~3-4x.
+        """
         if not candidates:
             return "[]"
 
-        simplified: List[Dict[str, Any]] = []
-        for candidate in candidates:
-            # input_schema = candidate.get("input_schema") or {}
-            # if isinstance(input_schema, dict):
-            #     input_fields = list(input_schema.keys())
-            # elif isinstance(input_schema, list):
-            #     input_fields = list(input_schema)
-            # else:
-            #     input_fields = []
+        compact: List[Dict[str, Any]] = []
+        for c in candidates:
+            input_schema = c.get("input_schema") or {}
+            params = {}
 
-            output_schema = candidate.get("output_schema") or {}
-            if isinstance(output_schema, dict):
-                output_fields = list(output_schema.keys())
-            elif isinstance(output_schema, list):
-                output_fields = list(output_schema)
-            else:
-                output_fields = []
+            for param_name, param_def in input_schema.items():
+                if isinstance(param_def, dict):
+                    ptype = param_def.get("type", "any")
+                    desc = param_def.get("description", "")
+                    # Detect if optional (default/optional mentioned in description)
+                    is_optional = "default" in desc.lower() or "optional" in desc.lower()
+                    req = "optional" if is_optional else "required"
+                    params[param_name] = f"{ptype}, {req} - {desc}"
+                else:
+                    # Fallback for non-dict schema
+                    params[param_name] = str(param_def)
 
-            simplified.append(
-                {
-                    "name": candidate.get("name"),
-                    "description": candidate.get("description"),
-                    "input_schema": candidate.get("input_schema"),
-                    "output_schema": output_fields
-                }
-            )
+            entry = {
+                "name": c.get("name"),
+                "description": c.get("description", ""),
+                "params": params
+            }
 
-        return json.dumps(simplified, indent=2, ensure_ascii=False)
+            # Uncomment below to include output_schema (for A/B testing accuracy)
+            # output_schema = c.get("output_schema") or {}
+            # if isinstance(output_schema, dict):
+            #     entry["output_schema"] = list(output_schema.keys())
+            # elif isinstance(output_schema, list):
+            #     entry["output_schema"] = output_schema
+
+            compact.append(entry)
+
+        return json.dumps(compact, indent=2, ensure_ascii=False)
 
     def _format_action_names(self, names: List[str]) -> str:
         if not names:

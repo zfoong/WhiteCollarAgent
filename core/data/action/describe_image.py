@@ -2,9 +2,9 @@ from core.action.action_framework.registry import action
 
 @action(
     name="describe_image",
-    description="Uses a Visual Language Model to analyse an image and return a detailed, markdown-ready description.",
+    description="Uses a Visual Language Model to analyse an image and return a detailed, markdown-ready description. IMPORTANT: Always provide a prompt describing what to look for or describe in the image.",
     mode="CLI",
-    action_sets=["document_processing"],
+    action_sets=["document_processing, image"],
     input_schema={
         "image_path": {
             "type": "string",
@@ -13,8 +13,8 @@ from core.action.action_framework.registry import action
         },
         "prompt": {
             "type": "string",
-            "example": "Highlight objects, colours and spatial relationships.",
-            "description": "Optional user prompt refining what the VLM should describe."
+            "example": "Describe the content of this image in detail, including objects, colours, and spatial relationships.",
+            "description": "REQUIRED: The prompt telling the VLM what to describe or look for in the image. Without a prompt, the description will be empty."
         }
     },
     output_schema={
@@ -45,7 +45,7 @@ def view_image(input_data: dict) -> dict:
 
     image_path = str(input_data.get('image_path', '')).strip()
     simulated_mode = input_data.get('simulated_mode', False)
-    prompt = str(input_data.get('prompt', '')).strip() or None
+    prompt = str(input_data.get('prompt', '')).strip() or "Describe the content of this image in detail."
 
     if simulated_mode:
         # Return mock result for testing

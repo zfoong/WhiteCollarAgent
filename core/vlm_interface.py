@@ -106,6 +106,38 @@ class VLMInterface:
     # Should only be used when looking for specific attributes/items in
     # the image/screen. For example, the prompt should be "Is the google
     # chrome opened?". A generic prompt will only produce a generic observation
+
+    def describe_image(
+        self,
+        image_path: str,
+        system_prompt: str | None = None,
+        user_prompt: str | None = "Describe this image in detail.",
+        log_response: bool = True,
+    ) -> str:
+        """Read an image from disk and describe it using the VLM.
+
+        Args:
+            image_path: Path to the image file.
+            system_prompt: Optional system prompt for the VLM.
+            user_prompt: User prompt describing what to look for.
+            log_response: Whether to log the response.
+
+        Returns:
+            Textual description of the image.
+        """
+        if not os.path.isfile(image_path):
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+
+        return self.describe_image_bytes(
+            image_bytes,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            log_response=log_response,
+        )
+
     def describe_image_bytes(
         self,
         image_bytes: bytes,

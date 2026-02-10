@@ -4,7 +4,7 @@ from core.action.action_framework.registry import action
     name="clipboard_read",
     description="Read the current content from the system clipboard.",
     mode="GUI",
-    action_sets=["clipboard"],
+    action_sets=["file_operations"],
     input_schema={},
     output_schema={
         "status": {

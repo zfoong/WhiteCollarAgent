@@ -167,16 +167,12 @@ def send_http_requests(input_data: dict) -> dict:
     allowed = {'GET','POST','PUT','PATCH','DELETE'}
     if method not in allowed:
         return {'status':'error','status_code':0,'response_headers':{},'body':'','final_url':'','elapsed_ms':0,'message':'Unsupported method.'}
-        raise SystemExit
     if not url or not (url.startswith('http://') or url.startswith('https://')):
         return {'status':'error','status_code':0,'response_headers':{},'body':'','final_url':'','elapsed_ms':0,'message':'Invalid or missing URL.'}
-        raise SystemExit
     if json_body is not None and data_body is not None:
         return {'status':'error','status_code':0,'response_headers':{},'body':'','final_url':'','elapsed_ms':0,'message':'Provide either json or data, not both.'}
-        raise SystemExit
     if not isinstance(headers, dict) or not isinstance(params, dict):
         return {'status':'error','status_code':0,'response_headers':{},'body':'','final_url':'','elapsed_ms':0,'message':'headers and params must be objects.'}
-        raise SystemExit
     headers = {str(k): str(v) for k, v in headers.items()}
     params = {str(k): str(v) for k, v in params.items()}
     kwargs = {'headers': headers, 'params': params, 'timeout': timeout, 'allow_redirects': allow_redirects, 'verify': verify_tls}

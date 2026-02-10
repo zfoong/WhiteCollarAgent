@@ -48,7 +48,6 @@ def keyboard_typing(input_data: dict) -> dict:
     interval = float(input_data.get('interval', 0))
     if not text:
         return {'status': 'error', 'message': 'No text provided.'}
-        exit()
     try:
         pyautogui.write(text, interval=interval)
         return {'status': 'success', 'message': ''}

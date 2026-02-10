@@ -42,6 +42,8 @@ SKIP_UNPROCESSED_EVENT_TYPES = {
     # Task lifecycle events
     # "task_start",
     # "task_end",
+    "todos",
+    "error",
     # System events
     "waiting_for_user",
 }

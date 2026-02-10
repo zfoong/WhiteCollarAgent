@@ -18,31 +18,8 @@ from core.action.action_framework.registry import action
     input_schema={
         "todos": {
             "type": "array",
-            "description": "The complete todo list following the workflow: acknowledge -> collect info -> execute -> verify -> confirm -> cleanup.",
-            "example": [
-                {"content": "Acknowledge task and confirm understanding with user", "status": "completed"},
-                {"content": "Collect information: user's preferred format, data sources", "status": "completed"},
-                {"content": "Execute: Fetch weather data from reliable source", "status": "in_progress"},
-                {"content": "Execute: Format the weather report", "status": "pending"},
-                {"content": "Verify: Check report accuracy and completeness", "status": "pending"},
-                {"content": "Confirm: Send result to user and await approval", "status": "pending"},
-                {"content": "Clean up: Remove temporary files", "status": "pending"}
-            ],
-            "items": {
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": "What needs to be done. Prefix with phase: 'Acknowledge:', 'Collect:', 'Execute:', 'Verify:', 'Confirm:', 'Cleanup:'"
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "in_progress", "completed"],
-                        "description": "pending=not started, in_progress=working on it, completed=done"
-                    }
-                },
-                "required": ["content", "status"]
-            }
+            "description": "Array of todo objects. Each object MUST have exactly 2 keys: 'content' (string: the task text) and 'status' (string: 'pending'|'in_progress'|'completed'). Example: [{\"content\": \"Do X\", \"status\": \"completed\"}, {\"content\": \"Do Y\", \"status\": \"in_progress\"}]",
+            "required": True
         }
     },
     output_schema={
