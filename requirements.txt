@@ -37,3 +37,4 @@ textual-image>=0.8.0
 pyperclip
 gradio_client
 watchdog
+telethon

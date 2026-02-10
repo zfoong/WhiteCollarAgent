@@ -34,6 +34,7 @@ from core.tui.skill_settings import (
     reload_skills,
     get_skill_search_directories,
 )
+from core.credentials.handlers import INTEGRATION_HANDLERS
 
 if TYPE_CHECKING:
     from core.agent_base import AgentBase
@@ -135,6 +136,17 @@ class TUIInterface:
         # Handle /skill command with subcommands
         if command == "/skill":
             await self._handle_skill_command(parts[1:])
+            return True
+
+        # Handle /cred command
+        if command == "/cred":
+            await self._handle_cred_command(parts[1:])
+            return True
+
+        # Handle per-integration commands (/google, /slack, /telegram, etc.)
+        integration_name = command.lstrip("/")
+        if integration_name in INTEGRATION_HANDLERS:
+            await self._handle_integration_command(integration_name, parts[1:])
             return True
 
         handler = self._command_handlers.get(command)
@@ -550,6 +562,43 @@ Skills are discovered from:
 
 Skills are automatically selected during task creation based on the task description."""
 
+    # ── Credential / Integration Commands ──
+
+    async def _handle_cred_command(self, args: list[str]) -> None:
+        if not args:
+            await self.chat_updates.put(("System", "Usage: /cred <list|status|integrations>", "system"))
+            return
+        sub = args[0].lower()
+        if sub == "list":
+            from core.tui.credential_commands import list_all_credentials
+            _, msg = list_all_credentials()
+            await self.chat_updates.put(("System", msg, "system"))
+        elif sub == "status":
+            lines = ["Integration Status:", ""]
+            for name, handler in INTEGRATION_HANDLERS.items():
+                try:
+                    _, s = await handler.status()
+                    lines.append(f"  {s.split(chr(10))[0]}")
+                except Exception as e:
+                    lines.append(f"  {name}: Error ({e})")
+            await self.chat_updates.put(("System", "\n".join(lines), "system"))
+        elif sub == "integrations":
+            from core.tui.credential_commands import list_integrations
+            _, msg = list_integrations()
+            await self.chat_updates.put(("System", msg, "system"))
+        else:
+            await self.chat_updates.put(("System", f"Unknown /cred subcommand: {sub}", "error"))
+
+    async def _handle_integration_command(self, name: str, args: list[str]) -> None:
+        handler = INTEGRATION_HANDLERS[name]
+        if not args:
+            subs = handler.subcommands
+            await self.chat_updates.put(("System", f"Usage: /{name} <{'|'.join(subs)}>", "system"))
+            return
+        sub = args[0].lower()
+        ok, msg = await handler.handle(sub, args[1:])
+        await self.chat_updates.put(("System", msg, "system" if ok else "error"))
+
     def _build_help_text(self) -> str:
         intro = (
             "I am a computer-use AI agent., I can perform computer-based task autonomously "
@@ -564,6 +613,7 @@ Skills are automatically selected during task creation based on the task descrip
             "/exit": "Exit the session.",
             "/mcp": "Manage MCP servers (list, add, remove, enable, disable).",
             "/skill": "Manage skills (list, info, enable, disable, reload).",
+            "/cred": "Manage credentials (list, status, integrations).",
         }
 
         lines: list[str] = [intro, "", "Available commands:"]
