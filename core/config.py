@@ -33,3 +33,15 @@ ZOOM_CLIENT_ID: str = os.environ.get("ZOOM_CLIENT_ID", "")
 ZOOM_CLIENT_SECRET: str = os.environ.get("ZOOM_CLIENT_SECRET", "")
 DISCORD_SHARED_BOT_TOKEN: str = os.environ.get("DISCORD_SHARED_BOT_TOKEN", "")
 DISCORD_SHARED_BOT_ID: str = os.environ.get("DISCORD_SHARED_BOT_ID", "")
+
+# Shared Slack App (CraftOS-hosted)
+SLACK_SHARED_CLIENT_ID: str = os.environ.get("SLACK_SHARED_CLIENT_ID", "")
+SLACK_SHARED_CLIENT_SECRET: str = os.environ.get("SLACK_SHARED_CLIENT_SECRET", "")
+
+# Shared Telegram Bot (CraftOS-hosted)
+TELEGRAM_SHARED_BOT_TOKEN: str = os.environ.get("TELEGRAM_SHARED_BOT_TOKEN", "")
+TELEGRAM_SHARED_BOT_USERNAME: str = os.environ.get("TELEGRAM_SHARED_BOT_USERNAME", "")
+
+# Shared Notion Integration (CraftOS-hosted)
+NOTION_SHARED_CLIENT_ID: str = os.environ.get("NOTION_SHARED_CLIENT_ID", "")
+NOTION_SHARED_CLIENT_SECRET: str = os.environ.get("NOTION_SHARED_CLIENT_SECRET", "")

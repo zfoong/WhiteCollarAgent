@@ -1235,6 +1235,37 @@ class AgentBase:
             logger.debug(f"[SKILLS] Traceback: {traceback.format_exc()}")
 
     # =====================================
+    # External Libraries
+    # =====================================
+
+    async def _initialize_external_libraries(self) -> None:
+        """Initialize all external app libraries."""
+        try:
+            from core.external_libraries.notion.external_app_library import NotionAppLibrary
+            from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
+            from core.external_libraries.slack.external_app_library import SlackAppLibrary
+            from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
+            from core.external_libraries.linkedin.external_app_library import LinkedInAppLibrary
+            from core.external_libraries.zoom.external_app_library import ZoomAppLibrary
+            from core.external_libraries.discord.external_app_library import DiscordAppLibrary
+            from core.external_libraries.recall.external_app_library import RecallAppLibrary
+            from core.external_libraries.google_workspace.external_app_library import GoogleWorkspaceAppLibrary
+
+            NotionAppLibrary.initialize()
+            WhatsAppAppLibrary.initialize()
+            SlackAppLibrary.initialize()
+            TelegramAppLibrary.initialize()
+            LinkedInAppLibrary.initialize()
+            ZoomAppLibrary.initialize()
+            DiscordAppLibrary.initialize()
+            RecallAppLibrary.initialize()
+            GoogleWorkspaceAppLibrary.initialize()
+            
+            logger.info("[EXT LIBS] External libraries initialized")
+        except Exception as e:
+            logger.warning(f"[EXT LIBS] Failed to initialize external libraries: {e}")
+
+    # =====================================
     # Lifecycle
     # =====================================
 
@@ -1253,6 +1284,9 @@ class AgentBase:
 
         # Initialize skills system
         await self._initialize_skills()
+
+        # Initialize external app libraries
+        await self._initialize_external_libraries()
 
         # Process unprocessed events into memory at startup (if enabled)
         if PROCESS_MEMORY_AT_STARTUP:

@@ -14,7 +14,6 @@ from core.action.action_framework.registry import action
 )
 def send_slack_message(input_data: dict) -> dict:
     from core.external_libraries.slack.external_app_library import SlackAppLibrary
-    SlackAppLibrary.initialize()
     creds = SlackAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Slack credential. Use /slack login first."}
@@ -36,7 +35,6 @@ def send_slack_message(input_data: dict) -> dict:
 )
 def list_slack_channels(input_data: dict) -> dict:
     from core.external_libraries.slack.external_app_library import SlackAppLibrary
-    SlackAppLibrary.initialize()
     creds = SlackAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Slack credential. Use /slack login first."}
@@ -58,7 +56,6 @@ def list_slack_channels(input_data: dict) -> dict:
 )
 def get_slack_channel_history(input_data: dict) -> dict:
     from core.external_libraries.slack.external_app_library import SlackAppLibrary
-    SlackAppLibrary.initialize()
     creds = SlackAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Slack credential. Use /slack login first."}
@@ -79,7 +76,6 @@ def get_slack_channel_history(input_data: dict) -> dict:
 )
 def list_slack_users(input_data: dict) -> dict:
     from core.external_libraries.slack.external_app_library import SlackAppLibrary
-    SlackAppLibrary.initialize()
     creds = SlackAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Slack credential. Use /slack login first."}
@@ -101,7 +97,6 @@ def list_slack_users(input_data: dict) -> dict:
 )
 def search_slack_messages(input_data: dict) -> dict:
     from core.external_libraries.slack.external_app_library import SlackAppLibrary
-    SlackAppLibrary.initialize()
     creds = SlackAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Slack credential. Use /slack login first."}
@@ -125,7 +120,6 @@ def search_slack_messages(input_data: dict) -> dict:
 )
 def upload_slack_file(input_data: dict) -> dict:
     from core.external_libraries.slack.external_app_library import SlackAppLibrary
-    SlackAppLibrary.initialize()
     creds = SlackAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Slack credential. Use /slack login first."}
@@ -134,3 +128,97 @@ def upload_slack_file(input_data: dict) -> dict:
     result = upload_file(cred.bot_token, input_data["channels"], file_path=input_data.get("file_path"),
                          title=input_data.get("title"), initial_comment=input_data.get("initial_comment"))
     return {"status": "success", "result": result}
+
+
+@action(
+    name="get_slack_user_info",
+    description="Get info about a Slack user.",
+    action_sets=["slack"],
+    input_schema={
+        "slack_user_id": {"type": "string", "description": "User ID.", "example": "U1234567"},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def get_slack_user_info(input_data: dict) -> dict:
+    from core.external_libraries.slack.external_app_library import SlackAppLibrary
+    result = SlackAppLibrary.get_user_info(
+        user_id=input_data.get("user_id", "local"),
+        slack_user_id=input_data["slack_user_id"]
+    )
+    return {"status": result.get("status", "success"), "result": result}
+
+
+@action(
+    name="get_slack_channel_info",
+    description="Get info about a Slack channel.",
+    action_sets=["slack"],
+    input_schema={
+        "channel": {"type": "string", "description": "Channel ID.", "example": "C1234567"},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def get_slack_channel_info(input_data: dict) -> dict:
+    from core.external_libraries.slack.external_app_library import SlackAppLibrary
+    result = SlackAppLibrary.get_channel_info(
+        user_id=input_data.get("user_id", "local"),
+        channel=input_data["channel"]
+    )
+    return {"status": result.get("status", "success"), "result": result}
+
+
+@action(
+    name="create_slack_channel",
+    description="Create a new Slack channel.",
+    action_sets=["slack"],
+    input_schema={
+        "name": {"type": "string", "description": "Channel name.", "example": "project-alpha"},
+        "is_private": {"type": "boolean", "description": "Is private?", "example": False},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def create_slack_channel(input_data: dict) -> dict:
+    from core.external_libraries.slack.external_app_library import SlackAppLibrary
+    result = SlackAppLibrary.create_channel(
+        user_id=input_data.get("user_id", "local"),
+        name=input_data["name"],
+        is_private=input_data.get("is_private", False)
+    )
+    return {"status": result.get("status", "success"), "result": result}
+
+
+@action(
+    name="invite_to_slack_channel",
+    description="Invite users to a Slack channel.",
+    action_sets=["slack"],
+    input_schema={
+        "channel": {"type": "string", "description": "Channel ID.", "example": "C1234567"},
+        "users": {"type": "array", "description": "List of user IDs.", "example": ["U123"]},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def invite_to_slack_channel(input_data: dict) -> dict:
+    from core.external_libraries.slack.external_app_library import SlackAppLibrary
+    result = SlackAppLibrary.invite_to_channel(
+        user_id=input_data.get("user_id", "local"),
+        channel=input_data["channel"],
+        users=input_data["users"]
+    )
+    return {"status": result.get("status", "success"), "result": result}
+
+
+@action(
+    name="open_slack_dm",
+    description="Open a DM with Slack users.",
+    action_sets=["slack"],
+    input_schema={
+        "users": {"type": "array", "description": "List of user IDs.", "example": ["U123"]},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def open_slack_dm(input_data: dict) -> dict:
+    from core.external_libraries.slack.external_app_library import SlackAppLibrary
+    result = SlackAppLibrary.open_dm(
+        user_id=input_data.get("user_id", "local"),
+        users=input_data["users"]
+    )
+    return {"status": result.get("status", "success"), "result": result}

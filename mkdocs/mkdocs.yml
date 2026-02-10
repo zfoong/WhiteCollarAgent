@@ -61,4 +61,5 @@ plugins:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Connections: connections.md
   - API Reference: reference/

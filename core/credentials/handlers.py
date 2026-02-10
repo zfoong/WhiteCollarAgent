@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import secrets
 import time
+import webbrowser
 from abc import ABC, abstractmethod
 from typing import Tuple
 from urllib.parse import urlencode
@@ -18,6 +19,21 @@ class IntegrationHandler(ABC):
     async def logout(self, args: list[str]) -> Tuple[bool, str]: ...
     @abstractmethod
     async def status(self) -> Tuple[bool, str]: ...
+
+    async def invite(self, args: list[str]) -> Tuple[bool, str]:
+        return False, "Invite not available for this integration. Use 'login' instead."
+
+    @property
+    def subcommands(self) -> list[str]:
+        return ["login", "logout", "status"]
+
+    async def handle(self, sub: str, args: list[str]) -> Tuple[bool, str]:
+        """Route subcommand. Override in subclasses for extra subcommands."""
+        if sub == "invite":    return await self.invite(args)
+        if sub == "login":     return await self.login(args)
+        if sub == "logout":    return await self.logout(args)
+        if sub == "status":    return await self.status()
+        return False, f"Unknown subcommand: {sub}. Use: {', '.join(self.subcommands)}"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -77,6 +93,37 @@ class GoogleHandler(IntegrationHandler):
 # ═══════════════════════════════════════════════════════════════════
 
 class SlackHandler(IntegrationHandler):
+    @property
+    def subcommands(self) -> list[str]:
+        return ["invite", "login", "logout", "status"]
+
+    async def invite(self, args):
+        from core.config import SLACK_SHARED_CLIENT_ID, SLACK_SHARED_CLIENT_SECRET
+        if not SLACK_SHARED_CLIENT_ID or not SLACK_SHARED_CLIENT_SECRET:
+            return False, "CraftOS Slack app not configured. Set SLACK_SHARED_CLIENT_ID and SLACK_SHARED_CLIENT_SECRET env vars.\nAlternatively, use /slack login <bot_token> with your own Slack app."
+
+        scopes = "chat:write,channels:read,channels:history,groups:read,groups:history,users:read,search:read,files:write,im:read,im:write,im:history"
+        params = {"client_id": SLACK_SHARED_CLIENT_ID, "scope": scopes, "redirect_uri": REDIRECT_URI, "state": secrets.token_urlsafe(32)}
+        from core.credentials.oauth_server import run_oauth_flow
+        code, error = run_oauth_flow(f"https://slack.com/oauth/v2/authorize?{urlencode(params)}")
+        if error: return False, f"Slack OAuth failed: {error}"
+
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.post("https://slack.com/api/oauth.v2.access", data={"code": code, "client_id": SLACK_SHARED_CLIENT_ID, "client_secret": SLACK_SHARED_CLIENT_SECRET, "redirect_uri": REDIRECT_URI}) as r:
+                data = await r.json()
+                if not data.get("ok"): return False, f"Slack OAuth token exchange failed: {data.get('error')}"
+
+        bot_token = data.get("access_token", "")
+        team_id = data.get("team", {}).get("id", "")
+        team_name = data.get("team", {}).get("name", team_id)
+
+        from core.external_libraries.slack.external_app_library import SlackAppLibrary
+        from core.external_libraries.slack.credentials import SlackCredential
+        SlackAppLibrary.initialize()
+        SlackAppLibrary.get_credential_store().add(SlackCredential(user_id=LOCAL_USER_ID, workspace_id=team_id, workspace_name=team_name, bot_token=bot_token, team_id=team_id))
+        return True, f"Slack connected via CraftOS app: {team_name} ({team_id})"
+
     async def login(self, args):
         if not args: return False, "Usage: /slack login <bot_token> [workspace_name]"
         bot_token = args[0]
@@ -119,6 +166,39 @@ class SlackHandler(IntegrationHandler):
 # ═══════════════════════════════════════════════════════════════════
 
 class NotionHandler(IntegrationHandler):
+    @property
+    def subcommands(self) -> list[str]:
+        return ["invite", "login", "logout", "status"]
+
+    async def invite(self, args):
+        from core.config import NOTION_SHARED_CLIENT_ID, NOTION_SHARED_CLIENT_SECRET
+        if not NOTION_SHARED_CLIENT_ID or not NOTION_SHARED_CLIENT_SECRET:
+            return False, "CraftOS Notion integration not configured. Set NOTION_SHARED_CLIENT_ID and NOTION_SHARED_CLIENT_SECRET env vars.\nAlternatively, use /notion login <token> with your own integration token."
+
+        params = {"client_id": NOTION_SHARED_CLIENT_ID, "redirect_uri": REDIRECT_URI, "response_type": "code", "owner": "user", "state": secrets.token_urlsafe(32)}
+        from core.credentials.oauth_server import run_oauth_flow
+        code, error = run_oauth_flow(f"https://api.notion.com/v1/oauth/authorize?{urlencode(params)}")
+        if error: return False, f"Notion OAuth failed: {error}"
+
+        import aiohttp, base64
+        basic = base64.b64encode(f"{NOTION_SHARED_CLIENT_ID}:{NOTION_SHARED_CLIENT_SECRET}".encode()).decode()
+        async with aiohttp.ClientSession() as s:
+            async with s.post("https://api.notion.com/v1/oauth/token",
+                              json={"grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT_URI},
+                              headers={"Authorization": f"Basic {basic}", "Content-Type": "application/json"}) as r:
+                if r.status != 200: return False, f"Notion token exchange failed: {await r.text()}"
+                data = await r.json()
+
+        token = data.get("access_token", "")
+        ws_name = data.get("workspace_name", "default")
+        ws_id = data.get("workspace_id", ws_name)
+
+        from core.external_libraries.notion.external_app_library import NotionAppLibrary
+        from core.external_libraries.notion.credentials import NotionCredential
+        NotionAppLibrary.initialize()
+        NotionAppLibrary.get_credential_store().add(NotionCredential(user_id=LOCAL_USER_ID, workspace_id=ws_id, workspace_name=ws_name, token=token))
+        return True, f"Notion connected via CraftOS integration: {ws_name}"
+
     async def login(self, args):
         if not args: return False, "Usage: /notion login <integration_token>"
         token = args[0]
@@ -259,44 +339,47 @@ class ZoomHandler(IntegrationHandler):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Discord Guild
+# Discord (unified: invite + bot + user)
 # ═══════════════════════════════════════════════════════════════════
 
-class DiscordGuildHandler(IntegrationHandler):
-    async def login(self, args):
-        if not args: return False, "Usage: /discord login <guild_id> [guild_name]"
-        guild_id, guild_name = args[0], args[1] if len(args) > 1 else args[0]
+class DiscordHandler(IntegrationHandler):
+    @property
+    def subcommands(self) -> list[str]:
+        return ["invite", "login", "login-user", "logout", "status"]
+
+    async def handle(self, sub, args):
+        if sub == "login-user": return await self._login_user(args)
+        return await super().handle(sub, args)
+
+    async def invite(self, args):
+        from core.config import DISCORD_SHARED_BOT_ID
+        if not DISCORD_SHARED_BOT_ID:
+            return False, "CraftOS Discord bot not configured. Set DISCORD_SHARED_BOT_ID env var.\nAlternatively, use /discord login <bot_token> with your own bot."
+
+        permissions = 274878024704  # Send Messages, Read Messages, Embed Links, Attach Files, Read History, Add Reactions
+        invite_url = f"https://discord.com/oauth2/authorize?client_id={DISCORD_SHARED_BOT_ID}&permissions={permissions}&scope=bot%20applications.commands"
+        webbrowser.open(invite_url)
+
+        if args:
+            guild_id = args[0]
+            guild_name = args[1] if len(args) > 1 else guild_id
+        else:
+            return True, (
+                f"Bot invite link opened in browser.\n"
+                f"After adding the bot to your server, register the guild:\n"
+                f"  /discord invite <guild_id> [guild_name]\n\n"
+                f"Invite URL: {invite_url}"
+            )
 
         from core.external_libraries.discord.external_app_library import DiscordAppLibrary
         from core.external_libraries.discord.credentials import DiscordSharedBotGuildCredential
         DiscordAppLibrary.initialize()
-        DiscordAppLibrary.add_shared_bot_guild(DiscordSharedBotGuildCredential(user_id=LOCAL_USER_ID, guild_id=guild_id, guild_name=guild_name, connected_at=str(int(time.time()))))
-        return True, f"Discord guild registered: {guild_name} ({guild_id})"
+        DiscordAppLibrary.add_shared_bot_guild(DiscordSharedBotGuildCredential(
+            user_id=LOCAL_USER_ID, guild_id=guild_id, guild_name=guild_name, connected_at=str(int(time.time()))))
+        return True, f"Discord guild registered with CraftOS bot: {guild_name} ({guild_id})"
 
-    async def logout(self, args):
-        from core.external_libraries.discord.external_app_library import DiscordAppLibrary
-        DiscordAppLibrary.initialize()
-        guilds = DiscordAppLibrary.get_shared_bot_guilds(LOCAL_USER_ID)
-        if not guilds: return False, "No Discord guilds registered."
-        gid = args[0] if args else guilds[0].guild_id
-        DiscordAppLibrary.remove_shared_bot_guild(LOCAL_USER_ID, gid)
-        return True, f"Removed Discord guild {gid}."
-
-    async def status(self):
-        from core.external_libraries.discord.external_app_library import DiscordAppLibrary
-        DiscordAppLibrary.initialize()
-        guilds = DiscordAppLibrary.get_shared_bot_guilds(LOCAL_USER_ID)
-        if not guilds: return True, "Discord Guild: No guilds registered"
-        return True, "Discord Guild: Connected\n" + "\n".join(f"  - {g.guild_name} ({g.guild_id})" for g in guilds)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Discord Bot
-# ═══════════════════════════════════════════════════════════════════
-
-class DiscordBotHandler(IntegrationHandler):
     async def login(self, args):
-        if not args: return False, "Usage: /discord-bot login <bot_token>"
+        if not args: return False, "Usage: /discord login <bot_token>"
         bot_token = args[0]
 
         import aiohttp
@@ -308,33 +391,12 @@ class DiscordBotHandler(IntegrationHandler):
         from core.external_libraries.discord.external_app_library import DiscordAppLibrary
         from core.external_libraries.discord.credentials import DiscordBotCredential
         DiscordAppLibrary.initialize()
-        DiscordAppLibrary.add_bot_credential(DiscordBotCredential(user_id=LOCAL_USER_ID, bot_token=bot_token, bot_id=data.get("id", ""), bot_username=data.get("username", "")))
+        DiscordAppLibrary.add_bot_credential(DiscordBotCredential(
+            user_id=LOCAL_USER_ID, bot_token=bot_token, bot_id=data.get("id", ""), bot_username=data.get("username", "")))
         return True, f"Discord bot connected: {data.get('username')} ({data.get('id')})"
 
-    async def logout(self, args):
-        from core.external_libraries.discord.external_app_library import DiscordAppLibrary
-        DiscordAppLibrary.initialize()
-        creds = DiscordAppLibrary.get_bot_credentials(LOCAL_USER_ID)
-        if not creds: return False, "No Discord bot credentials found."
-        bid = args[0] if args else creds[0].bot_id
-        DiscordAppLibrary.remove_bot_credential(LOCAL_USER_ID, bid)
-        return True, f"Removed Discord bot {bid}."
-
-    async def status(self):
-        from core.external_libraries.discord.external_app_library import DiscordAppLibrary
-        DiscordAppLibrary.initialize()
-        creds = DiscordAppLibrary.get_bot_credentials(LOCAL_USER_ID)
-        if not creds: return True, "Discord Bot: Not connected"
-        return True, "Discord Bot: Connected\n" + "\n".join(f"  - {c.bot_username} ({c.bot_id})" for c in creds)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Discord User
-# ═══════════════════════════════════════════════════════════════════
-
-class DiscordUserHandler(IntegrationHandler):
-    async def login(self, args):
-        if not args: return False, "Usage: /discord-user login <user_token>"
+    async def _login_user(self, args):
+        if not args: return False, "Usage: /discord login-user <user_token>"
         user_token = args[0]
 
         import aiohttp
@@ -346,31 +408,100 @@ class DiscordUserHandler(IntegrationHandler):
         from core.external_libraries.discord.external_app_library import DiscordAppLibrary
         from core.external_libraries.discord.credentials import DiscordUserCredential
         DiscordAppLibrary.initialize()
-        DiscordAppLibrary.add_user_credential(DiscordUserCredential(user_id=LOCAL_USER_ID, user_token=user_token, discord_user_id=data.get("id", ""), username=data.get("username", ""), discriminator=data.get("discriminator", "")))
+        DiscordAppLibrary.add_user_credential(DiscordUserCredential(
+            user_id=LOCAL_USER_ID, user_token=user_token, discord_user_id=data.get("id", ""),
+            username=data.get("username", ""), discriminator=data.get("discriminator", "")))
         return True, f"Discord user connected: {data.get('username')} ({data.get('id')})"
 
     async def logout(self, args):
         from core.external_libraries.discord.external_app_library import DiscordAppLibrary
         DiscordAppLibrary.initialize()
-        creds = DiscordAppLibrary.get_user_credentials(LOCAL_USER_ID)
-        if not creds: return False, "No Discord user credentials found."
-        uid = args[0] if args else creds[0].discord_user_id
-        DiscordAppLibrary.remove_user_credential(LOCAL_USER_ID, uid)
-        return True, f"Removed Discord user {uid}."
+
+        # Try removing from each credential type
+        if args:
+            target = args[0]
+            DiscordAppLibrary.remove_bot_credential(LOCAL_USER_ID, target)
+            DiscordAppLibrary.remove_user_credential(LOCAL_USER_ID, target)
+            DiscordAppLibrary.remove_shared_bot_guild(LOCAL_USER_ID, target)
+            return True, f"Removed Discord credential: {target}"
+
+        # No args — remove first found from any type
+        bots = DiscordAppLibrary.get_bot_credentials(LOCAL_USER_ID)
+        if bots:
+            DiscordAppLibrary.remove_bot_credential(LOCAL_USER_ID, bots[0].bot_id)
+            return True, f"Removed Discord bot {bots[0].bot_username} ({bots[0].bot_id})."
+        users = DiscordAppLibrary.get_user_credentials(LOCAL_USER_ID)
+        if users:
+            DiscordAppLibrary.remove_user_credential(LOCAL_USER_ID, users[0].discord_user_id)
+            return True, f"Removed Discord user {users[0].username} ({users[0].discord_user_id})."
+        guilds = DiscordAppLibrary.get_shared_bot_guilds(LOCAL_USER_ID)
+        if guilds:
+            DiscordAppLibrary.remove_shared_bot_guild(LOCAL_USER_ID, guilds[0].guild_id)
+            return True, f"Removed Discord guild {guilds[0].guild_name} ({guilds[0].guild_id})."
+        return False, "No Discord credentials found."
 
     async def status(self):
         from core.external_libraries.discord.external_app_library import DiscordAppLibrary
         DiscordAppLibrary.initialize()
-        creds = DiscordAppLibrary.get_user_credentials(LOCAL_USER_ID)
-        if not creds: return True, "Discord User: Not connected"
-        return True, "Discord User: Connected\n" + "\n".join(f"  - {c.username} ({c.discord_user_id})" for c in creds)
+        lines = []
+        bots = DiscordAppLibrary.get_bot_credentials(LOCAL_USER_ID)
+        if bots:
+            lines.append("  Bots:")
+            lines.extend(f"    - {c.bot_username} ({c.bot_id})" for c in bots)
+        users = DiscordAppLibrary.get_user_credentials(LOCAL_USER_ID)
+        if users:
+            lines.append("  Users:")
+            lines.extend(f"    - {c.username} ({c.discord_user_id})" for c in users)
+        guilds = DiscordAppLibrary.get_shared_bot_guilds(LOCAL_USER_ID)
+        if guilds:
+            lines.append("  Guilds (CraftOS bot):")
+            lines.extend(f"    - {g.guild_name} ({g.guild_id})" for g in guilds)
+        if not lines: return True, "Discord: Not connected"
+        return True, "Discord: Connected\n" + "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Telegram Bot
+# Telegram (unified: invite + bot + user)
 # ═══════════════════════════════════════════════════════════════════
 
-class TelegramBotHandler(IntegrationHandler):
+class TelegramHandler(IntegrationHandler):
+    @property
+    def subcommands(self) -> list[str]:
+        return ["invite", "login", "login-user", "logout", "status"]
+
+    async def handle(self, sub, args):
+        if sub == "login-user": return await self._login_user(args)
+        return await super().handle(sub, args)
+
+    async def invite(self, args):
+        from core.config import TELEGRAM_SHARED_BOT_TOKEN, TELEGRAM_SHARED_BOT_USERNAME
+        if not TELEGRAM_SHARED_BOT_TOKEN or not TELEGRAM_SHARED_BOT_USERNAME:
+            return False, "CraftOS Telegram bot not configured. Set TELEGRAM_SHARED_BOT_TOKEN and TELEGRAM_SHARED_BOT_USERNAME env vars.\nAlternatively, use /telegram login <bot_token> with your own bot from @BotFather."
+
+        # Validate shared bot token
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://api.telegram.org/bot{TELEGRAM_SHARED_BOT_TOKEN}/getMe") as r:
+                data = await r.json()
+                if not data.get("ok"): return False, f"CraftOS Telegram bot token is invalid: {data.get('description')}"
+                info = data["result"]
+
+        # Store the shared bot credential locally
+        from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
+        from core.external_libraries.telegram.credentials import TelegramCredential
+        TelegramAppLibrary.initialize()
+        TelegramAppLibrary.get_credential_store().add(TelegramCredential(
+            user_id=LOCAL_USER_ID, connection_type="bot_api",
+            bot_id=str(info.get("id", "")), bot_username=info.get("username", ""),
+            bot_token=TELEGRAM_SHARED_BOT_TOKEN))
+
+        bot_link = f"https://t.me/{TELEGRAM_SHARED_BOT_USERNAME}"
+        webbrowser.open(bot_link)
+        return True, (
+            f"CraftOS Telegram bot connected: @{info.get('username')}\n"
+            f"Start chatting or add to groups: {bot_link}"
+        )
+
     async def login(self, args):
         if not args: return False, "Usage: /telegram login <bot_token>\nGet from @BotFather on Telegram."
         bot_token = args[0]
@@ -385,66 +516,77 @@ class TelegramBotHandler(IntegrationHandler):
         from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
         from core.external_libraries.telegram.credentials import TelegramCredential
         TelegramAppLibrary.initialize()
-        TelegramAppLibrary.get_credential_store().add(TelegramCredential(user_id=LOCAL_USER_ID, connection_type="bot_api", bot_id=str(info.get("id", "")), bot_username=info.get("username", ""), bot_token=bot_token))
+        TelegramAppLibrary.get_credential_store().add(TelegramCredential(
+            user_id=LOCAL_USER_ID, connection_type="bot_api",
+            bot_id=str(info.get("id", "")), bot_username=info.get("username", ""), bot_token=bot_token))
         return True, f"Telegram bot connected: @{info.get('username')} ({info.get('id')})"
 
-    async def logout(self, args):
-        from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
-        TelegramAppLibrary.initialize()
-        store = TelegramAppLibrary.get_credential_store()
-        creds = [c for c in store.get(LOCAL_USER_ID) if c.connection_type == "bot_api"]
-        if not creds: return False, "No Telegram bot credentials found."
-        bid = args[0] if args else creds[0].bot_id
-        store.remove(LOCAL_USER_ID, bot_id=bid)
-        return True, f"Removed Telegram bot {bid}."
-
-    async def status(self):
-        from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
-        TelegramAppLibrary.initialize()
-        creds = [c for c in TelegramAppLibrary.get_credential_store().get(LOCAL_USER_ID) if c.connection_type == "bot_api"]
-        if not creds: return True, "Telegram Bot: Not connected"
-        return True, "Telegram Bot: Connected\n" + "\n".join(f"  - @{c.bot_username} ({c.bot_id})" for c in creds)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Telegram MTProto
-# ═══════════════════════════════════════════════════════════════════
-
-class TelegramMTProtoHandler(IntegrationHandler):
-    async def login(self, args):
-        if len(args) < 3: return False, "Usage: /telegram-user login <api_id> <api_hash> <session_string> [phone]"
+    async def _login_user(self, args):
+        if len(args) < 3: return False, "Usage: /telegram login-user <api_id> <api_hash> <session_string> [phone]"
         try: api_id_int = int(args[0])
         except ValueError: return False, "api_id must be a number."
 
         from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
         from core.external_libraries.telegram.credentials import TelegramCredential
         TelegramAppLibrary.initialize()
-        TelegramAppLibrary.get_credential_store().add(TelegramCredential(user_id=LOCAL_USER_ID, connection_type="mtproto", api_id=api_id_int, api_hash=args[1], session_string=args[2], phone_number=args[3] if len(args) > 3 else "unknown"))
+        TelegramAppLibrary.get_credential_store().add(TelegramCredential(
+            user_id=LOCAL_USER_ID, connection_type="mtproto",
+            api_id=api_id_int, api_hash=args[1], session_string=args[2],
+            phone_number=args[3] if len(args) > 3 else "unknown"))
         return True, "Telegram user account connected via MTProto."
 
     async def logout(self, args):
         from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
         TelegramAppLibrary.initialize()
         store = TelegramAppLibrary.get_credential_store()
-        creds = [c for c in store.get(LOCAL_USER_ID) if c.connection_type == "mtproto"]
-        if not creds: return False, "No Telegram user credentials found."
-        phone = args[0] if args else creds[0].phone_number
-        store.remove(LOCAL_USER_ID, phone_number=phone)
-        return True, f"Removed Telegram user credential for {phone}."
+        all_creds = store.get(LOCAL_USER_ID)
+        if not all_creds: return False, "No Telegram credentials found."
+
+        if args:
+            target = args[0]
+            store.remove(LOCAL_USER_ID, bot_id=target)
+            store.remove(LOCAL_USER_ID, phone_number=target)
+            return True, f"Removed Telegram credential: {target}"
+
+        # Remove first credential found
+        cred = all_creds[0]
+        if cred.connection_type == "bot_api":
+            store.remove(LOCAL_USER_ID, bot_id=cred.bot_id)
+            return True, f"Removed Telegram bot @{cred.bot_username} ({cred.bot_id})."
+        else:
+            store.remove(LOCAL_USER_ID, phone_number=cred.phone_number)
+            return True, f"Removed Telegram user credential for {cred.phone_number}."
 
     async def status(self):
         from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
         TelegramAppLibrary.initialize()
-        creds = [c for c in TelegramAppLibrary.get_credential_store().get(LOCAL_USER_ID) if c.connection_type == "mtproto"]
-        if not creds: return True, "Telegram User: Not connected"
-        return True, "Telegram User: Connected\n" + "\n".join(f"  - {c.account_name or c.phone_number}" for c in creds)
+        all_creds = TelegramAppLibrary.get_credential_store().get(LOCAL_USER_ID)
+        if not all_creds: return True, "Telegram: Not connected"
+        lines = []
+        bots = [c for c in all_creds if c.connection_type == "bot_api"]
+        users = [c for c in all_creds if c.connection_type == "mtproto"]
+        if bots:
+            lines.append("  Bots:")
+            lines.extend(f"    - @{c.bot_username} ({c.bot_id})" for c in bots)
+        if users:
+            lines.append("  Users:")
+            lines.extend(f"    - {c.account_name or c.phone_number}" for c in users)
+        return True, "Telegram: Connected\n" + "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════
-# WhatsApp Business
+# WhatsApp (unified: business + web)
 # ═══════════════════════════════════════════════════════════════════
 
-class WhatsAppBusinessHandler(IntegrationHandler):
+class WhatsAppHandler(IntegrationHandler):
+    @property
+    def subcommands(self) -> list[str]:
+        return ["login", "login-web", "logout", "status"]
+
+    async def handle(self, sub, args):
+        if sub == "login-web": return await self._login_web(args)
+        return await super().handle(sub, args)
+
     async def login(self, args):
         if len(args) < 2: return False, "Usage: /whatsapp login <phone_number_id> <access_token> [business_account_id]"
 
@@ -457,57 +599,102 @@ class WhatsAppBusinessHandler(IntegrationHandler):
         from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
         from core.external_libraries.whatsapp.credentials import WhatsAppCredential
         WhatsAppAppLibrary.initialize()
-        WhatsAppAppLibrary.get_credential_store().add(WhatsAppCredential(user_id=LOCAL_USER_ID, phone_number_id=args[0], connection_type="business_api", business_account_id=args[2] if len(args) > 2 else "", access_token=args[1], display_phone_number=data.get("display_phone_number", args[0])))
+        WhatsAppAppLibrary.get_credential_store().add(WhatsAppCredential(
+            user_id=LOCAL_USER_ID, phone_number_id=args[0], connection_type="business_api",
+            business_account_id=args[2] if len(args) > 2 else "",
+            access_token=args[1], display_phone_number=data.get("display_phone_number", args[0])))
         return True, f"WhatsApp Business connected: {data.get('display_phone_number', args[0])}"
+
+    async def _login_web(self, args):
+        import asyncio
+
+        phone_number = args[0] if args else ""
+
+        try:
+            from core.external_libraries.whatsapp.helpers.whatsapp_web_helpers import start_whatsapp_web_session
+        except ImportError:
+            return False, "Playwright not installed. Run: pip install playwright && playwright install chromium"
+
+        session = await start_whatsapp_web_session(user_id=LOCAL_USER_ID)
+
+        if session.status == "error":
+            return False, "Failed to start WhatsApp Web session. Is Playwright installed?\n  pip install playwright && playwright install chromium"
+
+        # Wait for QR code (up to 30s)
+        for _ in range(30):
+            if session.status == "qr_ready" and session.qr_code:
+                break
+            if session.status == "connected":
+                break
+            if session.status == "error":
+                return False, "WhatsApp Web session failed to initialize."
+            await asyncio.sleep(1)
+        else:
+            return False, "Timed out waiting for QR code."
+
+        if session.status != "connected":
+            # Save QR as temp image and open it
+            import tempfile, base64, os
+            qr_data = session.qr_code
+            if qr_data and qr_data.startswith("data:image"):
+                qr_data = qr_data.split(",", 1)[1]
+            if qr_data:
+                qr_path = os.path.join(tempfile.gettempdir(), f"whatsapp_qr_{session.session_id}.png")
+                with open(qr_path, "wb") as f:
+                    f.write(base64.b64decode(qr_data))
+                webbrowser.open(f"file://{qr_path}")
+
+            # Wait for user to scan QR (up to 120s)
+            for _ in range(120):
+                if session.status == "connected":
+                    break
+                if session.status in ("error", "disconnected"):
+                    return False, "WhatsApp Web session disconnected or failed."
+                await asyncio.sleep(1)
+            else:
+                return False, "Timed out waiting for QR scan. Run /whatsapp login-web again."
+
+        # Connected — store credential
+        from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
+        from core.external_libraries.whatsapp.credentials import WhatsAppCredential
+        WhatsAppAppLibrary.initialize()
+
+        display_phone = session.phone_number or phone_number or session.session_id
+        WhatsAppAppLibrary.get_credential_store().add(WhatsAppCredential(
+            user_id=LOCAL_USER_ID,
+            phone_number_id=session.session_id,
+            connection_type="whatsapp_web",
+            session_id=session.session_id,
+            jid=session.jid or "",
+            display_phone_number=display_phone,
+        ))
+        return True, f"WhatsApp Web connected: {display_phone}\nSession ID: {session.session_id}"
 
     async def logout(self, args):
         from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
         WhatsAppAppLibrary.initialize()
         store = WhatsAppAppLibrary.get_credential_store()
-        creds = [c for c in store.get(LOCAL_USER_ID) if c.connection_type == "business_api"]
-        if not creds: return False, "No WhatsApp Business credentials found."
-        pid = args[0] if args else creds[0].phone_number_id
+        all_creds = store.get(LOCAL_USER_ID)
+        if not all_creds: return False, "No WhatsApp credentials found."
+        pid = args[0] if args else all_creds[0].phone_number_id
         store.remove(LOCAL_USER_ID, phone_number_id=pid)
         return True, f"Removed WhatsApp credential for {pid}."
 
     async def status(self):
         from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
         WhatsAppAppLibrary.initialize()
-        creds = [c for c in WhatsAppAppLibrary.get_credential_store().get(LOCAL_USER_ID) if c.connection_type == "business_api"]
-        if not creds: return True, "WhatsApp Business: Not connected"
-        return True, "WhatsApp Business: Connected\n" + "\n".join(f"  - {c.display_phone_number}" for c in creds)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# WhatsApp Web
-# ═══════════════════════════════════════════════════════════════════
-
-class WhatsAppWebHandler(IntegrationHandler):
-    async def login(self, args):
-        if len(args) < 2: return False, "Usage: /whatsapp-web login <session_id> <session_data> [phone_number_id]"
-
-        from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
-        from core.external_libraries.whatsapp.credentials import WhatsAppCredential
-        WhatsAppAppLibrary.initialize()
-        WhatsAppAppLibrary.get_credential_store().add(WhatsAppCredential(user_id=LOCAL_USER_ID, phone_number_id=args[2] if len(args) > 2 else args[0], connection_type="whatsapp_web", session_id=args[0], session_data=args[1]))
-        return True, f"WhatsApp Web session stored: {args[0]}"
-
-    async def logout(self, args):
-        from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
-        WhatsAppAppLibrary.initialize()
-        store = WhatsAppAppLibrary.get_credential_store()
-        creds = [c for c in store.get(LOCAL_USER_ID) if c.connection_type == "whatsapp_web"]
-        if not creds: return False, "No WhatsApp Web sessions found."
-        pid = args[0] if args else creds[0].phone_number_id
-        store.remove(LOCAL_USER_ID, phone_number_id=pid)
-        return True, f"Removed WhatsApp Web session {pid}."
-
-    async def status(self):
-        from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
-        WhatsAppAppLibrary.initialize()
-        creds = [c for c in WhatsAppAppLibrary.get_credential_store().get(LOCAL_USER_ID) if c.connection_type == "whatsapp_web"]
-        if not creds: return True, "WhatsApp Web: Not connected"
-        return True, "WhatsApp Web: Connected\n" + "\n".join(f"  - Session: {c.session_id}" for c in creds)
+        all_creds = WhatsAppAppLibrary.get_credential_store().get(LOCAL_USER_ID)
+        if not all_creds: return True, "WhatsApp: Not connected"
+        lines = []
+        biz = [c for c in all_creds if c.connection_type == "business_api"]
+        web = [c for c in all_creds if c.connection_type == "whatsapp_web"]
+        if biz:
+            lines.append("  Business API:")
+            lines.extend(f"    - {c.display_phone_number}" for c in biz)
+        if web:
+            lines.append("  Web Sessions:")
+            lines.extend(f"    - Session: {c.session_id}" for c in web)
+        return True, "WhatsApp: Connected\n" + "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -553,17 +740,13 @@ class RecallHandler(IntegrationHandler):
 # ═══════════════════════════════════════════════════════════════════
 
 INTEGRATION_HANDLERS: dict[str, IntegrationHandler] = {
-    "google": GoogleHandler(),
-    "slack": SlackHandler(),
-    "notion": NotionHandler(),
-    "linkedin": LinkedInHandler(),
-    "zoom": ZoomHandler(),
-    "discord": DiscordGuildHandler(),
-    "discord-bot": DiscordBotHandler(),
-    "discord-user": DiscordUserHandler(),
-    "telegram": TelegramBotHandler(),
-    "telegram-user": TelegramMTProtoHandler(),
-    "whatsapp": WhatsAppBusinessHandler(),
-    "whatsapp-web": WhatsAppWebHandler(),
-    "recall": RecallHandler(),
+    "google":    GoogleHandler(),
+    "slack":     SlackHandler(),
+    "notion":    NotionHandler(),
+    "linkedin":  LinkedInHandler(),
+    "zoom":      ZoomHandler(),
+    "discord":   DiscordHandler(),
+    "telegram":  TelegramHandler(),
+    "whatsapp":  WhatsAppHandler(),
+    "recall":    RecallHandler(),
 }

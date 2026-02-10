@@ -592,17 +592,11 @@ Skills are automatically selected during task creation based on the task descrip
     async def _handle_integration_command(self, name: str, args: list[str]) -> None:
         handler = INTEGRATION_HANDLERS[name]
         if not args:
-            await self.chat_updates.put(("System", f"Usage: /{name} <login|logout|status>", "system"))
+            subs = handler.subcommands
+            await self.chat_updates.put(("System", f"Usage: /{name} <{'|'.join(subs)}>", "system"))
             return
         sub = args[0].lower()
-        if sub == "login":
-            ok, msg = await handler.login(args[1:])
-        elif sub == "logout":
-            ok, msg = await handler.logout(args[1:])
-        elif sub == "status":
-            ok, msg = await handler.status()
-        else:
-            ok, msg = False, f"Unknown subcommand: {sub}. Use login, logout, or status."
+        ok, msg = await handler.handle(sub, args[1:])
         await self.chat_updates.put(("System", msg, "system" if ok else "error"))
 
     def _build_help_text(self) -> str:

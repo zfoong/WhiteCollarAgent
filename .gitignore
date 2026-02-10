@@ -22,3 +22,8 @@ node_modules
 .claude/
 OmniParser_CraftOS/
 _launch_agent.cmd
+**/.whatsapp_web_sessions/
+**/build
+**/build_*
+**/dist
+**/release

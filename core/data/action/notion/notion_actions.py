@@ -13,7 +13,6 @@ from core.action.action_framework.registry import action
 )
 def search_notion(input_data: dict) -> dict:
     from core.external_libraries.notion.external_app_library import NotionAppLibrary
-    NotionAppLibrary.initialize()
     creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Notion credential. Use /notion login first."}
@@ -34,7 +33,6 @@ def search_notion(input_data: dict) -> dict:
 )
 def get_notion_page(input_data: dict) -> dict:
     from core.external_libraries.notion.external_app_library import NotionAppLibrary
-    NotionAppLibrary.initialize()
     creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Notion credential. Use /notion login first."}
@@ -58,7 +56,6 @@ def get_notion_page(input_data: dict) -> dict:
 )
 def create_notion_page(input_data: dict) -> dict:
     from core.external_libraries.notion.external_app_library import NotionAppLibrary
-    NotionAppLibrary.initialize()
     creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Notion credential. Use /notion login first."}
@@ -82,7 +79,6 @@ def create_notion_page(input_data: dict) -> dict:
 )
 def query_notion_database(input_data: dict) -> dict:
     from core.external_libraries.notion.external_app_library import NotionAppLibrary
-    NotionAppLibrary.initialize()
     creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Notion credential. Use /notion login first."}
@@ -105,11 +101,71 @@ def query_notion_database(input_data: dict) -> dict:
 )
 def update_notion_page(input_data: dict) -> dict:
     from core.external_libraries.notion.external_app_library import NotionAppLibrary
-    NotionAppLibrary.initialize()
     creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Notion credential. Use /notion login first."}
     cred = creds[0]
     from core.external_libraries.notion.helpers.notion_helpers import update_page
     result = update_page(cred.token, input_data["page_id"], input_data["properties"])
+    return {"status": "success", "result": result}
+
+
+@action(
+    name="get_notion_database_schema",
+    description="Get a Notion database schema by ID.",
+    action_sets=["notion"],
+    input_schema={
+        "database_id": {"type": "string", "description": "Database ID.", "example": "abc123"},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}, "database": {"type": "object"}},
+)
+def get_notion_database_schema(input_data: dict) -> dict:
+    from core.external_libraries.notion.external_app_library import NotionAppLibrary
+    creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
+    if not creds:
+        return {"status": "error", "message": "No Notion credential. Use /notion login first."}
+    cred = creds[0]
+    from core.external_libraries.notion.helpers.notion_helpers import get_database
+    result = get_database(cred.token, input_data["database_id"])
+    return {"status": "success", "result": result}
+
+
+@action(
+    name="get_notion_page_content",
+    description="Get the content blocks of a Notion page.",
+    action_sets=["notion"],
+    input_schema={
+        "page_id": {"type": "string", "description": "Page ID.", "example": "abc123"},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}, "content": {"type": "array"}},
+)
+def get_notion_page_content(input_data: dict) -> dict:
+    from core.external_libraries.notion.external_app_library import NotionAppLibrary
+    creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
+    if not creds:
+        return {"status": "error", "message": "No Notion credential. Use /notion login first."}
+    cred = creds[0]
+    from core.external_libraries.notion.helpers.notion_helpers import get_block_children
+    result = get_block_children(cred.token, input_data["page_id"])
+    return {"status": "success", "result": result}
+
+
+@action(
+    name="append_notion_page_content",
+    description="Append content blocks to a Notion page.",
+    action_sets=["notion"],
+    input_schema={
+        "page_id": {"type": "string", "description": "Page ID.", "example": "abc123"},
+        "children": {"type": "array", "description": "List of block objects.", "example": []},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def append_notion_page_content(input_data: dict) -> dict:
+    from core.external_libraries.notion.external_app_library import NotionAppLibrary
+    creds = NotionAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
+    if not creds:
+        return {"status": "error", "message": "No Notion credential. Use /notion login first."}
+    cred = creds[0]
+    from core.external_libraries.notion.helpers.notion_helpers import append_block_children
+    result = append_block_children(cred.token, input_data["page_id"], input_data["children"])
     return {"status": "success", "result": result}

@@ -15,7 +15,6 @@ from core.action.action_framework.registry import action
 )
 def send_gmail(input_data: dict) -> dict:
     from core.external_libraries.google_workspace.external_app_library import GoogleWorkspaceAppLibrary
-    GoogleWorkspaceAppLibrary.initialize()
     creds = GoogleWorkspaceAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Google credential. Use /google login first."}
@@ -40,7 +39,6 @@ def send_gmail(input_data: dict) -> dict:
 )
 def list_gmail(input_data: dict) -> dict:
     from core.external_libraries.google_workspace.external_app_library import GoogleWorkspaceAppLibrary
-    GoogleWorkspaceAppLibrary.initialize()
     creds = GoogleWorkspaceAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Google credential. Use /google login first."}
@@ -62,7 +60,6 @@ def list_gmail(input_data: dict) -> dict:
 )
 def get_gmail(input_data: dict) -> dict:
     from core.external_libraries.google_workspace.external_app_library import GoogleWorkspaceAppLibrary
-    GoogleWorkspaceAppLibrary.initialize()
     creds = GoogleWorkspaceAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Google credential. Use /google login first."}
@@ -85,7 +82,6 @@ def get_gmail(input_data: dict) -> dict:
 )
 def read_top_emails(input_data: dict) -> dict:
     from core.external_libraries.google_workspace.external_app_library import GoogleWorkspaceAppLibrary
-    GoogleWorkspaceAppLibrary.initialize()
     creds = GoogleWorkspaceAppLibrary.get_credential_store().get(input_data.get("user_id", "local"))
     if not creds:
         return {"status": "error", "message": "No Google credential. Use /google login first."}
@@ -94,3 +90,51 @@ def read_top_emails(input_data: dict) -> dict:
     result = read_top_n_emails(cred.token, n=input_data.get("count", 5),
                                full_body=input_data.get("full_body", False))
     return {"status": "success", "result": result}
+
+
+@action(
+    name="send_google_workspace_email",
+    description="Send email via Google Workspace.",
+    action_sets=["google_workspace"],
+    input_schema={
+        "to_email": {"type": "string", "description": "Recipient.", "example": "user@example.com"},
+        "subject": {"type": "string", "description": "Subject.", "example": "Hello"},
+        "body": {"type": "string", "description": "Body.", "example": "Hi"},
+        "from_email": {"type": "string", "description": "Optional sender email.", "example": "me@example.com"},
+        "attachments": {"type": "array", "description": "Attachments.", "example": []},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def send_google_workspace_email(input_data: dict) -> dict:
+    from core.external_libraries.google_workspace.external_app_library import GoogleWorkspaceAppLibrary
+    result = GoogleWorkspaceAppLibrary.send_email(
+        user_id=input_data.get("user_id", "local"),
+        to_email=input_data["to_email"],
+        subject=input_data["subject"],
+        body=input_data["body"],
+        attachments=input_data.get("attachments"),
+        from_email=input_data.get("from_email")
+    )
+    return result
+
+
+@action(
+    name="read_recent_google_workspace_emails",
+    description="Read recent emails.",
+    action_sets=["google_workspace"],
+    input_schema={
+        "n": {"type": "integer", "description": "Count.", "example": 5},
+        "full_body": {"type": "boolean", "description": "Full body.", "example": False},
+        "from_email": {"type": "string", "description": "Optional sender email.", "example": "me@example.com"},
+    },
+    output_schema={"status": {"type": "string", "example": "success"}},
+)
+def read_recent_google_workspace_emails(input_data: dict) -> dict:
+    from core.external_libraries.google_workspace.external_app_library import GoogleWorkspaceAppLibrary
+    result = GoogleWorkspaceAppLibrary.read_recent_emails(
+        user_id=input_data.get("user_id", "local"),
+        n=input_data.get("n", 5),
+        full_body=input_data.get("full_body", False),
+        from_email=input_data.get("from_email")
+    )
+    return result
