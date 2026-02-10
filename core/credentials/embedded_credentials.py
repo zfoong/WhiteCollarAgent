@@ -25,22 +25,22 @@ from typing import Optional
 # Registry of embedded credentials (service_name -> key -> list of base64 parts)
 _EMBEDDED_CREDENTIALS: dict[str, dict[str, list[str]]] = {
     "google": {
-        "client_id": ["540355062005-37ctfr0a4uek1c=", "1fsp4ssnlthdtbdo6v.apps.googleusercontent.com"],
+        "client_id": ["NTQwMzU1MDYyMDA1LTM3Y3RmcjBhNHVlazFjMWZzcDRzc25sd", "GhkdGJkbzZ2LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t"],
     },
     "zoom": {
-        "client_id": ["ailiDccBTPi", "ZenJkoZrWGg"],
+        "client_id": ["YWlsaURjY0JUUGlaZ", "W5Ka29acldHZw=="],
     },
     "slack": {
-        "client_id": ["10430657713955", ".10437246162498"],
-        "client_secret": ["56875c0613e79c", "6e3bc51d9edfd63668"],
+        "client_id": ["MTA0MzA2NTc3MTM5NTUuM", "TA0MzcyNDYxNjI0OTg="],
+        "client_secret": ["NTY4NzVjMDYxM2U3OWM2ZTN", "iYzUxZDllZGZkNjM2Njg="],
     },
     "notion": {
-        "client_id": ["2fdd872b-594c-80d", "c-8e5f-003725ef33ff"],
-        "client_secret": ["secret_9RhEwShscCct9FNDC9C", "fEeQhKgEKW5qBXoV5bRz2tpr"],
+        "client_id": ["MmZkZDg3MmItNTk0Yy04MGRjL", "ThlNWYtMDAzNzI1ZWYzM2Zm"],
+        "client_secret": ["c2VjcmV0XzlSaEV3U2hzY0NjdDlGTkRDOUN", "mRWVRaEtnRUtXNXFCWG9WNWJSejJ0cHI="],
     },
     "linkedin": {
-        "client_id": ["86xiuo", "dt6r472u"],
-        "client_secret": ["WPL_AP1.EHqGx4T", "8fR3I5r37.qG5N9A=="],
+        "client_id": ["ODZ4aXVvZHQ", "2cjQ3MnU="],
+        "client_secret": ["V1BMX0FQMS5FSHFHeDRUOGZ", "SM0k1cjM3LnFHNU45QT09"],
     },
 }
 
