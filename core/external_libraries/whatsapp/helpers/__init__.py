@@ -1,6 +1,5 @@
-# WhatsApp helpers - Business API and WhatsApp Web
+# WhatsApp helpers - WhatsApp Web
 
-from .whatsapp_helpers import *
 from .whatsapp_web_helpers import (
     WhatsAppWebManager,
     WhatsAppWebSession,

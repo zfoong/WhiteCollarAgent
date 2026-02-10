@@ -166,23 +166,21 @@ Requires `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET` env vars. Create an OAuth app
 
 ## WhatsApp
 
-Send text, media, and template messages via WhatsApp Business API or WhatsApp Web.
+Send text and media messages via WhatsApp Web.
 
-**Available actions:** `send_whatsapp_message`, `send_whatsapp_media`, `send_whatsapp_template`, `get_whatsapp_profile`
+**Available actions:** `send_whatsapp_web_text_message`, `send_whatsapp_web_media_message`, `get_whatsapp_chat_history`, `get_whatsapp_unread_chats`, `search_whatsapp_contact`
 
 ### Connect
 
 | Command | Description |
 |---------|-------------|
-| `/whatsapp login <phone_number_id> <access_token> [business_account_id]` | Connect WhatsApp Business API |
-| `/whatsapp login-web [phone_number]` | Connect via WhatsApp Web (scan QR code) |
+| `/whatsapp login [phone_number]` | Connect via WhatsApp Web (scan QR code) |
 | `/whatsapp status` | Show all WhatsApp connections |
 | `/whatsapp logout [id]` | Remove a connection |
 
 ### Prerequisites
 
-- **Business API:** Set up a WhatsApp Business account in [Meta Business Suite](https://business.facebook.com/), get the Phone Number ID and Access Token
-- **Web:** Requires Playwright (`pip install playwright && playwright install chromium`). A QR code will open in your browser — scan it with your phone's WhatsApp camera to connect.
+Requires Playwright (`pip install playwright && playwright install chromium`). A QR code will open in your browser — scan it with your phone's WhatsApp camera to connect.
 
 ---
 

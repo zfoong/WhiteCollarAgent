@@ -673,29 +673,14 @@ class TelegramHandler(IntegrationHandler):
 class WhatsAppHandler(IntegrationHandler):
     @property
     def subcommands(self) -> list[str]:
-        return ["login", "login-web", "logout", "status"]
+        return ["login", "logout", "status"]
 
     async def handle(self, sub, args):
-        if sub == "login-web": return await self._login_web(args)
+        if sub == "login": return await self._login_web(args)
         return await super().handle(sub, args)
 
     async def login(self, args):
-        if len(args) < 2: return False, "Usage: /whatsapp login <phone_number_id> <access_token> [business_account_id]"
-
-        import aiohttp
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"https://graph.facebook.com/v18.0/{args[0]}", headers={"Authorization": f"Bearer {args[1]}"}) as r:
-                if r.status != 200: return False, f"WhatsApp validation failed: {r.status}"
-                data = await r.json()
-
-        from core.external_libraries.whatsapp.external_app_library import WhatsAppAppLibrary
-        from core.external_libraries.whatsapp.credentials import WhatsAppCredential
-        WhatsAppAppLibrary.initialize()
-        WhatsAppAppLibrary.get_credential_store().add(WhatsAppCredential(
-            user_id=LOCAL_USER_ID, phone_number_id=args[0], connection_type="business_api",
-            business_account_id=args[2] if len(args) > 2 else "",
-            access_token=args[1], display_phone_number=data.get("display_phone_number", args[0])))
-        return True, f"WhatsApp Business connected: {data.get('display_phone_number', args[0])}"
+        return await self._login_web(args)
 
     async def _login_web(self, args):
         import asyncio
@@ -755,7 +740,6 @@ class WhatsAppHandler(IntegrationHandler):
         WhatsAppAppLibrary.get_credential_store().add(WhatsAppCredential(
             user_id=LOCAL_USER_ID,
             phone_number_id=session.session_id,
-            connection_type="whatsapp_web",
             session_id=session.session_id,
             jid=session.jid or "",
             display_phone_number=display_phone,
@@ -777,15 +761,8 @@ class WhatsAppHandler(IntegrationHandler):
         WhatsAppAppLibrary.initialize()
         all_creds = WhatsAppAppLibrary.get_credential_store().get(LOCAL_USER_ID)
         if not all_creds: return True, "WhatsApp: Not connected"
-        lines = []
-        biz = [c for c in all_creds if c.connection_type == "business_api"]
-        web = [c for c in all_creds if c.connection_type == "whatsapp_web"]
-        if biz:
-            lines.append("  Business API:")
-            lines.extend(f"    - {c.display_phone_number}" for c in biz)
-        if web:
-            lines.append("  Web Sessions:")
-            lines.extend(f"    - Session: {c.session_id}" for c in web)
+        lines = ["  Web Sessions:"]
+        lines.extend(f"    - Session: {c.session_id}" for c in all_creds)
         return True, "WhatsApp: Connected\n" + "\n".join(lines)
 
 
