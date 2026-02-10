@@ -1,2421 +1,946 @@
 """
-Tests for Telegram external library (Bot API and MTProto).
+Comprehensive integration test script for Telegram external library.
 
-Uses pytest with unittest.mock to mock the Telegram helper functions,
-allowing all library methods to be tested without network access.
+This script tests ALL Telegram API methods (Bot API and MTProto) using stored
+credentials. Run this to verify Telegram integration without going through the
+agent cycle.
 
 Usage:
-    pytest core/external_libraries/telegram/tests/test_telegram_library.py -v
+    python test_telegram_library.py [--user-id YOUR_USER_ID] [--chat-id CHAT_ID]
+    python test_telegram_library.py --list
+    python test_telegram_library.py --only bot
+    python test_telegram_library.py --only mtproto --skip-send
+    python test_telegram_library.py --only send --chat-id 123456789
+
+If no arguments provided, it will use the first stored credential.
 """
 import sys
-import pytest
+import argparse
+import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from typing import Optional, Dict, Any
+from datetime import datetime
 
-# Add project root to path
+# Add parent directories to path to allow imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent.parent))
 
-from core.external_libraries.telegram.credentials import TelegramCredential
 from core.external_libraries.telegram.external_app_library import TelegramAppLibrary
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def reset_library():
-    """Reset TelegramAppLibrary state before each test."""
-    TelegramAppLibrary._initialized = False
-    TelegramAppLibrary._credential_store = None
-    yield
-    TelegramAppLibrary._initialized = False
-    TelegramAppLibrary._credential_store = None
+# ANSI colors for output
+class Colors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    MAGENTA = '\033[95m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
 
 
-@pytest.fixture
-def mock_bot_credential():
-    """Return a sample Telegram Bot API credential."""
-    return TelegramCredential(
-        user_id="test_user",
-        connection_type="bot_api",
-        bot_id="123456",
-        bot_username="test_bot",
-        bot_token="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
-    )
+def print_header(text: str):
+    """Print a formatted header."""
+    print(f"\n{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{text}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
 
 
-@pytest.fixture
-def mock_mtproto_credential():
-    """Return a sample Telegram MTProto credential."""
-    return TelegramCredential(
-        user_id="test_user",
-        connection_type="mtproto",
-        phone_number="+1234567890",
-        api_id=12345,
-        api_hash="abcdef1234567890abcdef1234567890",
-        session_string="fake_session_string_data",
-        account_name="Test User",
-        telegram_user_id=999888777,
-    )
+def print_section(text: str):
+    """Print a section header."""
+    print(f"\n{Colors.CYAN}{'-' * 50}{Colors.END}")
+    print(f"{Colors.CYAN}{text}{Colors.END}")
+    print(f"{Colors.CYAN}{'-' * 50}{Colors.END}")
 
 
-@pytest.fixture
-def initialized_library(mock_bot_credential):
-    """Initialize the library and inject a mock bot credential."""
-    TelegramAppLibrary.initialize()
-    TelegramAppLibrary.get_credential_store().add(mock_bot_credential)
-    return TelegramAppLibrary
+def print_success(text: str):
+    """Print success message."""
+    print(f"{Colors.GREEN}[PASS] {text}{Colors.END}")
 
 
-@pytest.fixture
-def initialized_library_mtproto(mock_bot_credential, mock_mtproto_credential):
-    """Initialize the library with both bot and MTProto credentials."""
-    TelegramAppLibrary.initialize()
-    TelegramAppLibrary.get_credential_store().add(mock_bot_credential)
-    TelegramAppLibrary.get_credential_store().add(mock_mtproto_credential)
-    return TelegramAppLibrary
+def print_error(text: str):
+    """Print error message."""
+    print(f"{Colors.RED}[FAIL] {text}{Colors.END}")
 
 
-# ---------------------------------------------------------------------------
-# Helper: Module path prefix for patching
-# ---------------------------------------------------------------------------
-HELPERS_PATH = "core.external_libraries.telegram.helpers.telegram_helpers"
-LIB_PATH = "core.external_libraries.telegram.external_app_library"
+def print_warning(text: str):
+    """Print warning message."""
+    print(f"{Colors.YELLOW}[WARN] {text}{Colors.END}")
 
 
-# ---------------------------------------------------------------------------
-# Initialization & Credential Tests
-# ---------------------------------------------------------------------------
+def print_info(text: str):
+    """Print info message."""
+    print(f"  {text}")
 
-class TestInitialization:
+
+def print_skip(text: str):
+    """Print skip message."""
+    print(f"{Colors.MAGENTA}[SKIP] {text}{Colors.END}")
+
+
+def print_result(result: Dict[str, Any], indent: int = 2):
+    """Pretty print a result dict."""
+    formatted = json.dumps(result, indent=indent, default=str)
+    for line in formatted.split('\n')[:30]:  # Limit output
+        print(f"  {line}")
+    if len(formatted.split('\n')) > 30:
+        print(f"  ... (output truncated)")
+
+
+class TelegramTester:
+    """Test runner for Telegram API methods (Bot API and MTProto)."""
+
+    def __init__(
+        self,
+        user_id: str,
+        chat_id: Optional[str] = None,
+        skip_send: bool = False,
+    ):
+        self.user_id = user_id
+        self.chat_id = chat_id
+        self.skip_send = skip_send
+        self.test_results: Dict[str, str] = {}
+        self.sent_message_ids: list = []  # Track messages to clean up
+        self.bot_user_id: Optional[int] = None  # Bot's own user ID for get_chat_member
+
+    def run_test(self, test_name: str, func, *args, **kwargs) -> Dict[str, Any]:
+        """Run a single test and record result."""
+        print(f"\n  Testing: {test_name}...")
+        try:
+            result = func(*args, **kwargs)
+            status = result.get('status', 'unknown')
+
+            if status == 'success':
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
+            else:
+                reason = result.get('reason', result.get('details', 'Unknown error'))
+                print_error(f"{test_name} - FAILED: {reason}")
+                self.test_results[test_name] = 'FAIL'
+
+            return result
+        except Exception as e:
+            print_error(f"{test_name} - EXCEPTION: {str(e)}")
+            self.test_results[test_name] = 'ERROR'
+            return {"status": "error", "reason": str(e)}
+
+    # ==================================================================
+    # BOT API TESTS
+    # ==================================================================
 
     def test_initialize(self):
-        assert not TelegramAppLibrary._initialized
-        TelegramAppLibrary.initialize()
-        assert TelegramAppLibrary._initialized
-        assert TelegramAppLibrary._credential_store is not None
+        """Test library initialization."""
+        print_section("INITIALIZATION")
 
-    def test_initialize_idempotent(self):
-        TelegramAppLibrary.initialize()
-        store = TelegramAppLibrary._credential_store
-        TelegramAppLibrary.initialize()
-        assert TelegramAppLibrary._credential_store is store
+        print(f"\n  Testing: initialize...")
+        try:
+            TelegramAppLibrary.initialize()
+            print_success("initialize - SUCCESS")
+            self.test_results["initialize"] = 'PASS'
+        except Exception as e:
+            print_error(f"initialize - EXCEPTION: {str(e)}")
+            self.test_results["initialize"] = 'ERROR'
 
-    def test_get_name(self):
-        assert TelegramAppLibrary.get_name() == "Telegram"
+    def test_validate_connection(self):
+        """Test credential validation."""
+        print_section("VALIDATE CONNECTION")
 
-    def test_get_credential_store_before_init_raises(self):
-        with pytest.raises(RuntimeError, match="not initialized"):
-            TelegramAppLibrary.get_credential_store()
+        print(f"\n  Testing: validate_connection...")
+        try:
+            valid = TelegramAppLibrary.validate_connection(user_id=self.user_id)
+            if valid:
+                print_success("validate_connection - SUCCESS (credential found)")
+                self.test_results["validate_connection"] = 'PASS'
+            else:
+                print_error("validate_connection - FAILED (no credential found)")
+                self.test_results["validate_connection"] = 'FAIL'
+        except Exception as e:
+            print_error(f"validate_connection - EXCEPTION: {str(e)}")
+            self.test_results["validate_connection"] = 'ERROR'
 
-    def test_get_credential_store_after_init(self):
-        TelegramAppLibrary.initialize()
-        store = TelegramAppLibrary.get_credential_store()
-        assert store is not None
+    def test_get_credentials(self):
+        """Test credential retrieval."""
+        print_section("GET CREDENTIALS")
 
+        print(f"\n  Testing: get_credentials...")
+        try:
+            cred = TelegramAppLibrary.get_credentials(user_id=self.user_id)
+            if cred:
+                print_success("get_credentials - SUCCESS")
+                print_info(f"Bot ID: {cred.bot_id}")
+                print_info(f"Bot Username: {cred.bot_username}")
+                print_info(f"Connection Type: {cred.connection_type}")
+                print_info(f"Has Token: {bool(cred.bot_token)}")
+                self.test_results["get_credentials"] = 'PASS'
+            else:
+                print_error("get_credentials - FAILED (no credential returned)")
+                self.test_results["get_credentials"] = 'FAIL'
+        except Exception as e:
+            print_error(f"get_credentials - EXCEPTION: {str(e)}")
+            self.test_results["get_credentials"] = 'ERROR'
 
-class TestValidateConnection:
+    def test_get_bot_info(self):
+        """Test getting bot information."""
+        print_section("GET BOT INFO")
 
-    def test_validate_no_credentials(self):
-        TelegramAppLibrary.initialize()
-        assert TelegramAppLibrary.validate_connection(user_id="nonexistent") is False
-
-    def test_validate_with_credentials(self, initialized_library, mock_bot_credential):
-        assert initialized_library.validate_connection(user_id="test_user") is True
-
-    def test_validate_with_wrong_user(self, initialized_library):
-        assert initialized_library.validate_connection(user_id="other_user") is False
-
-    def test_validate_with_bot_id(self, initialized_library, mock_bot_credential):
-        assert initialized_library.validate_connection(
-            user_id="test_user",
-            bot_id="123456",
-        ) is True
-
-    def test_validate_with_wrong_bot_id(self, initialized_library):
-        assert initialized_library.validate_connection(
-            user_id="test_user",
-            bot_id="wrong_id",
-        ) is False
-
-
-class TestGetCredentials:
-
-    def test_get_credentials_found(self, initialized_library, mock_bot_credential):
-        cred = initialized_library.get_credentials(user_id="test_user")
-        assert cred is not None
-        assert cred.user_id == "test_user"
-        assert cred.bot_token == "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-
-    def test_get_credentials_not_found(self, initialized_library):
-        cred = initialized_library.get_credentials(user_id="nonexistent")
-        assert cred is None
-
-    def test_get_credentials_with_bot_id(self, initialized_library, mock_bot_credential):
-        cred = initialized_library.get_credentials(
-            user_id="test_user",
-            bot_id="123456",
+        result = self.run_test(
+            "get_bot_info",
+            TelegramAppLibrary.get_bot_info,
+            user_id=self.user_id,
         )
-        assert cred is not None
-        assert cred.bot_id == "123456"
+        if result.get('status') == 'success':
+            bot = result.get('bot', {})
+            self.bot_user_id = bot.get('id')
+            print_info(f"Bot Name: {bot.get('first_name', 'N/A')}")
+            print_info(f"Bot Username: @{bot.get('username', 'N/A')}")
+            print_info(f"Bot ID: {bot.get('id', 'N/A')}")
+            print_info(f"Can Join Groups: {bot.get('can_join_groups', 'N/A')}")
+            print_info(f"Supports Inline: {bot.get('supports_inline_queries', 'N/A')}")
 
-    def test_get_credentials_with_wrong_bot_id(self, initialized_library):
-        cred = initialized_library.get_credentials(
-            user_id="test_user",
-            bot_id="wrong_id",
+    def test_get_updates(self):
+        """Test getting bot updates."""
+        print_section("GET UPDATES")
+
+        result = self.run_test(
+            "get_updates",
+            TelegramAppLibrary.get_updates,
+            user_id=self.user_id,
+            limit=5,
         )
-        assert cred is None
+        if result.get('status') == 'success':
+            updates = result.get('updates', [])
+            print_info(f"Found {len(updates)} update(s)")
+            if updates:
+                latest = updates[-1]
+                print_info(f"Latest update ID: {latest.get('update_id')}")
+                msg = latest.get('message', {})
+                if msg:
+                    print_info(f"From: {msg.get('from', {}).get('first_name', 'N/A')}")
+                    print_info(f"Text: {msg.get('text', '(no text)')[:80]}")
 
+    def test_search_contact(self):
+        """Test searching for contacts from bot update history."""
+        print_section("SEARCH CONTACT")
 
-# ---------------------------------------------------------------------------
-# Credential Model Tests
-# ---------------------------------------------------------------------------
-
-class TestTelegramCredential:
-
-    def test_bot_api_defaults(self):
-        cred = TelegramCredential(user_id="u1")
-        assert cred.connection_type == "bot_api"
-        assert cred.bot_id == ""
-        assert cred.bot_username == ""
-        assert cred.bot_token == ""
-        assert cred.phone_number == ""
-        assert cred.api_id == 0
-        assert cred.api_hash == ""
-        assert cred.session_string == ""
-        assert cred.account_name == ""
-        assert cred.telegram_user_id == 0
-
-    def test_bot_api_full(self):
-        cred = TelegramCredential(
-            user_id="u1",
-            connection_type="bot_api",
-            bot_id="b1",
-            bot_username="mybot",
-            bot_token="123:abc",
+        # Use a generic search term -- if there are any contacts, we'll find them
+        result = self.run_test(
+            "search_contact",
+            TelegramAppLibrary.search_contact,
+            user_id=self.user_id,
+            name="a",  # Broad search to find any contact
         )
-        assert cred.bot_id == "b1"
-        assert cred.bot_username == "mybot"
-        assert cred.bot_token == "123:abc"
+        if result.get('status') == 'success':
+            contacts = result.get('contacts', [])
+            print_info(f"Found {result.get('count', 0)} contact(s) matching 'a'")
+            for c in contacts[:5]:
+                print_info(f"  - {c.get('name', 'N/A')} (chat_id: {c.get('chat_id', 'N/A')})")
 
-    def test_mtproto_full(self):
-        cred = TelegramCredential(
-            user_id="u1",
-            connection_type="mtproto",
-            phone_number="+1234567890",
-            api_id=12345,
-            api_hash="hash_value",
-            session_string="session_data",
-            account_name="John Doe",
-            telegram_user_id=9999,
+    def test_send_message(self):
+        """Test sending a text message via Bot API."""
+        print_section("SEND MESSAGE (Bot API)")
+
+        if self.skip_send:
+            print_skip("send_message - skipped (--skip-send)")
+            self.test_results["send_message"] = 'SKIP'
+            return
+
+        if not self.chat_id:
+            print_warning("send_message - skipped (no --chat-id provided)")
+            self.test_results["send_message"] = 'SKIP'
+            return
+
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        test_text = f"[CraftOS Integration Test] Bot API send_message - {timestamp}"
+
+        result = self.run_test(
+            "send_message",
+            TelegramAppLibrary.send_message,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
+            text=test_text,
         )
-        assert cred.connection_type == "mtproto"
-        assert cred.phone_number == "+1234567890"
-        assert cred.api_id == 12345
-        assert cred.session_string == "session_data"
+        if result.get('status') == 'success':
+            msg = result.get('message', {})
+            msg_id = msg.get('message_id')
+            print_info(f"Message ID: {msg_id}")
+            print_info(f"Chat ID: {msg.get('chat', {}).get('id')}")
+            if msg_id:
+                self.sent_message_ids.append(('bot', msg_id))
 
-    def test_credential_unique_keys(self):
-        assert TelegramCredential.UNIQUE_KEYS == ("user_id", "bot_id", "phone_number")
+    def test_send_message_to_name(self):
+        """Test sending a message by contact name resolution."""
+        print_section("SEND MESSAGE TO NAME (Bot API)")
 
-    def test_credential_to_dict(self):
-        cred = TelegramCredential(
-            user_id="u1",
-            bot_id="b1",
-            bot_token="123:abc",
+        if self.skip_send:
+            print_skip("send_message_to_name - skipped (--skip-send)")
+            self.test_results["send_message_to_name"] = 'SKIP'
+            return
+
+        if not self.chat_id:
+            print_warning("send_message_to_name - skipped (no --chat-id; need contact history)")
+            self.test_results["send_message_to_name"] = 'SKIP'
+            return
+
+        # First find a valid contact name from search_contact
+        search_result = TelegramAppLibrary.search_contact(
+            user_id=self.user_id,
+            name="a",
         )
-        d = cred.to_dict()
-        assert d["user_id"] == "u1"
-        assert d["bot_id"] == "b1"
-        assert d["bot_token"] == "123:abc"
-        assert d["connection_type"] == "bot_api"
+        contacts = search_result.get('contacts', [])
+        if not contacts:
+            print_warning("send_message_to_name - skipped (no contacts found to resolve name)")
+            self.test_results["send_message_to_name"] = 'SKIP'
+            return
 
+        contact_name = contacts[0].get('name', '')
+        if not contact_name:
+            print_warning("send_message_to_name - skipped (first contact has no name)")
+            self.test_results["send_message_to_name"] = 'SKIP'
+            return
 
-# ---------------------------------------------------------------------------
-# Resolve Chat Identifier Tests
-# ---------------------------------------------------------------------------
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        test_text = f"[CraftOS Integration Test] send_message_to_name - {timestamp}"
 
-class TestResolveChatIdentifier:
-
-    def test_resolve_with_chat_id(self, initialized_library):
-        result = initialized_library._resolve_chat_identifier(
-            user_id="test_user",
-            chat_id=12345,
+        result = self.run_test(
+            "send_message_to_name",
+            TelegramAppLibrary.send_message_to_name,
+            user_id=self.user_id,
+            name=contact_name,
+            text=test_text,
         )
-        assert result["status"] == "success"
-        assert result["resolved_chat_id"] == 12345
+        if result.get('status') == 'success':
+            msg = result.get('message', {})
+            resolved = result.get('resolved_contact', {})
+            print_info(f"Resolved to: {resolved.get('name', 'N/A')} (chat_id: {resolved.get('chat_id', 'N/A')})")
+            msg_id = msg.get('message_id')
+            if msg_id:
+                self.sent_message_ids.append(('bot', msg_id))
 
-    def test_resolve_with_string_chat_id(self, initialized_library):
-        result = initialized_library._resolve_chat_identifier(
-            user_id="test_user",
-            chat_id="@channel_name",
+    def test_send_photo(self):
+        """Test sending a photo via Bot API."""
+        print_section("SEND PHOTO (Bot API)")
+
+        if self.skip_send:
+            print_skip("send_photo - skipped (--skip-send)")
+            self.test_results["send_photo"] = 'SKIP'
+            return
+
+        if not self.chat_id:
+            print_warning("send_photo - skipped (no --chat-id provided)")
+            self.test_results["send_photo"] = 'SKIP'
+            return
+
+        # Use a small public image URL for testing
+        photo_url = "https://via.placeholder.com/100x100.png?text=CraftOS+Test"
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        result = self.run_test(
+            "send_photo",
+            TelegramAppLibrary.send_photo,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
+            photo=photo_url,
+            caption=f"[CraftOS Integration Test] send_photo - {timestamp}",
         )
-        assert result["status"] == "success"
-        assert result["resolved_chat_id"] == "@channel_name"
+        if result.get('status') == 'success':
+            msg = result.get('message', {})
+            msg_id = msg.get('message_id')
+            print_info(f"Message ID: {msg_id}")
+            if msg_id:
+                self.sent_message_ids.append(('bot', msg_id))
 
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_resolve_with_name_success(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": 99999, "name": "John Doe", "username": "johndoe"}],
-            "count": 1,
-        }
-        result = initialized_library._resolve_chat_identifier(
-            user_id="test_user",
-            name="John",
+    def test_send_document(self):
+        """Test sending a document via Bot API."""
+        print_section("SEND DOCUMENT (Bot API)")
+
+        if self.skip_send:
+            print_skip("send_document - skipped (--skip-send)")
+            self.test_results["send_document"] = 'SKIP'
+            return
+
+        if not self.chat_id:
+            print_warning("send_document - skipped (no --chat-id provided)")
+            self.test_results["send_document"] = 'SKIP'
+            return
+
+        # Use a small public file URL for testing
+        doc_url = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        result = self.run_test(
+            "send_document",
+            TelegramAppLibrary.send_document,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
+            document=doc_url,
+            caption=f"[CraftOS Integration Test] send_document - {timestamp}",
         )
-        assert result["status"] == "success"
-        assert result["resolved_chat_id"] == 99999
-        assert result["resolved_contact"]["name"] == "John Doe"
+        if result.get('status') == 'success':
+            msg = result.get('message', {})
+            msg_id = msg.get('message_id')
+            print_info(f"Message ID: {msg_id}")
+            if msg_id:
+                self.sent_message_ids.append(('bot', msg_id))
 
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_resolve_with_name_not_found(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [],
-            "count": 0,
-        }
-        result = initialized_library._resolve_chat_identifier(
-            user_id="test_user",
-            name="UnknownPerson",
+    def test_get_chat(self):
+        """Test getting chat information."""
+        print_section("GET CHAT (Bot API)")
+
+        if not self.chat_id:
+            print_warning("get_chat - skipped (no --chat-id provided)")
+            self.test_results["get_chat"] = 'SKIP'
+            return
+
+        result = self.run_test(
+            "get_chat",
+            TelegramAppLibrary.get_chat,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
         )
-        assert result["status"] == "error"
-        assert "No contacts found" in result["reason"]
+        if result.get('status') == 'success':
+            chat = result.get('chat', {})
+            print_info(f"Chat Type: {chat.get('type', 'N/A')}")
+            print_info(f"Chat Title/Name: {chat.get('title', chat.get('first_name', 'N/A'))}")
+            print_info(f"Chat ID: {chat.get('id', 'N/A')}")
 
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_resolve_with_name_search_error(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "error",
-            "reason": "API failure",
-        }
-        result = initialized_library._resolve_chat_identifier(
-            user_id="test_user",
-            name="SomeOne",
+    def test_get_chat_member(self):
+        """Test getting chat member information."""
+        print_section("GET CHAT MEMBER (Bot API)")
+
+        if not self.chat_id:
+            print_warning("get_chat_member - skipped (no --chat-id provided)")
+            self.test_results["get_chat_member"] = 'SKIP'
+            return
+
+        # Use the bot's own user ID if we have it, otherwise use the chat_id
+        target_user = self.bot_user_id
+        if not target_user:
+            print_warning("get_chat_member - skipped (bot user ID not available; run get_bot_info first)")
+            self.test_results["get_chat_member"] = 'SKIP'
+            return
+
+        result = self.run_test(
+            "get_chat_member",
+            TelegramAppLibrary.get_chat_member,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
+            target_user_id=target_user,
         )
-        assert result["status"] == "error"
-        assert "Could not find contact" in result["reason"]
+        if result.get('status') == 'success':
+            member = result.get('member', {})
+            print_info(f"Status: {member.get('status', 'N/A')}")
+            user = member.get('user', {})
+            print_info(f"User: {user.get('first_name', 'N/A')} (@{user.get('username', 'N/A')})")
 
-    def test_resolve_neither_chat_id_nor_name(self, initialized_library):
-        result = initialized_library._resolve_chat_identifier(
-            user_id="test_user",
+    def test_get_chat_members_count(self):
+        """Test getting chat members count."""
+        print_section("GET CHAT MEMBERS COUNT (Bot API)")
+
+        if not self.chat_id:
+            print_warning("get_chat_members_count - skipped (no --chat-id provided)")
+            self.test_results["get_chat_members_count"] = 'SKIP'
+            return
+
+        result = self.run_test(
+            "get_chat_members_count",
+            TelegramAppLibrary.get_chat_members_count,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
         )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
+        if result.get('status') == 'success':
+            print_info(f"Member count: {result.get('count', 'N/A')}")
 
-    def test_resolve_chat_id_takes_precedence_over_name(self, initialized_library):
-        """When both chat_id and name are provided, chat_id is used directly."""
-        result = initialized_library._resolve_chat_identifier(
-            user_id="test_user",
-            chat_id=12345,
-            name="John",
+    def test_forward_message(self):
+        """Test forwarding a message."""
+        print_section("FORWARD MESSAGE (Bot API)")
+
+        if self.skip_send:
+            print_skip("forward_message - skipped (--skip-send)")
+            self.test_results["forward_message"] = 'SKIP'
+            return
+
+        if not self.chat_id:
+            print_warning("forward_message - skipped (no --chat-id provided)")
+            self.test_results["forward_message"] = 'SKIP'
+            return
+
+        # We need a message ID to forward. Use one we sent earlier, or get from updates.
+        source_message_id = None
+        source_chat_id = self.chat_id
+
+        # Try to use a message we sent earlier in this session
+        bot_messages = [(t, mid) for t, mid in self.sent_message_ids if t == 'bot']
+        if bot_messages:
+            source_message_id = bot_messages[0][1]
+        else:
+            # Try to get a recent message from updates
+            updates_result = TelegramAppLibrary.get_updates(
+                user_id=self.user_id, limit=5
+            )
+            if updates_result.get('status') == 'success':
+                updates = updates_result.get('updates', [])
+                for u in reversed(updates):
+                    msg = u.get('message', {})
+                    if msg.get('message_id') and msg.get('chat', {}).get('id'):
+                        source_message_id = msg['message_id']
+                        source_chat_id = msg['chat']['id']
+                        break
+
+        if not source_message_id:
+            print_warning("forward_message - skipped (no message available to forward)")
+            self.test_results["forward_message"] = 'SKIP'
+            return
+
+        result = self.run_test(
+            "forward_message",
+            TelegramAppLibrary.forward_message,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
+            from_chat_id=source_chat_id,
+            message_id=source_message_id,
         )
-        assert result["status"] == "success"
-        assert result["resolved_chat_id"] == 12345
-        # No contact resolution should have happened
-        assert "resolved_contact" not in result
+        if result.get('status') == 'success':
+            msg = result.get('message', {})
+            print_info(f"Forwarded Message ID: {msg.get('message_id', 'N/A')}")
+            msg_id = msg.get('message_id')
+            if msg_id:
+                self.sent_message_ids.append(('bot', msg_id))
 
+    # ==================================================================
+    # MTPROTO (USER ACCOUNT) TESTS
+    # ==================================================================
 
-# ---------------------------------------------------------------------------
-# Get Bot Info Tests
-# ---------------------------------------------------------------------------
+    def test_mtproto_validate_connection(self):
+        """Test MTProto session validation."""
+        print_section("MTPROTO VALIDATE CONNECTION")
 
-class TestGetBotInfo:
+        print(f"\n  Testing: validate_mtproto_connection...")
+        try:
+            valid = TelegramAppLibrary.validate_mtproto_connection(user_id=self.user_id)
+            if valid:
+                print_success("validate_mtproto_connection - SUCCESS (session found)")
+                self.test_results["validate_mtproto_connection"] = 'PASS'
+            else:
+                print_warning("validate_mtproto_connection - No MTProto session found")
+                self.test_results["validate_mtproto_connection"] = 'SKIP'
+        except Exception as e:
+            print_error(f"validate_mtproto_connection - EXCEPTION: {str(e)}")
+            self.test_results["validate_mtproto_connection"] = 'ERROR'
 
-    @patch(f"{LIB_PATH}.get_me")
-    def test_get_bot_info_success(self, mock_get_me, initialized_library):
-        mock_get_me.return_value = {
-            "ok": True,
-            "result": {
-                "id": 123456,
-                "is_bot": True,
-                "first_name": "Test Bot",
-                "username": "test_bot",
-            },
-        }
-        result = initialized_library.get_bot_info(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["bot"]["id"] == 123456
-        assert result["bot"]["username"] == "test_bot"
-        mock_get_me.assert_called_once()
+    def _has_mtproto(self) -> bool:
+        """Check if MTProto credentials are available."""
+        try:
+            return TelegramAppLibrary.validate_mtproto_connection(user_id=self.user_id)
+        except Exception:
+            return False
 
-    def test_get_bot_info_no_credential(self, initialized_library):
-        result = initialized_library.get_bot_info(user_id="nonexistent")
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
+    def test_get_mtproto_account_info(self):
+        """Test getting MTProto account info."""
+        print_section("MTPROTO ACCOUNT INFO")
 
-    @patch(f"{LIB_PATH}.get_me")
-    def test_get_bot_info_api_error(self, mock_get_me, initialized_library):
-        mock_get_me.return_value = {
-            "error": "Unauthorized",
-            "details": {"ok": False, "error_code": 401},
-        }
-        result = initialized_library.get_bot_info(user_id="test_user")
-        assert result["status"] == "error"
-        assert "details" in result
+        if not self._has_mtproto():
+            print_skip("get_mtproto_account_info - skipped (no MTProto session)")
+            self.test_results["get_mtproto_account_info"] = 'SKIP'
+            return
 
-    @patch(f"{LIB_PATH}.get_me")
-    def test_get_bot_info_exception(self, mock_get_me, initialized_library):
-        mock_get_me.side_effect = Exception("Network error")
-        result = initialized_library.get_bot_info(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.get_me")
-    def test_get_bot_info_with_bot_id(self, mock_get_me, initialized_library):
-        mock_get_me.return_value = {
-            "ok": True,
-            "result": {"id": 123456, "is_bot": True, "first_name": "Test Bot"},
-        }
-        result = initialized_library.get_bot_info(
-            user_id="test_user", bot_id="123456"
+        result = self.run_test(
+            "get_mtproto_account_info",
+            TelegramAppLibrary.get_mtproto_account_info,
+            user_id=self.user_id,
         )
-        assert result["status"] == "success"
+        if result.get('status') == 'success':
+            user = result.get('user', {})
+            print_info(f"Name: {user.get('first_name', '')} {user.get('last_name', '')}")
+            print_info(f"Username: @{user.get('username', 'N/A')}")
+            print_info(f"Phone: {user.get('phone', 'N/A')}")
+            print_info(f"User ID: {user.get('id', 'N/A')}")
 
+    def test_get_telegram_chats(self):
+        """Test getting MTProto dialogs/chats."""
+        print_section("MTPROTO GET CHATS")
 
-# ---------------------------------------------------------------------------
-# Send Message Tests
-# ---------------------------------------------------------------------------
+        if not self._has_mtproto():
+            print_skip("get_telegram_chats - skipped (no MTProto session)")
+            self.test_results["get_telegram_chats"] = 'SKIP'
+            return
 
-class TestSendMessage:
-
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_success_with_chat_id(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": 42,
-                "chat": {"id": 12345},
-                "text": "Hello!",
-                "date": 1700000000,
-            },
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Hello!",
-            chat_id=12345,
-        )
-        assert result["status"] == "success"
-        assert result["message"]["message_id"] == 42
-        mock_send.assert_called_once()
-
-    def test_send_message_no_credential(self, initialized_library):
-        result = initialized_library.send_message(
-            user_id="nonexistent",
-            text="Hello!",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_api_error(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "error": "Bad Request: chat not found",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Hello!",
-            chat_id=99999,
-        )
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_exception(self, mock_send, initialized_library):
-        mock_send.side_effect = Exception("Connection timeout")
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Hello!",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_with_parse_mode(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 43, "chat": {"id": 12345}, "text": "<b>bold</b>"},
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="<b>bold</b>",
-            chat_id=12345,
-            parse_mode="HTML",
-        )
-        assert result["status"] == "success"
-
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_with_reply(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 44, "chat": {"id": 12345}, "text": "Reply"},
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Reply",
-            chat_id=12345,
-            reply_to_message_id=10,
-        )
-        assert result["status"] == "success"
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_with_name_resolution(self, mock_send, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": 55555, "name": "Alice", "username": "alice"}],
-            "count": 1,
-        }
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 45, "chat": {"id": 55555}, "text": "Hi Alice"},
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Hi Alice",
-            name="Alice",
-        )
-        assert result["status"] == "success"
-        assert result["resolved_contact"]["name"] == "Alice"
-
-    def test_send_message_no_chat_id_or_name(self, initialized_library):
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Hello!",
-        )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_send_message_name_not_found(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [],
-            "count": 0,
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Hello!",
-            name="Nobody",
-        )
-        assert result["status"] == "error"
-        assert "No contacts found" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Send Photo Tests
-# ---------------------------------------------------------------------------
-
-class TestSendPhoto:
-
-    @patch(f"{LIB_PATH}.send_photo")
-    def test_send_photo_success(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": 50,
-                "chat": {"id": 12345},
-                "photo": [{"file_id": "photo123"}],
-            },
-        }
-        result = initialized_library.send_photo(
-            user_id="test_user",
-            photo="https://example.com/photo.jpg",
-            chat_id=12345,
-            caption="Nice photo",
-        )
-        assert result["status"] == "success"
-        assert result["message"]["message_id"] == 50
-
-    def test_send_photo_no_credential(self, initialized_library):
-        result = initialized_library.send_photo(
-            user_id="nonexistent",
-            photo="photo.jpg",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.send_photo")
-    def test_send_photo_api_error(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "error": "Bad Request: wrong file identifier",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.send_photo(
-            user_id="test_user",
-            photo="bad_file_id",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.send_photo")
-    def test_send_photo_exception(self, mock_send, initialized_library):
-        mock_send.side_effect = Exception("Upload failed")
-        result = initialized_library.send_photo(
-            user_id="test_user",
-            photo="photo.jpg",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.send_photo")
-    def test_send_photo_with_name_resolution(self, mock_send, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": 55555, "name": "Bob", "username": "bob"}],
-            "count": 1,
-        }
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 51, "chat": {"id": 55555}},
-        }
-        result = initialized_library.send_photo(
-            user_id="test_user",
-            photo="photo.jpg",
-            name="Bob",
-        )
-        assert result["status"] == "success"
-        assert result["resolved_contact"]["name"] == "Bob"
-
-    def test_send_photo_no_chat_id_or_name(self, initialized_library):
-        result = initialized_library.send_photo(
-            user_id="test_user",
-            photo="photo.jpg",
-        )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Send Document Tests
-# ---------------------------------------------------------------------------
-
-class TestSendDocument:
-
-    @patch(f"{LIB_PATH}.send_document")
-    def test_send_document_success(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": 60,
-                "chat": {"id": 12345},
-                "document": {"file_id": "doc123", "file_name": "report.pdf"},
-            },
-        }
-        result = initialized_library.send_document(
-            user_id="test_user",
-            document="https://example.com/report.pdf",
-            chat_id=12345,
-            caption="Monthly report",
-        )
-        assert result["status"] == "success"
-        assert result["message"]["message_id"] == 60
-
-    def test_send_document_no_credential(self, initialized_library):
-        result = initialized_library.send_document(
-            user_id="nonexistent",
-            document="report.pdf",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.send_document")
-    def test_send_document_api_error(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "error": "Bad Request: file too big",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.send_document(
-            user_id="test_user",
-            document="huge_file.zip",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.send_document")
-    def test_send_document_exception(self, mock_send, initialized_library):
-        mock_send.side_effect = Exception("Disk error")
-        result = initialized_library.send_document(
-            user_id="test_user",
-            document="doc.pdf",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.send_document")
-    def test_send_document_with_name_resolution(self, mock_send, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": 77777, "name": "Carol", "username": "carol"}],
-            "count": 1,
-        }
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 61, "chat": {"id": 77777}},
-        }
-        result = initialized_library.send_document(
-            user_id="test_user",
-            document="file.pdf",
-            name="Carol",
-        )
-        assert result["status"] == "success"
-        assert result["resolved_contact"]["name"] == "Carol"
-
-    def test_send_document_no_chat_id_or_name(self, initialized_library):
-        result = initialized_library.send_document(
-            user_id="test_user",
-            document="doc.pdf",
-        )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Get Updates Tests
-# ---------------------------------------------------------------------------
-
-class TestGetUpdates:
-
-    @patch(f"{LIB_PATH}.get_updates")
-    def test_get_updates_success(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "ok": True,
-            "result": [
-                {"update_id": 1, "message": {"message_id": 1, "text": "Hello"}},
-                {"update_id": 2, "message": {"message_id": 2, "text": "World"}},
-            ],
-        }
-        result = initialized_library.get_updates(user_id="test_user")
-        assert result["status"] == "success"
-        assert len(result["updates"]) == 2
-        assert result["updates"][0]["update_id"] == 1
-
-    def test_get_updates_no_credential(self, initialized_library):
-        result = initialized_library.get_updates(user_id="nonexistent")
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.get_updates")
-    def test_get_updates_api_error(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "error": "Unauthorized",
-            "details": {"ok": False, "error_code": 401},
-        }
-        result = initialized_library.get_updates(user_id="test_user")
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.get_updates")
-    def test_get_updates_empty(self, mock_get, initialized_library):
-        mock_get.return_value = {"ok": True, "result": []}
-        result = initialized_library.get_updates(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["updates"] == []
-
-    @patch(f"{LIB_PATH}.get_updates")
-    def test_get_updates_with_offset_and_limit(self, mock_get, initialized_library):
-        mock_get.return_value = {"ok": True, "result": []}
-        result = initialized_library.get_updates(
-            user_id="test_user",
-            offset=100,
+        result = self.run_test(
+            "get_telegram_chats",
+            TelegramAppLibrary.get_telegram_chats,
+            user_id=self.user_id,
             limit=10,
         )
-        assert result["status"] == "success"
-        mock_get.assert_called_once_with(
-            bot_token="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
-            offset=100,
+        if result.get('status') == 'success':
+            chats = result.get('chats', [])
+            print_info(f"Found {result.get('count', 0)} chat(s)")
+            for c in chats[:5]:
+                print_info(f"  - {c.get('name', c.get('title', 'N/A'))} (id: {c.get('id', 'N/A')}, type: {c.get('type', 'N/A')})")
+
+    def test_read_telegram_messages(self):
+        """Test reading messages via MTProto."""
+        print_section("MTPROTO READ MESSAGES")
+
+        if not self._has_mtproto():
+            print_skip("read_telegram_messages - skipped (no MTProto session)")
+            self.test_results["read_telegram_messages"] = 'SKIP'
+            return
+
+        # Use the provided chat_id, or try to find one from dialogs
+        target_chat = self.chat_id
+        if not target_chat:
+            chats_result = TelegramAppLibrary.get_telegram_chats(
+                user_id=self.user_id, limit=5
+            )
+            if chats_result.get('status') == 'success':
+                chats = chats_result.get('chats', [])
+                if chats:
+                    target_chat = chats[0].get('id')
+                    print_info(f"Using first dialog: {chats[0].get('name', 'N/A')} (id: {target_chat})")
+
+        if not target_chat:
+            print_warning("read_telegram_messages - skipped (no chat available)")
+            self.test_results["read_telegram_messages"] = 'SKIP'
+            return
+
+        result = self.run_test(
+            "read_telegram_messages",
+            TelegramAppLibrary.read_telegram_messages,
+            user_id=self.user_id,
+            chat_id=target_chat,
+            limit=5,
+        )
+        if result.get('status') == 'success':
+            messages = result.get('messages', [])
+            chat_info = result.get('chat', {})
+            print_info(f"Chat: {chat_info.get('name', chat_info.get('title', 'N/A'))}")
+            print_info(f"Messages retrieved: {result.get('count', 0)}")
+            for m in messages[:3]:
+                sender = m.get('sender', m.get('from', 'Unknown'))
+                text = m.get('text', '(no text)')
+                print_info(f"  - [{sender}] {str(text)[:80]}")
+
+    def test_search_mtproto_contacts(self):
+        """Test searching contacts via MTProto."""
+        print_section("MTPROTO SEARCH CONTACTS")
+
+        if not self._has_mtproto():
+            print_skip("search_mtproto_contacts - skipped (no MTProto session)")
+            self.test_results["search_mtproto_contacts"] = 'SKIP'
+            return
+
+        result = self.run_test(
+            "search_mtproto_contacts",
+            TelegramAppLibrary.search_mtproto_contacts,
+            user_id=self.user_id,
+            query="a",  # Broad search
             limit=10,
         )
-
-    @patch(f"{LIB_PATH}.get_updates")
-    def test_get_updates_exception(self, mock_get, initialized_library):
-        mock_get.side_effect = Exception("Timeout")
-        result = initialized_library.get_updates(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Get Chat Tests
-# ---------------------------------------------------------------------------
-
-class TestGetChat:
-
-    @patch(f"{LIB_PATH}.get_chat")
-    def test_get_chat_success(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "ok": True,
-            "result": {
-                "id": 12345,
-                "type": "private",
-                "first_name": "John",
-                "last_name": "Doe",
-            },
-        }
-        result = initialized_library.get_chat(
-            user_id="test_user",
-            chat_id=12345,
-        )
-        assert result["status"] == "success"
-        assert result["chat"]["id"] == 12345
-        assert result["chat"]["first_name"] == "John"
-
-    def test_get_chat_no_credential(self, initialized_library):
-        result = initialized_library.get_chat(
-            user_id="nonexistent",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.get_chat")
-    def test_get_chat_api_error(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "error": "Bad Request: chat not found",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.get_chat(
-            user_id="test_user",
-            chat_id=99999,
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.get_chat")
-    def test_get_chat_exception(self, mock_get, initialized_library):
-        mock_get.side_effect = Exception("Network error")
-        result = initialized_library.get_chat(
-            user_id="test_user",
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.get_chat")
-    def test_get_chat_with_name(self, mock_get, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": 88888, "name": "TestGroup", "username": ""}],
-            "count": 1,
-        }
-        mock_get.return_value = {
-            "ok": True,
-            "result": {"id": 88888, "type": "group", "title": "TestGroup"},
-        }
-        result = initialized_library.get_chat(
-            user_id="test_user",
-            name="TestGroup",
-        )
-        assert result["status"] == "success"
-        assert result["chat"]["title"] == "TestGroup"
-        assert result["resolved_contact"]["name"] == "TestGroup"
-
-    def test_get_chat_no_chat_id_or_name(self, initialized_library):
-        result = initialized_library.get_chat(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Get Chat Member Tests
-# ---------------------------------------------------------------------------
-
-class TestGetChatMember:
-
-    @patch(f"{LIB_PATH}.get_chat_member")
-    def test_get_chat_member_success(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "ok": True,
-            "result": {
-                "user": {"id": 555, "first_name": "Alice"},
-                "status": "member",
-            },
-        }
-        result = initialized_library.get_chat_member(
-            user_id="test_user",
-            chat_id=-100123456,
-            target_user_id=555,
-        )
-        assert result["status"] == "success"
-        assert result["member"]["user"]["first_name"] == "Alice"
-        assert result["member"]["status"] == "member"
-
-    def test_get_chat_member_no_credential(self, initialized_library):
-        result = initialized_library.get_chat_member(
-            user_id="nonexistent",
-            chat_id=-100123456,
-            target_user_id=555,
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.get_chat_member")
-    def test_get_chat_member_api_error(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "error": "Bad Request: user not found",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.get_chat_member(
-            user_id="test_user",
-            chat_id=-100123456,
-            target_user_id=999,
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.get_chat_member")
-    def test_get_chat_member_exception(self, mock_get, initialized_library):
-        mock_get.side_effect = Exception("Server error")
-        result = initialized_library.get_chat_member(
-            user_id="test_user",
-            chat_id=-100123456,
-            target_user_id=555,
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.get_chat_member")
-    def test_get_chat_member_with_name(self, mock_get, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": -100123456, "name": "Dev Group", "username": ""}],
-            "count": 1,
-        }
-        mock_get.return_value = {
-            "ok": True,
-            "result": {"user": {"id": 555}, "status": "administrator"},
-        }
-        result = initialized_library.get_chat_member(
-            user_id="test_user",
-            name="Dev Group",
-            target_user_id=555,
-        )
-        assert result["status"] == "success"
-        assert result["resolved_contact"]["name"] == "Dev Group"
-
-    def test_get_chat_member_no_chat_id_or_name(self, initialized_library):
-        result = initialized_library.get_chat_member(
-            user_id="test_user",
-            target_user_id=555,
-        )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Get Chat Members Count Tests
-# ---------------------------------------------------------------------------
-
-class TestGetChatMembersCount:
-
-    @patch(f"{LIB_PATH}.get_chat_members_count")
-    def test_get_count_success(self, mock_get, initialized_library):
-        mock_get.return_value = {"ok": True, "result": 42}
-        result = initialized_library.get_chat_members_count(
-            user_id="test_user",
-            chat_id=-100123456,
-        )
-        assert result["status"] == "success"
-        assert result["count"] == 42
-
-    def test_get_count_no_credential(self, initialized_library):
-        result = initialized_library.get_chat_members_count(
-            user_id="nonexistent",
-            chat_id=-100123456,
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.get_chat_members_count")
-    def test_get_count_api_error(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "error": "Bad Request: chat not found",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.get_chat_members_count(
-            user_id="test_user",
-            chat_id=-100123456,
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.get_chat_members_count")
-    def test_get_count_exception(self, mock_get, initialized_library):
-        mock_get.side_effect = Exception("Network error")
-        result = initialized_library.get_chat_members_count(
-            user_id="test_user",
-            chat_id=-100123456,
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.get_chat_members_count")
-    def test_get_count_with_name(self, mock_get, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": -100123456, "name": "Team Chat", "username": ""}],
-            "count": 1,
-        }
-        mock_get.return_value = {"ok": True, "result": 15}
-        result = initialized_library.get_chat_members_count(
-            user_id="test_user",
-            name="Team Chat",
-        )
-        assert result["status"] == "success"
-        assert result["count"] == 15
-        assert result["resolved_contact"]["name"] == "Team Chat"
-
-    def test_get_count_no_chat_id_or_name(self, initialized_library):
-        result = initialized_library.get_chat_members_count(
-            user_id="test_user",
-        )
-        assert result["status"] == "error"
-
-
-# ---------------------------------------------------------------------------
-# Forward Message Tests
-# ---------------------------------------------------------------------------
-
-class TestForwardMessage:
-
-    @patch(f"{LIB_PATH}.forward_message")
-    def test_forward_message_success(self, mock_fwd, initialized_library):
-        mock_fwd.return_value = {
-            "ok": True,
-            "result": {
-                "message_id": 100,
-                "forward_date": 1700000000,
-                "chat": {"id": 12345},
-            },
-        }
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=10,
-            chat_id=12345,
-            from_chat_id=67890,
-        )
-        assert result["status"] == "success"
-        assert result["message"]["message_id"] == 100
-
-    def test_forward_message_no_credential(self, initialized_library):
-        result = initialized_library.forward_message(
-            user_id="nonexistent",
-            message_id=10,
-            chat_id=12345,
-            from_chat_id=67890,
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.forward_message")
-    def test_forward_message_api_error(self, mock_fwd, initialized_library):
-        mock_fwd.return_value = {
-            "error": "Bad Request: message to forward not found",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=999,
-            chat_id=12345,
-            from_chat_id=67890,
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.forward_message")
-    def test_forward_message_exception(self, mock_fwd, initialized_library):
-        mock_fwd.side_effect = Exception("API timeout")
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=10,
-            chat_id=12345,
-            from_chat_id=67890,
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    def test_forward_message_no_destination(self, initialized_library):
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=10,
-            from_chat_id=67890,
-        )
-        assert result["status"] == "error"
-        assert "Destination" in result["reason"]
-
-    def test_forward_message_no_source(self, initialized_library):
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=10,
-            chat_id=12345,
-        )
-        assert result["status"] == "error"
-        assert "Source" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.forward_message")
-    def test_forward_message_with_name_resolution(self, mock_fwd, mock_search, initialized_library):
-        mock_search.side_effect = [
-            {
-                "status": "success",
-                "contacts": [{"chat_id": 11111, "name": "Alice", "username": "alice"}],
-                "count": 1,
-            },
-            {
-                "status": "success",
-                "contacts": [{"chat_id": 22222, "name": "Bob", "username": "bob"}],
-                "count": 1,
-            },
-        ]
-        mock_fwd.return_value = {
-            "ok": True,
-            "result": {"message_id": 101, "chat": {"id": 11111}},
-        }
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=10,
-            to_name="Alice",
-            from_name="Bob",
-        )
-        assert result["status"] == "success"
-        assert result["resolved_to_contact"]["name"] == "Alice"
-        assert result["resolved_from_contact"]["name"] == "Bob"
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_forward_message_destination_name_not_found(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [],
-            "count": 0,
-        }
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=10,
-            to_name="Nobody",
-            from_chat_id=67890,
-        )
-        assert result["status"] == "error"
-        assert "Destination" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Webhook Management Tests
-# ---------------------------------------------------------------------------
-
-class TestSetWebhook:
-
-    @patch(f"{LIB_PATH}.set_webhook")
-    def test_set_webhook_success(self, mock_set, initialized_library):
-        mock_set.return_value = {"ok": True, "result": True}
-        result = initialized_library.set_webhook(
-            user_id="test_user",
-            webhook_url="https://example.com/webhook",
-        )
-        assert result["status"] == "success"
-        assert result["result"] is True
-
-    def test_set_webhook_no_credential(self, initialized_library):
-        result = initialized_library.set_webhook(
-            user_id="nonexistent",
-            webhook_url="https://example.com/webhook",
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.set_webhook")
-    def test_set_webhook_api_error(self, mock_set, initialized_library):
-        mock_set.return_value = {
-            "error": "Bad Request: bad webhook URL",
-            "details": {"ok": False, "error_code": 400},
-        }
-        result = initialized_library.set_webhook(
-            user_id="test_user",
-            webhook_url="http://invalid",
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.set_webhook")
-    def test_set_webhook_with_secret_token(self, mock_set, initialized_library):
-        mock_set.return_value = {"ok": True, "result": True}
-        result = initialized_library.set_webhook(
-            user_id="test_user",
-            webhook_url="https://example.com/webhook",
-            secret_token="my_secret_123",
-        )
-        assert result["status"] == "success"
-        mock_set.assert_called_once_with(
-            bot_token="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
-            url="https://example.com/webhook",
-            secret_token="my_secret_123",
-        )
-
-    @patch(f"{LIB_PATH}.set_webhook")
-    def test_set_webhook_exception(self, mock_set, initialized_library):
-        mock_set.side_effect = Exception("SSL error")
-        result = initialized_library.set_webhook(
-            user_id="test_user",
-            webhook_url="https://example.com/webhook",
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-class TestDeleteWebhook:
-
-    @patch(f"{LIB_PATH}.delete_webhook")
-    def test_delete_webhook_success(self, mock_del, initialized_library):
-        mock_del.return_value = {"ok": True, "result": True}
-        result = initialized_library.delete_webhook(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["result"] is True
-
-    def test_delete_webhook_no_credential(self, initialized_library):
-        result = initialized_library.delete_webhook(user_id="nonexistent")
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.delete_webhook")
-    def test_delete_webhook_api_error(self, mock_del, initialized_library):
-        mock_del.return_value = {
-            "error": "Unauthorized",
-            "details": {"ok": False, "error_code": 401},
-        }
-        result = initialized_library.delete_webhook(user_id="test_user")
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.delete_webhook")
-    def test_delete_webhook_exception(self, mock_del, initialized_library):
-        mock_del.side_effect = Exception("API down")
-        result = initialized_library.delete_webhook(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-class TestGetWebhookInfo:
-
-    @patch(f"{LIB_PATH}.get_webhook_info")
-    def test_get_webhook_info_success(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "ok": True,
-            "result": {
-                "url": "https://example.com/webhook",
-                "has_custom_certificate": False,
-                "pending_update_count": 0,
-            },
-        }
-        result = initialized_library.get_webhook_info(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["webhook"]["url"] == "https://example.com/webhook"
-
-    def test_get_webhook_info_no_credential(self, initialized_library):
-        result = initialized_library.get_webhook_info(user_id="nonexistent")
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.get_webhook_info")
-    def test_get_webhook_info_api_error(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "error": "Unauthorized",
-            "details": {"ok": False, "error_code": 401},
-        }
-        result = initialized_library.get_webhook_info(user_id="test_user")
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.get_webhook_info")
-    def test_get_webhook_info_empty_webhook(self, mock_get, initialized_library):
-        mock_get.return_value = {
-            "ok": True,
-            "result": {
-                "url": "",
-                "has_custom_certificate": False,
-                "pending_update_count": 0,
-            },
-        }
-        result = initialized_library.get_webhook_info(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["webhook"]["url"] == ""
-
-    @patch(f"{LIB_PATH}.get_webhook_info")
-    def test_get_webhook_info_exception(self, mock_get, initialized_library):
-        mock_get.side_effect = Exception("Timeout")
-        result = initialized_library.get_webhook_info(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Search Contact Tests
-# ---------------------------------------------------------------------------
-
-class TestSearchContact:
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_search_contact_success(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "ok": True,
-            "result": {
-                "contacts": [
-                    {"chat_id": 111, "name": "John Doe", "type": "private", "username": "johndoe"},
-                    {"chat_id": 222, "name": "John Smith", "type": "private", "username": "johnsmith"},
-                ],
-                "count": 2,
-            },
-        }
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="John",
-        )
-        assert result["status"] == "success"
-        assert result["count"] == 2
-        assert len(result["contacts"]) == 2
-        assert result["contacts"][0]["name"] == "John Doe"
-
-    def test_search_contact_no_credential(self, initialized_library):
-        result = initialized_library.search_contact(
-            user_id="nonexistent",
-            name="John",
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_search_contact_not_found(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "error": "No contacts found matching 'Nobody'",
-            "details": {"searched_updates": 50, "name": "Nobody"},
-        }
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="Nobody",
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_search_contact_exception(self, mock_search, initialized_library):
-        mock_search.side_effect = Exception("API crash")
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="Someone",
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_search_contact_empty_result(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "ok": True,
-            "result": {"contacts": [], "count": 0},
-        }
-        result = initialized_library.search_contact(
-            user_id="test_user",
-            name="GhostUser",
-        )
-        assert result["status"] == "success"
-        assert result["count"] == 0
-        assert result["contacts"] == []
-
-
-# ---------------------------------------------------------------------------
-# Send Message To Name Tests
-# ---------------------------------------------------------------------------
-
-class TestSendMessageToName:
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_to_name_success(self, mock_send, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": 55555, "name": "Alice", "username": "alice"}],
-            "count": 1,
-        }
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 200, "chat": {"id": 55555}, "text": "Hi Alice!"},
-        }
-        result = initialized_library.send_message_to_name(
-            user_id="test_user",
-            name="Alice",
-            text="Hi Alice!",
-        )
-        assert result["status"] == "success"
-        assert result["resolved_contact"]["name"] == "Alice"
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_send_to_name_contact_not_found(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [],
-            "count": 0,
-        }
-        result = initialized_library.send_message_to_name(
-            user_id="test_user",
-            name="Nobody",
-            text="Hello!",
-        )
-        assert result["status"] == "error"
-        assert "No contacts found" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_send_to_name_search_error(self, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "error",
-            "reason": "Unauthorized",
-        }
-        result = initialized_library.send_message_to_name(
-            user_id="test_user",
-            name="Someone",
-            text="Hello!",
-        )
-        assert result["status"] == "error"
-        assert "Could not find contact" in result["reason"]
-
-    def test_send_to_name_no_credential(self, initialized_library):
-        result = initialized_library.send_message_to_name(
-            user_id="nonexistent",
-            name="Alice",
-            text="Hello!",
-        )
-        assert result["status"] == "error"
-        assert "No valid Telegram credential" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_to_name_send_fails(self, mock_send, mock_search, initialized_library):
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [{"chat_id": 55555, "name": "Alice", "username": "alice"}],
-            "count": 1,
-        }
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 201, "chat": {"id": 55555}},
-        }
-        # The send_message method on the library is what's called, which wraps
-        # the helper. Since we mock at the library level, success is returned.
-        result = initialized_library.send_message_to_name(
-            user_id="test_user",
-            name="Alice",
-            text="Hi!",
-            parse_mode="HTML",
-        )
-        assert result["status"] == "success"
-
-    @patch(f"{LIB_PATH}.search_contact")
-    def test_send_to_name_exception(self, mock_search, initialized_library):
-        mock_search.side_effect = Exception("Crash")
-        result = initialized_library.send_message_to_name(
-            user_id="test_user",
-            name="Alice",
-            text="Hello!",
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch(f"{LIB_PATH}.search_contact")
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_to_name_uses_first_match(self, mock_send, mock_search, initialized_library):
-        """When multiple contacts match, the first one is used."""
-        mock_search.return_value = {
-            "status": "success",
-            "contacts": [
-                {"chat_id": 11111, "name": "John A", "username": "johna"},
-                {"chat_id": 22222, "name": "John B", "username": "johnb"},
-            ],
-            "count": 2,
-        }
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 300, "chat": {"id": 11111}},
-        }
-        result = initialized_library.send_message_to_name(
-            user_id="test_user",
-            name="John",
-            text="Hey!",
-        )
-        assert result["status"] == "success"
-        assert result["resolved_contact"]["chat_id"] == 11111
-
-
-# ---------------------------------------------------------------------------
-# MTProto Credential Tests
-# ---------------------------------------------------------------------------
-
-class TestMTProtoCredentials:
-
-    def test_get_mtproto_credentials_found(self, initialized_library_mtproto):
-        cred = initialized_library_mtproto.get_mtproto_credentials(user_id="test_user")
-        assert cred is not None
-        assert cred.connection_type == "mtproto"
-        assert cred.phone_number == "+1234567890"
-        assert cred.session_string == "fake_session_string_data"
-
-    def test_get_mtproto_credentials_not_found(self, initialized_library):
-        # initialized_library only has bot_api credential
-        cred = initialized_library.get_mtproto_credentials(user_id="test_user")
-        assert cred is None
-
-    def test_get_mtproto_credentials_wrong_user(self, initialized_library_mtproto):
-        cred = initialized_library_mtproto.get_mtproto_credentials(user_id="other_user")
-        assert cred is None
-
-    def test_get_mtproto_credentials_with_phone(self, initialized_library_mtproto):
-        cred = initialized_library_mtproto.get_mtproto_credentials(
-            user_id="test_user",
-            phone_number="+1234567890",
-        )
-        assert cred is not None
-        assert cred.phone_number == "+1234567890"
-
-    def test_get_mtproto_credentials_wrong_phone(self, initialized_library_mtproto):
-        cred = initialized_library_mtproto.get_mtproto_credentials(
-            user_id="test_user",
-            phone_number="+9999999999",
-        )
-        assert cred is None
-
-    def test_validate_mtproto_connection_valid(self, initialized_library_mtproto):
-        assert initialized_library_mtproto.validate_mtproto_connection(
-            user_id="test_user"
-        ) is True
-
-    def test_validate_mtproto_connection_no_session(self, initialized_library):
-        assert initialized_library.validate_mtproto_connection(
-            user_id="test_user"
-        ) is False
-
-    def test_validate_mtproto_connection_empty_session(self, initialized_library_mtproto):
-        """A credential with empty session_string is not valid."""
-        cred = TelegramCredential(
-            user_id="empty_user",
-            connection_type="mtproto",
-            phone_number="+5555555555",
-            api_id=11111,
-            api_hash="some_hash",
-            session_string="",
-        )
-        initialized_library_mtproto.get_credential_store().add(cred)
-        assert initialized_library_mtproto.validate_mtproto_connection(
-            user_id="empty_user"
-        ) is False
-
-
-# ---------------------------------------------------------------------------
-# MTProto Start Auth Tests
-# ---------------------------------------------------------------------------
-
-class TestStartMTProtoAuth:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_start_auth_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.start_mtproto_auth(
-            user_id="test_user",
-            phone_number="+1234567890",
-            api_id=12345,
-            api_hash="hash",
-        )
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_start_auth_success(self, mock_mtproto_module, initialized_library):
-        import asyncio
-
-        async def fake_start_auth(*args, **kwargs):
-            return {
-                "result": {
-                    "phone_code_hash": "abc123hash",
-                    "session_string": "pending_session",
-                }
-            }
-
-        mock_mtproto_module.start_auth = fake_start_auth
-
-        result = initialized_library.start_mtproto_auth(
-            user_id="test_user",
-            phone_number="+1234567890",
-            api_id=12345,
-            api_hash="hash_value",
-        )
-        assert result["status"] == "success"
-        assert result["phone_code_hash"] == "abc123hash"
-        assert result["phone_number"] == "+1234567890"
-        assert "OTP code sent" in result["message"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_start_auth_api_error(self, mock_mtproto_module, initialized_library):
-        async def fake_start_auth(*args, **kwargs):
-            return {"error": "PHONE_NUMBER_INVALID"}
-
-        mock_mtproto_module.start_auth = fake_start_auth
-
-        result = initialized_library.start_mtproto_auth(
-            user_id="test_user",
-            phone_number="+invalid",
-            api_id=12345,
-            api_hash="hash",
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_start_auth_exception(self, mock_mtproto_module, initialized_library):
-        async def fake_start_auth(*args, **kwargs):
-            raise Exception("Connection refused")
-
-        mock_mtproto_module.start_auth = fake_start_auth
-
-        result = initialized_library.start_mtproto_auth(
-            user_id="test_user",
-            phone_number="+1234567890",
-            api_id=12345,
-            api_hash="hash",
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Complete Auth Tests
-# ---------------------------------------------------------------------------
-
-class TestCompleteMTProtoAuth:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_complete_auth_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.complete_mtproto_auth(
-            user_id="test_user",
-            phone_number="+1234567890",
-            code="12345",
-            phone_code_hash="hash",
-        )
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_complete_auth_success(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_complete_auth(*args, **kwargs):
-            return {
-                "result": {
-                    "session_string": "final_session_string",
-                    "user_id": 999888,
-                    "first_name": "Test",
-                    "last_name": "User",
-                    "username": "testuser",
-                    "phone": "+1234567890",
-                }
-            }
-
-        mock_mtproto_module.complete_auth = fake_complete_auth
-
-        result = initialized_library_mtproto.complete_mtproto_auth(
-            user_id="test_user",
-            phone_number="+1234567890",
-            code="12345",
-            phone_code_hash="hash123",
-        )
-        assert result["status"] == "success"
-        assert result["user_id"] == 999888
-        assert result["session_string"] == "final_session_string"
-        assert result["name"] == "Test User"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_complete_auth_no_pending(self, initialized_library):
-        """No MTProto credential exists for the phone number."""
-        result = initialized_library.complete_mtproto_auth(
-            user_id="test_user",
-            phone_number="+9999999999",
-            code="12345",
-            phone_code_hash="hash",
-        )
-        assert result["status"] == "error"
-        assert "No pending auth found" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_complete_auth_api_error(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_complete_auth(*args, **kwargs):
-            return {"error": "PHONE_CODE_INVALID"}
-
-        mock_mtproto_module.complete_auth = fake_complete_auth
-
-        result = initialized_library_mtproto.complete_mtproto_auth(
-            user_id="test_user",
-            phone_number="+1234567890",
-            code="00000",
-            phone_code_hash="hash",
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_complete_auth_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_complete_auth(*args, **kwargs):
-            raise Exception("Session expired")
-
-        mock_mtproto_module.complete_auth = fake_complete_auth
-
-        result = initialized_library_mtproto.complete_mtproto_auth(
-            user_id="test_user",
-            phone_number="+1234567890",
-            code="12345",
-            phone_code_hash="hash",
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Get Chats (Dialogs) Tests
-# ---------------------------------------------------------------------------
-
-class TestGetTelegramChats:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_get_chats_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.get_telegram_chats(user_id="test_user")
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_get_chats_no_session(self, initialized_library):
-        result = initialized_library.get_telegram_chats(user_id="test_user")
-        assert result["status"] == "error"
-        assert "No valid MTProto session" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_get_chats_success(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_dialogs(*args, **kwargs):
-            return {
-                "result": {
-                    "dialogs": [
-                        {"id": 111, "name": "Alice", "type": "user"},
-                        {"id": -100222, "name": "Dev Group", "type": "group"},
-                    ],
-                    "count": 2,
-                }
-            }
-
-        mock_mtproto_module.get_dialogs = fake_get_dialogs
-
-        result = initialized_library_mtproto.get_telegram_chats(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["count"] == 2
-        assert len(result["chats"]) == 2
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_get_chats_api_error(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_dialogs(*args, **kwargs):
-            return {"error": "AUTH_KEY_UNREGISTERED"}
-
-        mock_mtproto_module.get_dialogs = fake_get_dialogs
-
-        result = initialized_library_mtproto.get_telegram_chats(user_id="test_user")
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_get_chats_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_dialogs(*args, **kwargs):
-            raise Exception("Connection lost")
-
-        mock_mtproto_module.get_dialogs = fake_get_dialogs
-
-        result = initialized_library_mtproto.get_telegram_chats(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Read Messages Tests
-# ---------------------------------------------------------------------------
-
-class TestReadTelegramMessages:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_read_messages_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.read_telegram_messages(
-            user_id="test_user", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_read_messages_no_session(self, initialized_library):
-        result = initialized_library.read_telegram_messages(
-            user_id="test_user", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "No valid MTProto session" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_read_messages_success(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_messages(*args, **kwargs):
-            return {
-                "result": {
-                    "chat": {"id": 12345, "name": "Alice"},
-                    "messages": [
-                        {"id": 1, "text": "Hello", "date": "2026-01-01"},
-                        {"id": 2, "text": "How are you?", "date": "2026-01-01"},
-                    ],
-                    "count": 2,
-                }
-            }
-
-        mock_mtproto_module.get_messages = fake_get_messages
-
-        result = initialized_library_mtproto.read_telegram_messages(
-            user_id="test_user", chat_id=12345
-        )
-        assert result["status"] == "success"
-        assert result["count"] == 2
-        assert len(result["messages"]) == 2
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_read_messages_api_error(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_messages(*args, **kwargs):
-            return {"error": "PEER_ID_INVALID"}
-
-        mock_mtproto_module.get_messages = fake_get_messages
-
-        result = initialized_library_mtproto.read_telegram_messages(
-            user_id="test_user", chat_id=99999
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_read_messages_with_name(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search_contacts(*args, **kwargs):
-            return {
-                "result": {
-                    "contacts": [{"id": 55555, "name": "Alice"}],
-                    "count": 1,
-                }
-            }
-
-        async def fake_get_messages(*args, **kwargs):
-            return {
-                "result": {
-                    "chat": {"id": 55555, "name": "Alice"},
-                    "messages": [{"id": 1, "text": "Hi"}],
-                    "count": 1,
-                }
-            }
-
-        mock_mtproto_module.search_contacts = fake_search_contacts
-        mock_mtproto_module.get_messages = fake_get_messages
-
-        result = initialized_library_mtproto.read_telegram_messages(
-            user_id="test_user", name="Alice"
-        )
-        assert result["status"] == "success"
-        assert result["count"] == 1
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_read_messages_name_not_found(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search_contacts(*args, **kwargs):
-            return {"result": {"contacts": [], "count": 0}}
-
-        mock_mtproto_module.search_contacts = fake_search_contacts
-
-        result = initialized_library_mtproto.read_telegram_messages(
-            user_id="test_user", name="Nobody"
-        )
-        assert result["status"] == "error"
-        assert "No contacts found" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_read_messages_no_chat_id_or_name(self, initialized_library_mtproto):
-        result = initialized_library_mtproto.read_telegram_messages(
-            user_id="test_user"
-        )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_read_messages_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_messages(*args, **kwargs):
-            raise Exception("Connection reset")
-
-        mock_mtproto_module.get_messages = fake_get_messages
-
-        result = initialized_library_mtproto.read_telegram_messages(
-            user_id="test_user", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Send Message Tests
-# ---------------------------------------------------------------------------
-
-class TestSendMTProtoMessage:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_send_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.send_mtproto_message(
-            user_id="test_user", text="Hello", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_send_mtproto_no_session(self, initialized_library):
-        result = initialized_library.send_mtproto_message(
-            user_id="test_user", text="Hello", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "No valid MTProto session" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_mtproto_success(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_send(*args, **kwargs):
-            return {
-                "result": {
-                    "message_id": 500,
-                    "chat_id": 12345,
-                    "date": "2026-01-01T12:00:00",
-                }
-            }
-
-        mock_mtproto_module.send_message = fake_send
-
-        result = initialized_library_mtproto.send_mtproto_message(
-            user_id="test_user", text="Hello!", chat_id=12345
-        )
-        assert result["status"] == "success"
-        assert result["message_id"] == 500
-        assert result["chat_id"] == 12345
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_mtproto_api_error(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_send(*args, **kwargs):
-            return {"error": "PEER_ID_INVALID"}
-
-        mock_mtproto_module.send_message = fake_send
-
-        result = initialized_library_mtproto.send_mtproto_message(
-            user_id="test_user", text="Hello!", chat_id=99999
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_mtproto_with_name(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search(*args, **kwargs):
-            return {"result": {"contacts": [{"id": 55555, "name": "Bob"}], "count": 1}}
-
-        async def fake_send(*args, **kwargs):
-            return {
-                "result": {
-                    "message_id": 501,
-                    "chat_id": 55555,
-                    "date": "2026-01-01",
-                }
-            }
-
-        mock_mtproto_module.search_contacts = fake_search
-        mock_mtproto_module.send_message = fake_send
-
-        result = initialized_library_mtproto.send_mtproto_message(
-            user_id="test_user", text="Hey Bob!", name="Bob"
-        )
-        assert result["status"] == "success"
-        assert result["chat_id"] == 55555
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_mtproto_name_not_found(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search(*args, **kwargs):
-            return {"result": {"contacts": [], "count": 0}}
-
-        mock_mtproto_module.search_contacts = fake_search
-
-        result = initialized_library_mtproto.send_mtproto_message(
-            user_id="test_user", text="Hello!", name="Ghost"
-        )
-        assert result["status"] == "error"
-        assert "No contacts found" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_send_mtproto_no_chat_id_or_name(self, initialized_library_mtproto):
-        result = initialized_library_mtproto.send_mtproto_message(
-            user_id="test_user", text="Hello!"
-        )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_mtproto_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_send(*args, **kwargs):
-            raise Exception("Flood wait")
-
-        mock_mtproto_module.send_message = fake_send
-
-        result = initialized_library_mtproto.send_mtproto_message(
-            user_id="test_user", text="Hello!", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Send File Tests
-# ---------------------------------------------------------------------------
-
-class TestSendMTProtoFile:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_send_file_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.send_mtproto_file(
-            user_id="test_user", file_path="/path/to/file.pdf", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_send_file_no_session(self, initialized_library):
-        result = initialized_library.send_mtproto_file(
-            user_id="test_user", file_path="/path/to/file.pdf", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "No valid MTProto session" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_file_success(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_send_file(*args, **kwargs):
-            return {
-                "result": {
-                    "message_id": 600,
-                    "chat_id": 12345,
-                    "date": "2026-01-01T12:00:00",
-                }
-            }
-
-        mock_mtproto_module.send_file = fake_send_file
-
-        result = initialized_library_mtproto.send_mtproto_file(
-            user_id="test_user",
-            file_path="/path/to/doc.pdf",
-            chat_id=12345,
-            caption="Here is the document",
-        )
-        assert result["status"] == "success"
-        assert result["message_id"] == 600
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_file_api_error(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_send_file(*args, **kwargs):
-            return {"error": "FILE_REFERENCE_EXPIRED"}
-
-        mock_mtproto_module.send_file = fake_send_file
-
-        result = initialized_library_mtproto.send_mtproto_file(
-            user_id="test_user", file_path="/bad/path", chat_id=12345
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_file_with_name(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search(*args, **kwargs):
-            return {"result": {"contacts": [{"id": 77777, "name": "Dave"}], "count": 1}}
-
-        async def fake_send_file(*args, **kwargs):
-            return {
-                "result": {
-                    "message_id": 601,
-                    "chat_id": 77777,
-                    "date": "2026-01-01",
-                }
-            }
-
-        mock_mtproto_module.search_contacts = fake_search
-        mock_mtproto_module.send_file = fake_send_file
-
-        result = initialized_library_mtproto.send_mtproto_file(
-            user_id="test_user", file_path="/path/file.pdf", name="Dave"
-        )
-        assert result["status"] == "success"
-        assert result["chat_id"] == 77777
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_send_file_no_chat_id_or_name(self, initialized_library_mtproto):
-        result = initialized_library_mtproto.send_mtproto_file(
-            user_id="test_user", file_path="/path/file.pdf"
-        )
-        assert result["status"] == "error"
-        assert "Either chat_id or name" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_send_file_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_send_file(*args, **kwargs):
-            raise Exception("Upload interrupted")
-
-        mock_mtproto_module.send_file = fake_send_file
-
-        result = initialized_library_mtproto.send_mtproto_file(
-            user_id="test_user", file_path="/path/file.pdf", chat_id=12345
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Search Contacts Tests
-# ---------------------------------------------------------------------------
-
-class TestSearchMTProtoContacts:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_search_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.search_mtproto_contacts(
-            user_id="test_user", query="Alice"
-        )
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_search_mtproto_no_session(self, initialized_library):
-        result = initialized_library.search_mtproto_contacts(
-            user_id="test_user", query="Alice"
-        )
-        assert result["status"] == "error"
-        assert "No valid MTProto session" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_search_mtproto_success(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search(*args, **kwargs):
-            return {
-                "result": {
-                    "contacts": [
-                        {"id": 111, "name": "Alice", "username": "alice"},
-                        {"id": 222, "name": "Alice B", "username": "aliceb"},
-                    ],
-                    "count": 2,
-                }
-            }
-
-        mock_mtproto_module.search_contacts = fake_search
-
-        result = initialized_library_mtproto.search_mtproto_contacts(
-            user_id="test_user", query="Alice"
-        )
-        assert result["status"] == "success"
-        assert result["count"] == 2
-        assert len(result["contacts"]) == 2
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_search_mtproto_api_error(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search(*args, **kwargs):
-            return {"error": "SEARCH_QUERY_EMPTY"}
-
-        mock_mtproto_module.search_contacts = fake_search
-
-        result = initialized_library_mtproto.search_mtproto_contacts(
-            user_id="test_user", query=""
-        )
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_search_mtproto_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_search(*args, **kwargs):
-            raise Exception("Auth key unregistered")
-
-        mock_mtproto_module.search_contacts = fake_search
-
-        result = initialized_library_mtproto.search_mtproto_contacts(
-            user_id="test_user", query="Alice"
-        )
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Get Account Info Tests
-# ---------------------------------------------------------------------------
-
-class TestGetMTProtoAccountInfo:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_account_info_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.get_mtproto_account_info(user_id="test_user")
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_account_info_no_session(self, initialized_library):
-        result = initialized_library.get_mtproto_account_info(user_id="test_user")
-        assert result["status"] == "error"
-        assert "No valid MTProto session" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_account_info_success(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_me(*args, **kwargs):
-            return {
-                "result": {
-                    "id": 999888,
-                    "first_name": "Test",
-                    "last_name": "User",
-                    "username": "testuser",
-                    "phone": "+1234567890",
-                }
-            }
-
-        mock_mtproto_module.get_me = fake_get_me
-
-        result = initialized_library_mtproto.get_mtproto_account_info(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["user"]["id"] == 999888
-        assert result["user"]["username"] == "testuser"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_account_info_api_error(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_me(*args, **kwargs):
-            return {"error": "AUTH_KEY_UNREGISTERED"}
-
-        mock_mtproto_module.get_me = fake_get_me
-
-        result = initialized_library_mtproto.get_mtproto_account_info(user_id="test_user")
-        assert result["status"] == "error"
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_account_info_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_get_me(*args, **kwargs):
-            raise Exception("Connection lost")
-
-        mock_mtproto_module.get_me = fake_get_me
-
-        result = initialized_library_mtproto.get_mtproto_account_info(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# MTProto Validate Session Tests
-# ---------------------------------------------------------------------------
-
-class TestValidateMTProtoSession:
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", False)
-    def test_validate_session_mtproto_unavailable(self, initialized_library):
-        result = initialized_library.validate_mtproto_session(user_id="test_user")
-        assert result["status"] == "error"
-        assert "MTProto support not available" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    def test_validate_session_no_session(self, initialized_library):
-        result = initialized_library.validate_mtproto_session(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["valid"] is False
-        assert "No session found" in result["reason"]
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_validate_session_valid(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_validate(*args, **kwargs):
-            return {
-                "result": {
-                    "valid": True,
-                    "user_id": 999888,
-                    "username": "testuser",
-                }
-            }
-
-        mock_mtproto_module.validate_session = fake_validate
-
-        result = initialized_library_mtproto.validate_mtproto_session(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["valid"] is True
-        assert result["user_id"] == 999888
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_validate_session_invalid(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_validate(*args, **kwargs):
-            return {
-                "result": {
-                    "valid": False,
-                    "user_id": None,
-                    "username": "",
-                }
-            }
-
-        mock_mtproto_module.validate_session = fake_validate
-
-        result = initialized_library_mtproto.validate_mtproto_session(user_id="test_user")
-        assert result["status"] == "success"
-        assert result["valid"] is False
-
-    @patch(f"{LIB_PATH}.MTPROTO_AVAILABLE", True)
-    @patch(f"{LIB_PATH}.mtproto")
-    def test_validate_session_exception(self, mock_mtproto_module, initialized_library_mtproto):
-        async def fake_validate(*args, **kwargs):
-            raise Exception("Timeout")
-
-        mock_mtproto_module.validate_session = fake_validate
-
-        result = initialized_library_mtproto.validate_mtproto_session(user_id="test_user")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ---------------------------------------------------------------------------
-# Edge Cases & Cross-Cutting Tests
-# ---------------------------------------------------------------------------
-
-class TestEdgeCases:
-
-    @patch(f"{LIB_PATH}.get_me")
-    def test_bot_info_passes_correct_token(self, mock_get_me, initialized_library):
-        """Verify the correct bot_token from the credential is used."""
-        mock_get_me.return_value = {"ok": True, "result": {"id": 123}}
-        initialized_library.get_bot_info(user_id="test_user")
-        mock_get_me.assert_called_once_with(
-            bot_token="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-        )
-
-    def test_multiple_credentials_same_user(self):
-        """A user can have multiple bot credentials with different bot_ids."""
-        TelegramAppLibrary.initialize()
-        cred1 = TelegramCredential(
-            user_id="test_user",
-            bot_id="bot_a",
-            bot_token="token_a",
-        )
-        cred2 = TelegramCredential(
-            user_id="test_user",
-            bot_id="bot_b",
-            bot_token="token_b",
-        )
-        TelegramAppLibrary.get_credential_store().add(cred1)
-        TelegramAppLibrary.get_credential_store().add(cred2)
-
-        cred_a = TelegramAppLibrary.get_credentials(
-            user_id="test_user", bot_id="bot_a"
-        )
-        cred_b = TelegramAppLibrary.get_credentials(
-            user_id="test_user", bot_id="bot_b"
-        )
-        assert cred_a.bot_token == "token_a"
-        assert cred_b.bot_token == "token_b"
-
-    def test_credential_store_replaces_on_same_unique_keys(self):
-        """Adding a credential with the same unique keys replaces the existing one."""
-        TelegramAppLibrary.initialize()
-        cred1 = TelegramCredential(
-            user_id="test_user",
-            bot_id="bot_x",
-            bot_token="old_token",
-        )
-        cred2 = TelegramCredential(
-            user_id="test_user",
-            bot_id="bot_x",
-            bot_token="new_token",
-        )
-        TelegramAppLibrary.get_credential_store().add(cred1)
-        TelegramAppLibrary.get_credential_store().add(cred2)
-
-        cred = TelegramAppLibrary.get_credentials(
-            user_id="test_user", bot_id="bot_x"
-        )
-        assert cred.bot_token == "new_token"
-
-        # Should still be only one credential for this user+bot_id
-        all_creds = TelegramAppLibrary.get_credential_store().get(
-            user_id="test_user", bot_id="bot_x"
-        )
-        assert len(all_creds) == 1
-
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_with_username_chat_id(self, mock_send, initialized_library):
-        """Test sending to a @username-style chat_id."""
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 1, "chat": {"id": -100123}},
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Post to channel",
-            chat_id="@my_channel",
-        )
-        assert result["status"] == "success"
-
-    @patch(f"{LIB_PATH}.get_updates")
-    def test_get_updates_default_limit(self, mock_get, initialized_library):
-        """Default limit should be 100."""
-        mock_get.return_value = {"ok": True, "result": []}
-        initialized_library.get_updates(user_id="test_user")
-        mock_get.assert_called_once_with(
-            bot_token="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
-            offset=None,
-            limit=100,
-        )
-
-    def test_get_credential_store_returns_same_instance(self):
-        """get_credential_store should return the same store each time."""
-        TelegramAppLibrary.initialize()
-        store1 = TelegramAppLibrary.get_credential_store()
-        store2 = TelegramAppLibrary.get_credential_store()
-        assert store1 is store2
-
-    @patch(f"{LIB_PATH}.send_message")
-    def test_send_message_chat_id_zero(self, mock_send, initialized_library):
-        """chat_id=0 is a valid integer; it should be passed through."""
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"message_id": 1, "chat": {"id": 0}},
-        }
-        result = initialized_library.send_message(
-            user_id="test_user",
-            text="Test",
-            chat_id=0,
-        )
-        # chat_id=0 is falsy but not None, so _resolve_chat_identifier uses it
-        assert result["status"] == "success"
-
-    @patch(f"{LIB_PATH}.forward_message")
-    def test_forward_message_both_ids(self, mock_fwd, initialized_library):
-        """Forward with explicit source and destination chat_ids."""
-        mock_fwd.return_value = {
-            "ok": True,
-            "result": {"message_id": 777},
-        }
-        result = initialized_library.forward_message(
-            user_id="test_user",
-            message_id=42,
-            chat_id=11111,
-            from_chat_id=22222,
-        )
-        assert result["status"] == "success"
-        assert "resolved_to_contact" not in result
-        assert "resolved_from_contact" not in result
+        if result.get('status') == 'success':
+            contacts = result.get('contacts', [])
+            print_info(f"Found {result.get('count', 0)} contact(s) matching 'a'")
+            for c in contacts[:5]:
+                name = f"{c.get('first_name', '')} {c.get('last_name', '')}".strip()
+                print_info(f"  - {name or 'N/A'} (id: {c.get('id', 'N/A')}, username: @{c.get('username', 'N/A')})")
+
+    def test_send_mtproto_message(self):
+        """Test sending a message via MTProto."""
+        print_section("MTPROTO SEND MESSAGE")
+
+        if self.skip_send:
+            print_skip("send_mtproto_message - skipped (--skip-send)")
+            self.test_results["send_mtproto_message"] = 'SKIP'
+            return
+
+        if not self._has_mtproto():
+            print_skip("send_mtproto_message - skipped (no MTProto session)")
+            self.test_results["send_mtproto_message"] = 'SKIP'
+            return
+
+        if not self.chat_id:
+            print_warning("send_mtproto_message - skipped (no --chat-id provided)")
+            self.test_results["send_mtproto_message"] = 'SKIP'
+            return
+
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        test_text = f"[CraftOS Integration Test] MTProto send_message - {timestamp}"
+
+        result = self.run_test(
+            "send_mtproto_message",
+            TelegramAppLibrary.send_mtproto_message,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
+            text=test_text,
+        )
+        if result.get('status') == 'success':
+            print_info(f"Message ID: {result.get('message_id', 'N/A')}")
+            print_info(f"Chat ID: {result.get('chat_id', 'N/A')}")
+            print_info(f"Date: {result.get('date', 'N/A')}")
+            msg_id = result.get('message_id')
+            if msg_id:
+                self.sent_message_ids.append(('mtproto', msg_id))
+
+    # ==================================================================
+    # TEST GROUP RUNNERS
+    # ==================================================================
+
+    def test_bot_readonly(self):
+        """Run all read-only Bot API tests."""
+        self.test_initialize()
+        self.test_validate_connection()
+        self.test_get_credentials()
+        self.test_get_bot_info()
+        self.test_get_updates()
+        self.test_search_contact()
+        self.test_get_chat()
+        self.test_get_chat_member()
+        self.test_get_chat_members_count()
+
+    def test_bot_send(self):
+        """Run all Bot API send/write tests."""
+        self.test_send_message()
+        self.test_send_photo()
+        self.test_send_document()
+        self.test_send_message_to_name()
+        self.test_forward_message()
+
+    def test_mtproto_readonly(self):
+        """Run all read-only MTProto tests."""
+        self.test_mtproto_validate_connection()
+        self.test_get_mtproto_account_info()
+        self.test_get_telegram_chats()
+        self.test_read_telegram_messages()
+        self.test_search_mtproto_contacts()
+
+    def test_mtproto_send(self):
+        """Run MTProto send tests."""
+        self.test_send_mtproto_message()
+
+    def test_all(self):
+        """Run all tests."""
+        # Bot API read-only
+        self.test_bot_readonly()
+        # Bot API send
+        self.test_bot_send()
+        # MTProto read-only
+        self.test_mtproto_readonly()
+        # MTProto send
+        self.test_mtproto_send()
+
+    # ==================================================================
+    # CLEANUP
+    # ==================================================================
+
+    def cleanup(self):
+        """Clean up test artifacts (informational only -- Telegram does not expose delete for bots easily)."""
+        print_section("CLEANUP")
+
+        if self.sent_message_ids:
+            print_info(f"Sent {len(self.sent_message_ids)} test message(s) during this run:")
+            for api_type, msg_id in self.sent_message_ids:
+                print_info(f"  - [{api_type}] message_id={msg_id}")
+            print_info("Note: Telegram Bot API does not support bulk message deletion.")
+            print_info("Test messages are tagged with '[CraftOS Integration Test]' for easy identification.")
+        else:
+            print_info("No test messages were sent (nothing to clean up).")
+
+    # ==================================================================
+    # SUMMARY
+    # ==================================================================
+
+    def print_summary(self):
+        """Print test summary with color-coded results."""
+        print_header("TEST SUMMARY")
+
+        passed = sum(1 for v in self.test_results.values() if v == 'PASS')
+        failed = sum(1 for v in self.test_results.values() if v == 'FAIL')
+        errors = sum(1 for v in self.test_results.values() if v == 'ERROR')
+        skipped = sum(1 for v in self.test_results.values() if v == 'SKIP')
+        total = len(self.test_results)
+
+        print(f"\n  Total tests: {total}")
+        print(f"  {Colors.GREEN}Passed:  {passed}{Colors.END}")
+        print(f"  {Colors.RED}Failed:  {failed}{Colors.END}")
+        print(f"  {Colors.YELLOW}Errors:  {errors}{Colors.END}")
+        print(f"  {Colors.MAGENTA}Skipped: {skipped}{Colors.END}")
+
+        print(f"\n  {Colors.BOLD}Detailed Results:{Colors.END}")
+        for name, result in self.test_results.items():
+            if result == 'PASS':
+                print(f"    {Colors.GREEN}[PASS]{Colors.END}  {name}")
+            elif result == 'FAIL':
+                print(f"    {Colors.RED}[FAIL]{Colors.END}  {name}")
+            elif result == 'ERROR':
+                print(f"    {Colors.YELLOW}[ERR] {Colors.END}  {name}")
+            elif result == 'SKIP':
+                print(f"    {Colors.MAGENTA}[SKIP]{Colors.END}  {name}")
+
+        # Overall verdict
+        print()
+        if failed == 0 and errors == 0:
+            print(f"  {Colors.BOLD}{Colors.GREEN}ALL EXECUTED TESTS PASSED{Colors.END}")
+        else:
+            print(f"  {Colors.BOLD}{Colors.RED}{failed + errors} TEST(S) FAILED OR ERRORED{Colors.END}")
+
+
+def list_credentials():
+    """List all stored Telegram credentials (Bot API and MTProto)."""
+    print_header("STORED TELEGRAM CREDENTIALS")
+
+    TelegramAppLibrary.initialize()
+    cred_store = TelegramAppLibrary.get_credential_store()
+
+    all_credentials = []
+    for user_id, creds in cred_store.credentials.items():
+        all_credentials.extend(creds)
+
+    if not all_credentials:
+        print_warning("No Telegram credentials found.")
+        print_info("Please authenticate via the CraftOS control panel first.")
+        return None
+
+    print(f"\nFound {len(all_credentials)} credential(s):\n")
+
+    bot_creds = [c for c in all_credentials if c.connection_type == "bot_api"]
+    mtproto_creds = [c for c in all_credentials if c.connection_type == "mtproto"]
+
+    if bot_creds:
+        print(f"  {Colors.BOLD}Bot API Credentials:{Colors.END}")
+        for i, cred in enumerate(bot_creds, 1):
+            print(f"    [{i}] User ID:      {cred.user_id}")
+            print(f"        Bot ID:       {cred.bot_id}")
+            print(f"        Bot Username: @{cred.bot_username}")
+            print(f"        Has Token:    {bool(cred.bot_token)}")
+            print()
+
+    if mtproto_creds:
+        print(f"  {Colors.BOLD}MTProto (User Account) Credentials:{Colors.END}")
+        for i, cred in enumerate(mtproto_creds, 1):
+            print(f"    [{i}] User ID:        {cred.user_id}")
+            print(f"        Phone Number:    {cred.phone_number}")
+            print(f"        Account Name:    {cred.account_name}")
+            print(f"        Telegram User:   {cred.telegram_user_id}")
+            print(f"        Has Session:     {bool(cred.session_string)}")
+            print(f"        API ID:          {cred.api_id}")
+            print()
+
+    return all_credentials[0].user_id
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Integration test suite for Telegram API (Bot API + MTProto)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Test groups (--only):
+  bot        All Bot API tests (read-only + send)
+  bot-read   Bot API read-only tests (no messages sent)
+  send       Bot API send tests only (send_message, send_photo, etc.)
+  mtproto    All MTProto tests (read-only + send)
+  mtproto-read  MTProto read-only tests
+  mtproto-send  MTProto send tests only
+  all        Run everything (default)
+
+Examples:
+  python test_telegram_library.py --list
+  python test_telegram_library.py --user-id myuser --chat-id 123456789
+  python test_telegram_library.py --only bot-read
+  python test_telegram_library.py --only send --chat-id 123456789 --skip-send
+  python test_telegram_library.py --only mtproto --skip-send
+        """
+    )
+    parser.add_argument('--user-id', type=str, help='CraftOS user ID')
+    parser.add_argument('--chat-id', type=str, help='Target chat ID for send tests and chat info tests')
+    parser.add_argument('--list', action='store_true', help='List stored Telegram credentials')
+    parser.add_argument('--skip-send', action='store_true', help='Skip tests that send messages')
+    parser.add_argument(
+        '--only', type=str,
+        choices=['bot', 'bot-read', 'send', 'mtproto', 'mtproto-read', 'mtproto-send', 'all'],
+        default='all',
+        help='Only run a specific test group'
+    )
+    args = parser.parse_args()
+
+    print_header("TELEGRAM EXTERNAL LIBRARY INTEGRATION TEST SUITE")
+    print(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  Test group: {args.only}")
+    print(f"  Skip send: {args.skip_send}")
+
+    # Initialize the library
+    TelegramAppLibrary.initialize()
+    print_success("TelegramAppLibrary initialized")
+
+    # List credentials if requested
+    if args.list:
+        list_credentials()
+        return
+
+    # Get credentials
+    user_id = args.user_id
+
+    if not user_id:
+        print_section("CREDENTIAL LOOKUP")
+        user_id = list_credentials()
+
+        if not user_id:
+            print_error("No credentials available. Exiting.")
+            return
+
+        print_info(f"Using: user_id={user_id}")
+
+    # Quick validation
+    has_bot = TelegramAppLibrary.validate_connection(user_id=user_id)
+    has_mtproto = False
+    try:
+        has_mtproto = TelegramAppLibrary.validate_mtproto_connection(user_id=user_id)
+    except Exception:
+        pass
+
+    print_info(f"Bot API credentials:   {'found' if has_bot else 'NOT FOUND'}")
+    print_info(f"MTProto credentials:   {'found' if has_mtproto else 'NOT FOUND'}")
+
+    if not has_bot and not has_mtproto:
+        print_error("No valid Telegram credentials found for this user. Exiting.")
+        return
+
+    if args.chat_id:
+        print_info(f"Target chat ID:        {args.chat_id}")
+
+    # Create tester
+    tester = TelegramTester(
+        user_id=user_id,
+        chat_id=args.chat_id,
+        skip_send=args.skip_send,
+    )
+
+    try:
+        if args.only == 'all':
+            tester.test_all()
+        elif args.only == 'bot':
+            tester.test_bot_readonly()
+            tester.test_bot_send()
+        elif args.only == 'bot-read':
+            tester.test_bot_readonly()
+        elif args.only == 'send':
+            # Need initialization and bot info first for some send tests
+            tester.test_initialize()
+            tester.test_get_bot_info()
+            tester.test_bot_send()
+        elif args.only == 'mtproto':
+            tester.test_initialize()
+            tester.test_mtproto_readonly()
+            tester.test_mtproto_send()
+        elif args.only == 'mtproto-read':
+            tester.test_initialize()
+            tester.test_mtproto_readonly()
+        elif args.only == 'mtproto-send':
+            tester.test_initialize()
+            tester.test_mtproto_send()
+
+    finally:
+        tester.cleanup()
+
+    # Print summary
+    tester.print_summary()
+
+
+if __name__ == "__main__":
+    main()

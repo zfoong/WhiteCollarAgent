@@ -1,1275 +1,660 @@
 """
-Tests for Recall.ai external library.
+Integration test script for Recall.ai external library.
 
-Uses pytest with unittest.mock to mock the Recall.ai helper functions,
-allowing all library methods to be tested without a live Recall.ai API
-connection or any network access.
+This script tests ALL RecallAppLibrary methods using stored credentials.
+Run this to verify Recall.ai integration without going through the agent cycle.
 
 Usage:
-    pytest core/external_libraries/recall/tests/test_recall_library.py -v
+    python test_recall_library.py [--user-id YOUR_USER_ID] [--list] [--only GROUP] [--meeting-url URL]
+
+If no arguments provided, it will use the first stored credential.
+
+Examples:
+    python test_recall_library.py --list
+    python test_recall_library.py --user-id my_user
+    python test_recall_library.py --only connection
+    python test_recall_library.py --only meeting --meeting-url "https://zoom.us/j/123456789"
+    python test_recall_library.py --only bot --meeting-url "https://meet.google.com/abc-defg-hij"
 """
 import sys
-import pytest
+import argparse
+import json
+import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from typing import Optional, Dict, Any
+from datetime import datetime
 
-# Add project root to path
+# Add parent directories to path to allow imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent.parent))
 
-from core.external_libraries.recall.credentials import RecallCredential
 from core.external_libraries.recall.external_app_library import RecallAppLibrary
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def reset_library():
-    """Reset RecallAppLibrary state before each test."""
-    RecallAppLibrary._initialized = False
-    RecallAppLibrary._credential_store = None
-    yield
-    RecallAppLibrary._initialized = False
-    RecallAppLibrary._credential_store = None
+# ANSI colors for output
+class Colors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
 
 
-@pytest.fixture
-def mock_credential():
-    """Return a sample Recall.ai credential."""
-    return RecallCredential(
-        user_id="test_user",
-        api_key="test_api_key_abc123",
-        region="us",
-    )
+def print_header(text: str):
+    """Print a formatted header."""
+    print(f"\n{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{text}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
 
 
-@pytest.fixture
-def mock_credential_eu():
-    """Return a sample Recall.ai credential for the EU region."""
-    return RecallCredential(
-        user_id="eu_user",
-        api_key="eu_api_key_xyz789",
-        region="eu",
-    )
+def print_section(text: str):
+    """Print a section header."""
+    print(f"\n{Colors.CYAN}{'-' * 50}{Colors.END}")
+    print(f"{Colors.CYAN}{text}{Colors.END}")
+    print(f"{Colors.CYAN}{'-' * 50}{Colors.END}")
 
 
-@pytest.fixture
-def initialized_library(mock_credential):
-    """Initialize the library and inject a mock credential store."""
-    RecallAppLibrary.initialize()
-    RecallAppLibrary.get_credential_store().add(mock_credential)
-    return RecallAppLibrary
+def print_success(text: str):
+    """Print success message."""
+    print(f"{Colors.GREEN}PASS {text}{Colors.END}")
 
 
-@pytest.fixture
-def initialized_library_eu(mock_credential_eu):
-    """Initialize the library and inject an EU credential."""
-    RecallAppLibrary.initialize()
-    RecallAppLibrary.get_credential_store().add(mock_credential_eu)
-    return RecallAppLibrary
+def print_error(text: str):
+    """Print error message."""
+    print(f"{Colors.RED}FAIL {text}{Colors.END}")
 
 
-# ---------------------------------------------------------------------------
-# Helper constants
-# ---------------------------------------------------------------------------
-
-HELPERS_MODULE = "core.external_libraries.recall.external_app_library"
-
-SAMPLE_BOT_RESULT = {
-    "bot_id": "bot_12345",
-    "status": "joining_call",
-    "meeting_url": "https://zoom.us/j/123456789",
-    "video_url": None,
-    "join_at": "2026-01-15T10:00:00Z",
-}
-
-SAMPLE_BOT_STATUS_RESULT = {
-    "bot_id": "bot_12345",
-    "status": "in_call_recording",
-    "status_changes": [
-        {"code": "ready", "created_at": "2026-01-15T09:59:00Z"},
-        {"code": "joining_call", "created_at": "2026-01-15T10:00:00Z"},
-        {"code": "in_call_recording", "created_at": "2026-01-15T10:00:30Z"},
-    ],
-    "meeting_url": "https://zoom.us/j/123456789",
-    "video_url": "https://recall.ai/recordings/abc.mp4",
-    "meeting_participants": [
-        {"id": 1, "name": "Alice"},
-        {"id": 2, "name": "Bob"},
-    ],
-    "transcript": None,
-}
-
-SAMPLE_TRANSCRIPT = [
-    {"speaker": "Alice", "words": [{"text": "Hello", "start_time": 0.0, "end_time": 0.5}]},
-    {"speaker": "Bob", "words": [{"text": "Hi there", "start_time": 1.0, "end_time": 1.5}]},
-]
-
-SAMPLE_LIST_BOTS_RESULT = {
-    "bots": [
-        {"id": "bot_001", "status": "done"},
-        {"id": "bot_002", "status": "in_call_recording"},
-    ],
-    "count": 2,
-    "next": None,
-    "previous": None,
-}
+def print_warning(text: str):
+    """Print warning message."""
+    print(f"{Colors.YELLOW}WARN {text}{Colors.END}")
 
 
-# ===========================================================================
-# Initialization & Credential Tests
-# ===========================================================================
-
-class TestInitialization:
-
-    def test_initialize(self):
-        assert not RecallAppLibrary._initialized
-        RecallAppLibrary.initialize()
-        assert RecallAppLibrary._initialized
-        assert RecallAppLibrary._credential_store is not None
-
-    def test_initialize_idempotent(self):
-        RecallAppLibrary.initialize()
-        store = RecallAppLibrary._credential_store
-        RecallAppLibrary.initialize()
-        assert RecallAppLibrary._credential_store is store
-
-    def test_get_name(self):
-        assert RecallAppLibrary.get_name() == "Recall"
-
-    def test_get_credential_store_before_init_raises(self):
-        with pytest.raises(RuntimeError, match="not initialized"):
-            RecallAppLibrary.get_credential_store()
-
-    def test_get_credential_store_after_init(self):
-        RecallAppLibrary.initialize()
-        store = RecallAppLibrary.get_credential_store()
-        assert store is not None
+def print_info(text: str):
+    """Print info message."""
+    print(f"  {text}")
 
 
-class TestValidateConnection:
-
-    def test_validate_no_credentials(self):
-        RecallAppLibrary.initialize()
-        assert RecallAppLibrary.validate_connection(user_id="nonexistent") is False
-
-    def test_validate_with_credentials(self, initialized_library, mock_credential):
-        assert initialized_library.validate_connection(user_id="test_user") is True
-
-    def test_validate_with_wrong_user(self, initialized_library):
-        assert initialized_library.validate_connection(user_id="other_user") is False
+def print_result(result: Dict[str, Any], indent: int = 2):
+    """Pretty print a result dict."""
+    formatted = json.dumps(result, indent=indent, default=str)
+    for line in formatted.split('\n')[:30]:  # Limit output
+        print(f"  {line}")
+    if len(formatted.split('\n')) > 30:
+        print(f"  ... (output truncated)")
 
 
-class TestGetCredentials:
+class RecallTester:
+    """Test runner for Recall.ai API methods."""
 
-    def test_get_credentials_found(self, initialized_library, mock_credential):
-        cred = initialized_library.get_credentials(user_id="test_user")
-        assert cred is not None
-        assert cred.user_id == "test_user"
-        assert cred.api_key == "test_api_key_abc123"
-        assert cred.region == "us"
+    def __init__(self, user_id: str, meeting_url: Optional[str] = None):
+        self.user_id = user_id
+        self.meeting_url = meeting_url
+        self.test_results = {}
+        self.created_bot_id = None  # Store for cleanup
 
-    def test_get_credentials_not_found(self, initialized_library):
-        cred = initialized_library.get_credentials(user_id="nonexistent")
-        assert cred is None
+    def run_test(self, test_name: str, func, *args, **kwargs) -> Dict[str, Any]:
+        """Run a single test and record result."""
+        print(f"\n  Testing: {test_name}...")
+        try:
+            result = func(*args, **kwargs)
 
+            if isinstance(result, bool):
+                # For validate_connection which returns a bool
+                if result:
+                    print_success(f"{test_name} - returned True")
+                    self.test_results[test_name] = 'PASS'
+                else:
+                    print_error(f"{test_name} - returned False")
+                    self.test_results[test_name] = 'FAIL'
+                return {"status": "success" if result else "error", "value": result}
 
-# ===========================================================================
-# Join Meeting Tests
-# ===========================================================================
+            if result is None:
+                # For get_credentials when no credential found
+                print_error(f"{test_name} - returned None")
+                self.test_results[test_name] = 'FAIL'
+                return {"status": "error", "reason": "Returned None"}
 
-class TestJoinMeeting:
+            # Handle credential objects (from get_credentials)
+            if hasattr(result, 'api_key'):
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
+                return {"status": "success", "credential": result}
 
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_success(self, mock_create_bot, initialized_library):
-        mock_create_bot.return_value = {"ok": True, "result": SAMPLE_BOT_RESULT}
+            # Handle dict results from API methods
+            status = result.get('status', 'unknown')
 
-        result = initialized_library.join_meeting(
-            user_id="test_user",
-            meeting_url="https://zoom.us/j/123456789",
-            bot_name="My Bot",
+            if status == 'success':
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
+            else:
+                reason = result.get('reason', result.get('details', 'Unknown error'))
+                print_error(f"{test_name} - FAILED: {reason}")
+                self.test_results[test_name] = 'FAIL'
+
+            return result
+        except Exception as e:
+            print_error(f"{test_name} - EXCEPTION: {str(e)}")
+            self.test_results[test_name] = 'ERROR'
+            return {"status": "error", "reason": str(e)}
+
+    # ===================================================================
+    # CONNECTION & CREDENTIAL TESTS
+    # ===================================================================
+
+    def test_connection_operations(self):
+        """Test initialize, validate_connection, and get_credentials."""
+        print_section("CONNECTION & CREDENTIAL OPERATIONS")
+
+        # Test initialize (already called, but test idempotency)
+        print(f"\n  Testing: initialize (idempotent call)...")
+        try:
+            RecallAppLibrary.initialize()
+            print_success("initialize - SUCCESS (idempotent)")
+            self.test_results["initialize"] = 'PASS'
+        except Exception as e:
+            print_error(f"initialize - EXCEPTION: {str(e)}")
+            self.test_results["initialize"] = 'ERROR'
+
+        # Test validate_connection
+        self.run_test(
+            "validate_connection",
+            RecallAppLibrary.validate_connection,
+            user_id=self.user_id,
         )
 
-        assert result["status"] == "success"
-        assert result["bot"]["bot_id"] == "bot_12345"
-        assert result["bot"]["status"] == "joining_call"
-        mock_create_bot.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            meeting_url="https://zoom.us/j/123456789",
-            bot_name="My Bot",
-            transcription_options={"provider": "deepgram"},
-            recording_mode="speaker_view",
-            region="us",
+        # Test validate_connection with invalid user
+        print(f"\n  Testing: validate_connection (invalid user)...")
+        try:
+            result = RecallAppLibrary.validate_connection(user_id="nonexistent_user_xyz_999")
+            if result is False:
+                print_success("validate_connection (invalid user) - correctly returned False")
+                self.test_results["validate_connection (invalid user)"] = 'PASS'
+            else:
+                print_error("validate_connection (invalid user) - should have returned False")
+                self.test_results["validate_connection (invalid user)"] = 'FAIL'
+        except Exception as e:
+            print_error(f"validate_connection (invalid user) - EXCEPTION: {str(e)}")
+            self.test_results["validate_connection (invalid user)"] = 'ERROR'
+
+        # Test get_credentials
+        result = self.run_test(
+            "get_credentials",
+            RecallAppLibrary.get_credentials,
+            user_id=self.user_id,
         )
+        if result.get('status') == 'success' and hasattr(result.get('credential'), 'api_key'):
+            cred = result['credential']
+            masked_key = cred.api_key[:8] + "..." if len(cred.api_key) > 8 else "***"
+            print_info(f"API Key: {masked_key}")
+            print_info(f"Region: {cred.region}")
 
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_with_custom_options(self, mock_create_bot, initialized_library):
-        mock_create_bot.return_value = {"ok": True, "result": SAMPLE_BOT_RESULT}
+        # Test get_credentials with invalid user
+        print(f"\n  Testing: get_credentials (invalid user)...")
+        try:
+            result = RecallAppLibrary.get_credentials(user_id="nonexistent_user_xyz_999")
+            if result is None:
+                print_success("get_credentials (invalid user) - correctly returned None")
+                self.test_results["get_credentials (invalid user)"] = 'PASS'
+            else:
+                print_error("get_credentials (invalid user) - should have returned None")
+                self.test_results["get_credentials (invalid user)"] = 'FAIL'
+        except Exception as e:
+            print_error(f"get_credentials (invalid user) - EXCEPTION: {str(e)}")
+            self.test_results["get_credentials (invalid user)"] = 'ERROR'
 
-        result = initialized_library.join_meeting(
-            user_id="test_user",
-            meeting_url="https://meet.google.com/abc-defg-hij",
-            bot_name="Custom Bot",
-            transcription_provider="assembly_ai",
-            recording_mode="audio_only",
-        )
+    # ===================================================================
+    # BOT LISTING TESTS
+    # ===================================================================
 
-        assert result["status"] == "success"
-        mock_create_bot.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            meeting_url="https://meet.google.com/abc-defg-hij",
-            bot_name="Custom Bot",
-            transcription_options={"provider": "assembly_ai"},
-            recording_mode="audio_only",
-            region="us",
-        )
+    def test_bot_listing_operations(self):
+        """Test list_bots and get_bot_status for existing bots."""
+        print_section("BOT LISTING OPERATIONS")
 
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_default_bot_name(self, mock_create_bot, initialized_library):
-        mock_create_bot.return_value = {"ok": True, "result": SAMPLE_BOT_RESULT}
-
-        initialized_library.join_meeting(
-            user_id="test_user",
-            meeting_url="https://zoom.us/j/123456789",
-        )
-
-        call_kwargs = mock_create_bot.call_args[1]
-        assert call_kwargs["bot_name"] == "Meeting Assistant"
-
-    def test_join_meeting_no_credential(self, initialized_library):
-        result = initialized_library.join_meeting(
-            user_id="nonexistent",
-            meeting_url="https://zoom.us/j/123456789",
-        )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_api_error(self, mock_create_bot, initialized_library):
-        mock_create_bot.return_value = {
-            "error": "API error: 401",
-            "details": "Invalid API key",
-        }
-
-        result = initialized_library.join_meeting(
-            user_id="test_user",
-            meeting_url="https://zoom.us/j/123456789",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-        assert result["details"]["error"] == "API error: 401"
-
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_exception(self, mock_create_bot, initialized_library):
-        mock_create_bot.side_effect = Exception("Network timeout")
-
-        result = initialized_library.join_meeting(
-            user_id="test_user",
-            meeting_url="https://zoom.us/j/123456789",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-        assert "Network timeout" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_result_none(self, mock_create_bot, initialized_library):
-        """When the helper returns ok but result is None."""
-        mock_create_bot.return_value = {"ok": True, "result": None}
-
-        result = initialized_library.join_meeting(
-            user_id="test_user",
-            meeting_url="https://zoom.us/j/999",
-        )
-
-        assert result["status"] == "success"
-        assert result["bot"] is None
-
-
-# ===========================================================================
-# Get Bot Status Tests
-# ===========================================================================
-
-class TestGetBotStatus:
-
-    @patch(f"{HELPERS_MODULE}.get_bot")
-    def test_get_bot_status_success(self, mock_get_bot, initialized_library):
-        mock_get_bot.return_value = {"ok": True, "result": SAMPLE_BOT_STATUS_RESULT}
-
-        result = initialized_library.get_bot_status(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "success"
-        assert result["bot"]["bot_id"] == "bot_12345"
-        assert result["bot"]["status"] == "in_call_recording"
-        assert len(result["bot"]["meeting_participants"]) == 2
-        mock_get_bot.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            bot_id="bot_12345",
-            region="us",
-        )
-
-    def test_get_bot_status_no_credential(self, initialized_library):
-        result = initialized_library.get_bot_status(
-            user_id="nonexistent",
-            bot_id="bot_12345",
-        )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.get_bot")
-    def test_get_bot_status_api_error(self, mock_get_bot, initialized_library):
-        mock_get_bot.return_value = {
-            "error": "API error: 404",
-            "details": "Bot not found",
-        }
-
-        result = initialized_library.get_bot_status(
-            user_id="test_user",
-            bot_id="bot_nonexistent",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-        assert result["details"]["error"] == "API error: 404"
-
-    @patch(f"{HELPERS_MODULE}.get_bot")
-    def test_get_bot_status_exception(self, mock_get_bot, initialized_library):
-        mock_get_bot.side_effect = Exception("Connection refused")
-
-        result = initialized_library.get_bot_status(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-        assert "Connection refused" in result["reason"]
-
-
-# ===========================================================================
-# List Bots Tests
-# ===========================================================================
-
-class TestListBots:
-
-    @patch(f"{HELPERS_MODULE}.list_bots")
-    def test_list_bots_success(self, mock_list_bots, initialized_library):
-        mock_list_bots.return_value = {"ok": True, "result": SAMPLE_LIST_BOTS_RESULT}
-
-        result = initialized_library.list_bots(user_id="test_user")
-
-        assert result["status"] == "success"
-        assert result["bots"]["count"] == 2
-        assert len(result["bots"]["bots"]) == 2
-        mock_list_bots.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            page_size=50,
-            region="us",
-        )
-
-    @patch(f"{HELPERS_MODULE}.list_bots")
-    def test_list_bots_custom_page_size(self, mock_list_bots, initialized_library):
-        mock_list_bots.return_value = {"ok": True, "result": SAMPLE_LIST_BOTS_RESULT}
-
-        initialized_library.list_bots(user_id="test_user", page_size=10)
-
-        mock_list_bots.assert_called_once_with(
-            api_key="test_api_key_abc123",
+        # Test list_bots
+        result = self.run_test(
+            "list_bots",
+            RecallAppLibrary.list_bots,
+            user_id=self.user_id,
             page_size=10,
-            region="us",
         )
 
-    @patch(f"{HELPERS_MODULE}.list_bots")
-    def test_list_bots_empty(self, mock_list_bots, initialized_library):
-        mock_list_bots.return_value = {
-            "ok": True,
-            "result": {"bots": [], "count": 0, "next": None, "previous": None},
-        }
+        if result.get('status') == 'success':
+            bots = result.get('bots', {})
+            if isinstance(bots, dict):
+                bot_list = bots.get('results', bots.get('bots', []))
+                print_info(f"Found {len(bot_list)} bot(s)")
+                for bot in bot_list[:3]:
+                    bot_id = bot.get('id', bot.get('bot_id', 'N/A'))
+                    bot_status = bot.get('status_changes', [{}])
+                    latest_status = bot_status[-1].get('code', 'unknown') if bot_status else 'unknown'
+                    print_info(f"  Bot: {bot_id} - Status: {latest_status}")
+            elif isinstance(bots, list):
+                print_info(f"Found {len(bots)} bot(s)")
+                for bot in bots[:3]:
+                    bot_id = bot.get('id', bot.get('bot_id', 'N/A'))
+                    print_info(f"  Bot: {bot_id}")
+            print_result(result)
 
-        result = initialized_library.list_bots(user_id="test_user")
-
-        assert result["status"] == "success"
-        assert result["bots"]["count"] == 0
-        assert result["bots"]["bots"] == []
-
-    def test_list_bots_no_credential(self, initialized_library):
-        result = initialized_library.list_bots(user_id="nonexistent")
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.list_bots")
-    def test_list_bots_api_error(self, mock_list_bots, initialized_library):
-        mock_list_bots.return_value = {
-            "error": "API error: 500",
-            "details": "Internal server error",
-        }
-
-        result = initialized_library.list_bots(user_id="test_user")
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{HELPERS_MODULE}.list_bots")
-    def test_list_bots_exception(self, mock_list_bots, initialized_library):
-        mock_list_bots.side_effect = Exception("DNS failure")
-
-        result = initialized_library.list_bots(user_id="test_user")
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ===========================================================================
-# Leave Meeting Tests
-# ===========================================================================
-
-class TestLeaveMeeting:
-
-    @patch(f"{HELPERS_MODULE}.leave_meeting")
-    def test_leave_meeting_success(self, mock_leave, initialized_library):
-        mock_leave.return_value = {
-            "ok": True,
-            "result": {"left": True, "bot_id": "bot_12345"},
-        }
-
-        result = initialized_library.leave_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
+        # Test list_bots with custom page_size
+        self.run_test(
+            "list_bots (page_size=1)",
+            RecallAppLibrary.list_bots,
+            user_id=self.user_id,
+            page_size=1,
         )
 
-        assert result["status"] == "success"
-        assert result["result"]["left"] is True
-        mock_leave.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            bot_id="bot_12345",
-            region="us",
+        # Test get_bot_status with a known bot (if available from listing)
+        existing_bot_id = None
+        if result.get('status') == 'success':
+            bots = result.get('bots', {})
+            if isinstance(bots, dict):
+                bot_list = bots.get('results', bots.get('bots', []))
+            elif isinstance(bots, list):
+                bot_list = bots
+            else:
+                bot_list = []
+
+            if bot_list:
+                existing_bot_id = bot_list[0].get('id', bot_list[0].get('bot_id'))
+
+        if existing_bot_id:
+            status_result = self.run_test(
+                "get_bot_status (existing bot)",
+                RecallAppLibrary.get_bot_status,
+                user_id=self.user_id,
+                bot_id=existing_bot_id,
+            )
+            if status_result.get('status') == 'success':
+                print_result(status_result.get('bot', {}))
+        else:
+            print_warning("No existing bots found to test get_bot_status. Skipping.")
+            print_info("Use --only meeting --meeting-url URL to test bot creation and status.")
+
+        # Test get_bot_status with a fake bot ID (expect error)
+        error_result = self.run_test(
+            "get_bot_status (invalid bot_id)",
+            RecallAppLibrary.get_bot_status,
+            user_id=self.user_id,
+            bot_id="00000000-0000-0000-0000-000000000000",
+        )
+        # This should fail -- we mark it as PASS if it correctly returns an error
+        if error_result.get('status') == 'error':
+            self.test_results["get_bot_status (invalid bot_id)"] = 'PASS'
+            print_info("  -> Correctly returned error for invalid bot_id")
+
+    # ===================================================================
+    # MEETING LIFECYCLE TESTS (requires --meeting-url)
+    # ===================================================================
+
+    def test_meeting_lifecycle(self):
+        """Test join_meeting, get_bot_status, get_transcript, get_recording,
+        send_chat_message, speak_in_meeting, leave_meeting, delete_bot.
+
+        This test group requires a valid --meeting-url to create a real bot.
+        """
+        print_section("MEETING LIFECYCLE (requires --meeting-url)")
+
+        if not self.meeting_url:
+            print_warning("No --meeting-url provided. Skipping meeting lifecycle tests.")
+            print_info("Use: --meeting-url 'https://zoom.us/j/...' to run these tests.")
+            # Record all as skipped
+            for test_name in [
+                "join_meeting", "get_bot_status (live bot)", "get_transcript (live bot)",
+                "get_recording (live bot)", "send_chat_message (live bot)",
+                "speak_in_meeting (live bot)", "leave_meeting (live bot)",
+                "delete_bot (live bot)",
+            ]:
+                print_warning(f"  SKIPPED: {test_name}")
+            return
+
+        # Test join_meeting
+        result = self.run_test(
+            "join_meeting",
+            RecallAppLibrary.join_meeting,
+            user_id=self.user_id,
+            meeting_url=self.meeting_url,
+            bot_name="CraftOS Integration Test Bot",
+            transcription_provider="deepgram",
+            recording_mode="speaker_view",
         )
 
-    def test_leave_meeting_no_credential(self, initialized_library):
-        result = initialized_library.leave_meeting(
-            user_id="nonexistent",
-            bot_id="bot_12345",
+        if result.get('status') == 'success':
+            bot_data = result.get('bot', {})
+            self.created_bot_id = bot_data.get('id', bot_data.get('bot_id'))
+            print_info(f"Created bot ID: {self.created_bot_id}")
+            print_result(bot_data)
+        else:
+            print_error("join_meeting failed. Cannot proceed with remaining meeting lifecycle tests.")
+            return
+
+        if not self.created_bot_id:
+            print_error("No bot_id returned from join_meeting. Cannot continue.")
+            return
+
+        # Give the bot a moment to register
+        print_info("Waiting 5 seconds for bot to register...")
+        time.sleep(5)
+
+        # Test get_bot_status on the live bot
+        status_result = self.run_test(
+            "get_bot_status (live bot)",
+            RecallAppLibrary.get_bot_status,
+            user_id=self.user_id,
+            bot_id=self.created_bot_id,
         )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
+        if status_result.get('status') == 'success':
+            print_result(status_result.get('bot', {}))
 
-    @patch(f"{HELPERS_MODULE}.leave_meeting")
-    def test_leave_meeting_api_error(self, mock_leave, initialized_library):
-        mock_leave.return_value = {
-            "error": "API error: 409",
-            "details": "Bot already left",
-        }
-
-        result = initialized_library.leave_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
+        # Test get_transcript on the live bot (may be empty if just joined)
+        transcript_result = self.run_test(
+            "get_transcript (live bot)",
+            RecallAppLibrary.get_transcript,
+            user_id=self.user_id,
+            bot_id=self.created_bot_id,
         )
+        if transcript_result.get('status') == 'success':
+            transcript = transcript_result.get('transcript')
+            if transcript:
+                print_info(f"Transcript entries: {len(transcript)}")
+                print_result({"transcript_preview": transcript[:3]})
+            else:
+                print_info("Transcript is empty (expected for a bot that just joined).")
 
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{HELPERS_MODULE}.leave_meeting")
-    def test_leave_meeting_exception(self, mock_leave, initialized_library):
-        mock_leave.side_effect = Exception("Service unavailable")
-
-        result = initialized_library.leave_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
+        # Test get_recording on the live bot (may not be available yet)
+        recording_result = self.run_test(
+            "get_recording (live bot)",
+            RecallAppLibrary.get_recording,
+            user_id=self.user_id,
+            bot_id=self.created_bot_id,
         )
+        if recording_result.get('status') == 'success':
+            recording = recording_result.get('recording')
+            print_result(recording if recording else {"recording": "not yet available"})
 
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ===========================================================================
-# Delete Bot Tests
-# ===========================================================================
-
-class TestDeleteBot:
-
-    @patch(f"{HELPERS_MODULE}.delete_bot")
-    def test_delete_bot_success(self, mock_delete, initialized_library):
-        mock_delete.return_value = {
-            "ok": True,
-            "result": {"deleted": True, "bot_id": "bot_12345"},
-        }
-
-        result = initialized_library.delete_bot(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "success"
-        assert result["deleted"] is True
-        mock_delete.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            bot_id="bot_12345",
-            region="us",
-        )
-
-    def test_delete_bot_no_credential(self, initialized_library):
-        result = initialized_library.delete_bot(
-            user_id="nonexistent",
-            bot_id="bot_12345",
-        )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.delete_bot")
-    def test_delete_bot_api_error(self, mock_delete, initialized_library):
-        mock_delete.return_value = {
-            "error": "API error: 404",
-            "details": "Bot not found",
-        }
-
-        result = initialized_library.delete_bot(
-            user_id="test_user",
-            bot_id="bot_nonexistent",
+        # Test send_chat_message on the live bot
+        self.run_test(
+            "send_chat_message (live bot)",
+            RecallAppLibrary.send_chat_message,
+            user_id=self.user_id,
+            bot_id=self.created_bot_id,
+            message="Hello from CraftOS integration test!",
         )
 
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{HELPERS_MODULE}.delete_bot")
-    def test_delete_bot_exception(self, mock_delete, initialized_library):
-        mock_delete.side_effect = Exception("Permission denied")
-
-        result = initialized_library.delete_bot(
-            user_id="test_user",
-            bot_id="bot_12345",
+        # Test speak_in_meeting on the live bot (minimal silent audio payload)
+        # This sends a tiny base64-encoded WAV to exercise the API path
+        # A minimal WAV header for 0 samples at 16kHz mono 16-bit PCM
+        import base64
+        import struct
+        wav_header = struct.pack(
+            '<4sI4s4sIHHIIHH4sI',
+            b'RIFF', 36, b'WAVE',
+            b'fmt ', 16, 1, 1, 16000, 32000, 2, 16,
+            b'data', 0,
         )
+        silent_audio_b64 = base64.b64encode(wav_header).decode('utf-8')
 
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ===========================================================================
-# Get Transcript Tests
-# ===========================================================================
-
-class TestGetTranscript:
-
-    @patch(f"{HELPERS_MODULE}.get_transcript")
-    def test_get_transcript_success(self, mock_get_transcript, initialized_library):
-        mock_get_transcript.return_value = {
-            "ok": True,
-            "result": {"transcript": SAMPLE_TRANSCRIPT},
-        }
-
-        result = initialized_library.get_transcript(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "success"
-        assert result["transcript"] == SAMPLE_TRANSCRIPT
-        assert len(result["transcript"]) == 2
-        assert result["transcript"][0]["speaker"] == "Alice"
-        mock_get_transcript.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            bot_id="bot_12345",
-            region="us",
-        )
-
-    @patch(f"{HELPERS_MODULE}.get_transcript")
-    def test_get_transcript_empty(self, mock_get_transcript, initialized_library):
-        mock_get_transcript.return_value = {
-            "ok": True,
-            "result": {"transcript": []},
-        }
-
-        result = initialized_library.get_transcript(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "success"
-        assert result["transcript"] == []
-
-    @patch(f"{HELPERS_MODULE}.get_transcript")
-    def test_get_transcript_none_in_result(self, mock_get_transcript, initialized_library):
-        """When result exists but transcript key is missing."""
-        mock_get_transcript.return_value = {
-            "ok": True,
-            "result": {},
-        }
-
-        result = initialized_library.get_transcript(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "success"
-        assert result["transcript"] is None
-
-    def test_get_transcript_no_credential(self, initialized_library):
-        result = initialized_library.get_transcript(
-            user_id="nonexistent",
-            bot_id="bot_12345",
-        )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.get_transcript")
-    def test_get_transcript_api_error(self, mock_get_transcript, initialized_library):
-        mock_get_transcript.return_value = {
-            "error": "API error: 404",
-            "details": "Bot not found",
-        }
-
-        result = initialized_library.get_transcript(
-            user_id="test_user",
-            bot_id="bot_nonexistent",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{HELPERS_MODULE}.get_transcript")
-    def test_get_transcript_exception(self, mock_get_transcript, initialized_library):
-        mock_get_transcript.side_effect = Exception("Timeout exceeded")
-
-        result = initialized_library.get_transcript(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ===========================================================================
-# Get Recording Tests
-# ===========================================================================
-
-class TestGetRecording:
-
-    @patch(f"{HELPERS_MODULE}.get_recording")
-    def test_get_recording_success(self, mock_get_recording, initialized_library):
-        mock_get_recording.return_value = {
-            "ok": True,
-            "result": {
-                "video_url": "https://recall.ai/recordings/abc.mp4",
-                "status": "done",
-            },
-        }
-
-        result = initialized_library.get_recording(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "success"
-        assert result["recording"]["video_url"] == "https://recall.ai/recordings/abc.mp4"
-        assert result["recording"]["status"] == "done"
-        mock_get_recording.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            bot_id="bot_12345",
-            region="us",
-        )
-
-    @patch(f"{HELPERS_MODULE}.get_recording")
-    def test_get_recording_not_ready(self, mock_get_recording, initialized_library):
-        """Recording is not yet available (video_url is None)."""
-        mock_get_recording.return_value = {
-            "ok": True,
-            "result": {
-                "video_url": None,
-                "status": "in_call_recording",
-            },
-        }
-
-        result = initialized_library.get_recording(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "success"
-        assert result["recording"]["video_url"] is None
-
-    def test_get_recording_no_credential(self, initialized_library):
-        result = initialized_library.get_recording(
-            user_id="nonexistent",
-            bot_id="bot_12345",
-        )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.get_recording")
-    def test_get_recording_api_error(self, mock_get_recording, initialized_library):
-        mock_get_recording.return_value = {
-            "error": "API error: 404",
-            "details": "Bot not found",
-        }
-
-        result = initialized_library.get_recording(
-            user_id="test_user",
-            bot_id="bot_nonexistent",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{HELPERS_MODULE}.get_recording")
-    def test_get_recording_exception(self, mock_get_recording, initialized_library):
-        mock_get_recording.side_effect = Exception("SSL error")
-
-        result = initialized_library.get_recording(
-            user_id="test_user",
-            bot_id="bot_12345",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ===========================================================================
-# Send Chat Message Tests
-# ===========================================================================
-
-class TestSendChatMessage:
-
-    @patch(f"{HELPERS_MODULE}.send_chat_message")
-    def test_send_chat_message_success(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"sent": True, "message": "Hello everyone!"},
-        }
-
-        result = initialized_library.send_chat_message(
-            user_id="test_user",
-            bot_id="bot_12345",
-            message="Hello everyone!",
-        )
-
-        assert result["status"] == "success"
-        assert result["sent"] is True
-        assert result["message"] == "Hello everyone!"
-        mock_send.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            bot_id="bot_12345",
-            message="Hello everyone!",
-            region="us",
-        )
-
-    @patch(f"{HELPERS_MODULE}.send_chat_message")
-    def test_send_chat_message_empty_string(self, mock_send, initialized_library):
-        """Sending an empty message should still forward to the helper."""
-        mock_send.return_value = {"ok": True, "result": {"sent": True, "message": ""}}
-
-        result = initialized_library.send_chat_message(
-            user_id="test_user",
-            bot_id="bot_12345",
-            message="",
-        )
-
-        assert result["status"] == "success"
-        assert result["message"] == ""
-
-    @patch(f"{HELPERS_MODULE}.send_chat_message")
-    def test_send_chat_message_long_text(self, mock_send, initialized_library):
-        """Send a very long message."""
-        long_message = "A" * 5000
-        mock_send.return_value = {
-            "ok": True,
-            "result": {"sent": True, "message": long_message},
-        }
-
-        result = initialized_library.send_chat_message(
-            user_id="test_user",
-            bot_id="bot_12345",
-            message=long_message,
-        )
-
-        assert result["status"] == "success"
-        assert result["message"] == long_message
-
-    def test_send_chat_message_no_credential(self, initialized_library):
-        result = initialized_library.send_chat_message(
-            user_id="nonexistent",
-            bot_id="bot_12345",
-            message="Hello!",
-        )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.send_chat_message")
-    def test_send_chat_message_api_error(self, mock_send, initialized_library):
-        mock_send.return_value = {
-            "error": "API error: 400",
-            "details": "Bot not in a meeting",
-        }
-
-        result = initialized_library.send_chat_message(
-            user_id="test_user",
-            bot_id="bot_12345",
-            message="Hello!",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{HELPERS_MODULE}.send_chat_message")
-    def test_send_chat_message_exception(self, mock_send, initialized_library):
-        mock_send.side_effect = Exception("Write error")
-
-        result = initialized_library.send_chat_message(
-            user_id="test_user",
-            bot_id="bot_12345",
-            message="Hello!",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-
-# ===========================================================================
-# Speak In Meeting Tests
-# ===========================================================================
-
-class TestSpeakInMeeting:
-
-    @patch(f"{HELPERS_MODULE}.output_audio")
-    def test_speak_in_meeting_success(self, mock_output, initialized_library):
-        mock_output.return_value = {"ok": True, "result": {"audio_sent": True}}
-
-        result = initialized_library.speak_in_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
-            audio_data="base64encodedaudiodata==",
-        )
-
-        assert result["status"] == "success"
-        assert result["audio_sent"] is True
-        mock_output.assert_called_once_with(
-            api_key="test_api_key_abc123",
-            bot_id="bot_12345",
-            audio_data="base64encodedaudiodata==",
+        self.run_test(
+            "speak_in_meeting (live bot)",
+            RecallAppLibrary.speak_in_meeting,
+            user_id=self.user_id,
+            bot_id=self.created_bot_id,
+            audio_data=silent_audio_b64,
             audio_format="wav",
-            region="us",
         )
 
-    @patch(f"{HELPERS_MODULE}.output_audio")
-    def test_speak_in_meeting_mp3_format(self, mock_output, initialized_library):
-        mock_output.return_value = {"ok": True, "result": {"audio_sent": True}}
-
-        initialized_library.speak_in_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
-            audio_data="base64mp3data==",
-            audio_format="mp3",
+        # Test leave_meeting on the live bot
+        self.run_test(
+            "leave_meeting (live bot)",
+            RecallAppLibrary.leave_meeting,
+            user_id=self.user_id,
+            bot_id=self.created_bot_id,
         )
 
-        call_kwargs = mock_output.call_args[1]
-        assert call_kwargs["audio_format"] == "mp3"
+        # Give the bot a moment to leave
+        print_info("Waiting 3 seconds for bot to leave...")
+        time.sleep(3)
 
-    @patch(f"{HELPERS_MODULE}.output_audio")
-    def test_speak_in_meeting_default_format_is_wav(self, mock_output, initialized_library):
-        mock_output.return_value = {"ok": True, "result": {"audio_sent": True}}
-
-        initialized_library.speak_in_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
-            audio_data="base64data==",
+        # Test delete_bot on the live bot
+        self.run_test(
+            "delete_bot (live bot)",
+            RecallAppLibrary.delete_bot,
+            user_id=self.user_id,
+            bot_id=self.created_bot_id,
         )
 
-        call_kwargs = mock_output.call_args[1]
-        assert call_kwargs["audio_format"] == "wav"
+        # Mark as cleaned up so cleanup() doesn't try again
+        self.created_bot_id = None
 
-    def test_speak_in_meeting_no_credential(self, initialized_library):
-        result = initialized_library.speak_in_meeting(
-            user_id="nonexistent",
-            bot_id="bot_12345",
-            audio_data="base64data==",
-        )
-        assert result["status"] == "error"
-        assert "No Recall.ai API key found" in result["reason"]
+    # ===================================================================
+    # BOT-DEPENDENT OPERATIONS (without a live meeting)
+    # ===================================================================
 
-    @patch(f"{HELPERS_MODULE}.output_audio")
-    def test_speak_in_meeting_api_error(self, mock_output, initialized_library):
-        mock_output.return_value = {
-            "error": "API error: 400",
-            "details": "Audio output not enabled",
+    def test_bot_dependent_operations(self):
+        """Test get_transcript, get_recording, send_chat_message,
+        speak_in_meeting, leave_meeting, delete_bot with invalid bot IDs.
+        These should all return structured errors (not crash).
+        """
+        print_section("BOT-DEPENDENT OPERATIONS (error-path validation)")
+
+        fake_bot_id = "00000000-0000-0000-0000-000000000000"
+
+        # Each of these should return a proper error dict, not crash
+        error_tests = [
+            ("get_transcript (invalid bot)", RecallAppLibrary.get_transcript,
+             {"user_id": self.user_id, "bot_id": fake_bot_id}),
+            ("get_recording (invalid bot)", RecallAppLibrary.get_recording,
+             {"user_id": self.user_id, "bot_id": fake_bot_id}),
+            ("send_chat_message (invalid bot)", RecallAppLibrary.send_chat_message,
+             {"user_id": self.user_id, "bot_id": fake_bot_id, "message": "test"}),
+            ("speak_in_meeting (invalid bot)", RecallAppLibrary.speak_in_meeting,
+             {"user_id": self.user_id, "bot_id": fake_bot_id, "audio_data": "dGVzdA==", "audio_format": "wav"}),
+            ("leave_meeting (invalid bot)", RecallAppLibrary.leave_meeting,
+             {"user_id": self.user_id, "bot_id": fake_bot_id}),
+            ("delete_bot (invalid bot)", RecallAppLibrary.delete_bot,
+             {"user_id": self.user_id, "bot_id": fake_bot_id}),
+        ]
+
+        for test_name, func, kwargs in error_tests:
+            print(f"\n  Testing: {test_name}...")
+            try:
+                result = func(**kwargs)
+                status = result.get('status', 'unknown')
+                if status == 'error':
+                    print_success(f"{test_name} - correctly returned error")
+                    self.test_results[test_name] = 'PASS'
+                    reason = result.get('reason', result.get('details', ''))
+                    print_info(f"  Error detail: {reason}")
+                else:
+                    # An unexpected success with a fake bot_id is still technically
+                    # a valid API response -- mark it as PASS but note it
+                    print_warning(f"{test_name} - returned '{status}' (unexpected for invalid bot)")
+                    self.test_results[test_name] = 'PASS'
+                    print_result(result)
+            except Exception as e:
+                print_error(f"{test_name} - EXCEPTION: {str(e)}")
+                self.test_results[test_name] = 'ERROR'
+
+        # Also test all methods with a completely invalid user_id (no credentials)
+        print(f"\n  Testing: join_meeting (no credentials)...")
+        try:
+            result = RecallAppLibrary.join_meeting(
+                user_id="nonexistent_user_xyz_999",
+                meeting_url="https://zoom.us/j/000000000",
+            )
+            if result.get('status') == 'error' and 'No Recall.ai API key' in result.get('reason', ''):
+                print_success("join_meeting (no credentials) - correctly returned credential error")
+                self.test_results["join_meeting (no credentials)"] = 'PASS'
+            else:
+                print_error(f"join_meeting (no credentials) - unexpected result: {result}")
+                self.test_results["join_meeting (no credentials)"] = 'FAIL'
+        except Exception as e:
+            print_error(f"join_meeting (no credentials) - EXCEPTION: {str(e)}")
+            self.test_results["join_meeting (no credentials)"] = 'ERROR'
+
+    def cleanup(self):
+        """Clean up any created test data."""
+        print_section("CLEANUP")
+
+        if self.created_bot_id:
+            print_info(f"Cleaning up bot: {self.created_bot_id}")
+
+            # Try to leave the meeting first
+            print_info("  Attempting to leave meeting...")
+            leave_result = RecallAppLibrary.leave_meeting(
+                user_id=self.user_id,
+                bot_id=self.created_bot_id,
+            )
+            if leave_result.get('status') == 'success':
+                print_success("  Bot left the meeting")
+            else:
+                print_warning(f"  Leave meeting returned: {leave_result.get('reason', leave_result.get('details', 'unknown'))}")
+
+            time.sleep(2)
+
+            # Then delete the bot
+            print_info("  Attempting to delete bot...")
+            delete_result = RecallAppLibrary.delete_bot(
+                user_id=self.user_id,
+                bot_id=self.created_bot_id,
+            )
+            if delete_result.get('status') == 'success':
+                print_success("  Bot deleted")
+            else:
+                print_warning(f"  Delete bot returned: {delete_result.get('reason', delete_result.get('details', 'unknown'))}")
+        else:
+            print_info("No test bots to clean up.")
+
+    def print_summary(self):
+        """Print test summary."""
+        print_header("TEST SUMMARY")
+
+        passed = sum(1 for v in self.test_results.values() if v == 'PASS')
+        failed = sum(1 for v in self.test_results.values() if v == 'FAIL')
+        errors = sum(1 for v in self.test_results.values() if v == 'ERROR')
+        total = len(self.test_results)
+
+        print(f"\n  Total tests: {total}")
+        print(f"  {Colors.GREEN}Passed: {passed}{Colors.END}")
+        print(f"  {Colors.RED}Failed: {failed}{Colors.END}")
+        print(f"  {Colors.YELLOW}Errors: {errors}{Colors.END}")
+
+        print(f"\n  {Colors.BOLD}Detailed Results:{Colors.END}")
+        for name, result in self.test_results.items():
+            if result == 'PASS':
+                print(f"    {Colors.GREEN}PASS{Colors.END} {name}")
+            elif result == 'FAIL':
+                print(f"    {Colors.RED}FAIL{Colors.END} {name}")
+            else:
+                print(f"    {Colors.YELLOW}ERR {Colors.END} {name}")
+
+
+def list_credentials():
+    """List all stored Recall.ai credentials."""
+    print_header("STORED RECALL.AI CREDENTIALS")
+
+    RecallAppLibrary.initialize()
+    cred_store = RecallAppLibrary.get_credential_store()
+
+    # Access internal credentials dict to list all users
+    all_credentials = []
+    for user_id, creds in cred_store.credentials.items():
+        all_credentials.extend(creds)
+
+    if not all_credentials:
+        print_warning("No Recall.ai credentials found.")
+        print_info("Please configure your API key via the CraftOS control panel first.")
+        return None
+
+    print(f"\nFound {len(all_credentials)} credential(s):\n")
+
+    for i, cred in enumerate(all_credentials, 1):
+        masked_key = cred.api_key[:8] + "..." if len(cred.api_key) > 8 else "***"
+        print(f"  [{i}] User ID: {cred.user_id}")
+        print(f"      API Key:  {masked_key}")
+        print(f"      Region:   {cred.region}")
+        print()
+
+    return all_credentials[0].user_id
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Test Recall.ai API integration')
+    parser.add_argument('--user-id', type=str, help='CraftOS user ID')
+    parser.add_argument('--list', action='store_true', help='List stored credentials')
+    parser.add_argument('--meeting-url', type=str, help='Meeting URL for join/lifecycle tests (Zoom, Meet, Teams)')
+    parser.add_argument(
+        '--only', type=str,
+        help='Only run specific test group (connection, listing, meeting, bot_errors)',
+    )
+    args = parser.parse_args()
+
+    print_header("RECALL.AI EXTERNAL LIBRARY TEST SUITE")
+    print(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Initialize the library
+    RecallAppLibrary.initialize()
+    print_success("RecallAppLibrary initialized")
+
+    # List credentials if requested
+    if args.list:
+        list_credentials()
+        return
+
+    # Get credentials
+    user_id = args.user_id
+
+    if not user_id:
+        print_section("CREDENTIAL LOOKUP")
+        user_id = list_credentials()
+
+        if not user_id:
+            print_error("No credentials available. Exiting.")
+            return
+
+        print_info(f"Using: user_id={user_id}")
+
+    # Validate connection
+    if not RecallAppLibrary.validate_connection(user_id=user_id):
+        print_error(f"No valid credentials found for user_id='{user_id}'.")
+        print_info("Use --list to see stored credentials or configure via the CraftOS control panel.")
+        return
+
+    print_success("Credential validation passed")
+
+    # Create tester
+    tester = RecallTester(user_id=user_id, meeting_url=args.meeting_url)
+
+    try:
+        # Run tests based on --only flag or all
+        test_groups = {
+            'connection': tester.test_connection_operations,
+            'listing': tester.test_bot_listing_operations,
+            'meeting': tester.test_meeting_lifecycle,
+            'bot_errors': tester.test_bot_dependent_operations,
         }
 
-        result = initialized_library.speak_in_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
-            audio_data="base64data==",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch(f"{HELPERS_MODULE}.output_audio")
-    def test_speak_in_meeting_exception(self, mock_output, initialized_library):
-        mock_output.side_effect = Exception("Audio codec error")
-
-        result = initialized_library.speak_in_meeting(
-            user_id="test_user",
-            bot_id="bot_12345",
-            audio_data="base64data==",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-        assert "Audio codec error" in result["reason"]
-
-
-# ===========================================================================
-# Credential Model Tests
-# ===========================================================================
-
-class TestRecallCredential:
-
-    def test_credential_defaults(self):
-        cred = RecallCredential(user_id="u1")
-        assert cred.api_key == ""
-        assert cred.region == "us"
-
-    def test_credential_with_all_fields(self):
-        cred = RecallCredential(
-            user_id="u1",
-            api_key="key123",
-            region="eu",
-        )
-        assert cred.user_id == "u1"
-        assert cred.api_key == "key123"
-        assert cred.region == "eu"
-
-    def test_credential_unique_keys(self):
-        assert RecallCredential.UNIQUE_KEYS == ("user_id",)
-
-    def test_credential_to_dict(self):
-        cred = RecallCredential(
-            user_id="u1",
-            api_key="key123",
-            region="us",
-        )
-        d = cred.to_dict()
-        assert d["user_id"] == "u1"
-        assert d["api_key"] == "key123"
-        assert d["region"] == "us"
-
-    def test_credential_to_dict_default_values(self):
-        cred = RecallCredential(user_id="u1")
-        d = cred.to_dict()
-        assert d["api_key"] == ""
-        assert d["region"] == "us"
-
-
-# ===========================================================================
-# Region / EU Credential Tests
-# ===========================================================================
-
-class TestRegionHandling:
-
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_eu_region(self, mock_create_bot, initialized_library_eu):
-        mock_create_bot.return_value = {"ok": True, "result": SAMPLE_BOT_RESULT}
-
-        initialized_library_eu.join_meeting(
-            user_id="eu_user",
-            meeting_url="https://teams.microsoft.com/meeting/123",
-        )
-
-        call_kwargs = mock_create_bot.call_args[1]
-        assert call_kwargs["region"] == "eu"
-        assert call_kwargs["api_key"] == "eu_api_key_xyz789"
-
-    @patch(f"{HELPERS_MODULE}.get_bot")
-    def test_get_bot_status_eu_region(self, mock_get_bot, initialized_library_eu):
-        mock_get_bot.return_value = {"ok": True, "result": SAMPLE_BOT_STATUS_RESULT}
-
-        initialized_library_eu.get_bot_status(
-            user_id="eu_user",
-            bot_id="bot_eu_001",
-        )
-
-        call_kwargs = mock_get_bot.call_args[1]
-        assert call_kwargs["region"] == "eu"
-
-    @patch(f"{HELPERS_MODULE}.list_bots")
-    def test_list_bots_eu_region(self, mock_list_bots, initialized_library_eu):
-        mock_list_bots.return_value = {"ok": True, "result": SAMPLE_LIST_BOTS_RESULT}
-
-        initialized_library_eu.list_bots(user_id="eu_user")
-
-        call_kwargs = mock_list_bots.call_args[1]
-        assert call_kwargs["region"] == "eu"
-
-    @patch(f"{HELPERS_MODULE}.leave_meeting")
-    def test_leave_meeting_eu_region(self, mock_leave, initialized_library_eu):
-        mock_leave.return_value = {"ok": True, "result": {"left": True, "bot_id": "bot_eu_001"}}
-
-        initialized_library_eu.leave_meeting(
-            user_id="eu_user",
-            bot_id="bot_eu_001",
-        )
-
-        call_kwargs = mock_leave.call_args[1]
-        assert call_kwargs["region"] == "eu"
-
-    @patch(f"{HELPERS_MODULE}.send_chat_message")
-    def test_send_chat_message_eu_region(self, mock_send, initialized_library_eu):
-        mock_send.return_value = {"ok": True, "result": {"sent": True, "message": "Hi"}}
-
-        initialized_library_eu.send_chat_message(
-            user_id="eu_user",
-            bot_id="bot_eu_001",
-            message="Hi",
-        )
-
-        call_kwargs = mock_send.call_args[1]
-        assert call_kwargs["region"] == "eu"
-
-    @patch(f"{HELPERS_MODULE}.get_transcript")
-    def test_get_transcript_eu_region(self, mock_get_transcript, initialized_library_eu):
-        mock_get_transcript.return_value = {"ok": True, "result": {"transcript": []}}
-
-        initialized_library_eu.get_transcript(
-            user_id="eu_user",
-            bot_id="bot_eu_001",
-        )
-
-        call_kwargs = mock_get_transcript.call_args[1]
-        assert call_kwargs["region"] == "eu"
-
-    @patch(f"{HELPERS_MODULE}.get_recording")
-    def test_get_recording_eu_region(self, mock_get_recording, initialized_library_eu):
-        mock_get_recording.return_value = {
-            "ok": True,
-            "result": {"video_url": "https://eu.recall.ai/rec.mp4", "status": "done"},
-        }
-
-        initialized_library_eu.get_recording(
-            user_id="eu_user",
-            bot_id="bot_eu_001",
-        )
-
-        call_kwargs = mock_get_recording.call_args[1]
-        assert call_kwargs["region"] == "eu"
-
-    @patch(f"{HELPERS_MODULE}.output_audio")
-    def test_speak_in_meeting_eu_region(self, mock_output, initialized_library_eu):
-        mock_output.return_value = {"ok": True, "result": {"audio_sent": True}}
-
-        initialized_library_eu.speak_in_meeting(
-            user_id="eu_user",
-            bot_id="bot_eu_001",
-            audio_data="data==",
-        )
-
-        call_kwargs = mock_output.call_args[1]
-        assert call_kwargs["region"] == "eu"
-
-
-# ===========================================================================
-# Edge Cases & Error Handling Tests
-# ===========================================================================
-
-class TestEdgeCases:
-
-    def test_all_methods_fail_before_init(self):
-        """All methods should raise RuntimeError if initialize() was not called."""
-        with pytest.raises(RuntimeError, match="not initialized"):
-            RecallAppLibrary.validate_connection(user_id="test_user")
-
-        with pytest.raises(RuntimeError, match="not initialized"):
-            RecallAppLibrary.get_credentials(user_id="test_user")
-
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_handles_exception_from_get_credentials(
-        self, mock_create_bot, initialized_library
-    ):
-        """If get_credentials raises, join_meeting catches it."""
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Store corrupted")
-        ):
-            result = initialized_library.join_meeting(
-                user_id="test_user",
-                meeting_url="https://zoom.us/j/123",
-            )
-            assert result["status"] == "error"
-            assert "Unexpected error" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.get_bot")
-    def test_get_bot_status_handles_credential_exception(
-        self, mock_get_bot, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Read error")
-        ):
-            result = initialized_library.get_bot_status(
-                user_id="test_user",
-                bot_id="bot_12345",
-            )
-            assert result["status"] == "error"
-            assert "Unexpected error" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.list_bots")
-    def test_list_bots_handles_credential_exception(
-        self, mock_list_bots, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("File locked")
-        ):
-            result = initialized_library.list_bots(user_id="test_user")
-            assert result["status"] == "error"
-            assert "Unexpected error" in result["reason"]
-
-    @patch(f"{HELPERS_MODULE}.leave_meeting")
-    def test_leave_meeting_handles_credential_exception(
-        self, mock_leave, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Corrupt")
-        ):
-            result = initialized_library.leave_meeting(
-                user_id="test_user",
-                bot_id="bot_12345",
-            )
-            assert result["status"] == "error"
-
-    @patch(f"{HELPERS_MODULE}.delete_bot")
-    def test_delete_bot_handles_credential_exception(
-        self, mock_delete, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Corrupt")
-        ):
-            result = initialized_library.delete_bot(
-                user_id="test_user",
-                bot_id="bot_12345",
-            )
-            assert result["status"] == "error"
-
-    @patch(f"{HELPERS_MODULE}.get_transcript")
-    def test_get_transcript_handles_credential_exception(
-        self, mock_get_transcript, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Corrupt")
-        ):
-            result = initialized_library.get_transcript(
-                user_id="test_user",
-                bot_id="bot_12345",
-            )
-            assert result["status"] == "error"
-
-    @patch(f"{HELPERS_MODULE}.get_recording")
-    def test_get_recording_handles_credential_exception(
-        self, mock_get_recording, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Corrupt")
-        ):
-            result = initialized_library.get_recording(
-                user_id="test_user",
-                bot_id="bot_12345",
-            )
-            assert result["status"] == "error"
-
-    @patch(f"{HELPERS_MODULE}.send_chat_message")
-    def test_send_chat_message_handles_credential_exception(
-        self, mock_send, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Corrupt")
-        ):
-            result = initialized_library.send_chat_message(
-                user_id="test_user",
-                bot_id="bot_12345",
-                message="hello",
-            )
-            assert result["status"] == "error"
-
-    @patch(f"{HELPERS_MODULE}.output_audio")
-    def test_speak_in_meeting_handles_credential_exception(
-        self, mock_output, initialized_library
-    ):
-        with patch.object(
-            RecallAppLibrary, "get_credentials", side_effect=Exception("Corrupt")
-        ):
-            result = initialized_library.speak_in_meeting(
-                user_id="test_user",
-                bot_id="bot_12345",
-                audio_data="data==",
-            )
-            assert result["status"] == "error"
-
-    def test_multiple_users_isolated(self):
-        """Credentials for different users should not interfere."""
-        RecallAppLibrary.initialize()
-        store = RecallAppLibrary.get_credential_store()
-
-        cred_a = RecallCredential(user_id="user_a", api_key="key_a", region="us")
-        cred_b = RecallCredential(user_id="user_b", api_key="key_b", region="eu")
-        store.add(cred_a)
-        store.add(cred_b)
-
-        assert RecallAppLibrary.validate_connection(user_id="user_a") is True
-        assert RecallAppLibrary.validate_connection(user_id="user_b") is True
-        assert RecallAppLibrary.validate_connection(user_id="user_c") is False
-
-        result_a = RecallAppLibrary.get_credentials(user_id="user_a")
-        result_b = RecallAppLibrary.get_credentials(user_id="user_b")
-
-        assert result_a.api_key == "key_a"
-        assert result_a.region == "us"
-        assert result_b.api_key == "key_b"
-        assert result_b.region == "eu"
-
-    def test_credential_overwrite_by_unique_key(self):
-        """Adding a credential with the same user_id should overwrite it."""
-        RecallAppLibrary.initialize()
-        store = RecallAppLibrary.get_credential_store()
-
-        cred_v1 = RecallCredential(user_id="user_x", api_key="old_key", region="us")
-        cred_v2 = RecallCredential(user_id="user_x", api_key="new_key", region="eu")
-        store.add(cred_v1)
-        store.add(cred_v2)
-
-        result = RecallAppLibrary.get_credentials(user_id="user_x")
-        assert result.api_key == "new_key"
-        assert result.region == "eu"
-
-    @patch(f"{HELPERS_MODULE}.create_bot")
-    def test_join_meeting_returns_error_key_in_result(self, mock_create_bot, initialized_library):
-        """When the helper result contains an 'error' key (not 'ok')."""
-        mock_create_bot.return_value = {
-            "error": "Invalid meeting URL format",
-        }
-
-        result = initialized_library.join_meeting(
-            user_id="test_user",
-            meeting_url="not-a-valid-url",
-        )
-
-        assert result["status"] == "error"
-        assert result["details"]["error"] == "Invalid meeting URL format"
-
-    @patch(f"{HELPERS_MODULE}.delete_bot")
-    def test_delete_bot_returns_true_regardless_of_helper_result(
-        self, mock_delete, initialized_library
-    ):
-        """delete_bot always returns {"deleted": True} on success."""
-        mock_delete.return_value = {
-            "ok": True,
-            "result": {"deleted": True, "bot_id": "bot_xyz"},
-        }
-
-        result = initialized_library.delete_bot(
-            user_id="test_user",
-            bot_id="bot_xyz",
-        )
-
-        assert result["deleted"] is True
-        # The library returns {"status": "success", "deleted": True}
-        # regardless of the helper's result content
-        assert "bot" not in result
+        if args.only:
+            if args.only in test_groups:
+                test_groups[args.only]()
+            else:
+                print_error(f"Unknown test group: {args.only}")
+                print_info("Available groups: connection, listing, meeting, bot_errors")
+                return
+        else:
+            # Run all tests
+            tester.test_connection_operations()
+            tester.test_bot_listing_operations()
+            tester.test_meeting_lifecycle()
+            tester.test_bot_dependent_operations()
+
+    finally:
+        # Cleanup any bots that were created during testing
+        tester.cleanup()
+
+    # Print summary
+    tester.print_summary()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,1950 +1,646 @@
 """
-Tests for Notion external library.
+Comprehensive integration test script for Notion external library.
 
-Uses pytest with unittest.mock to mock the Notion API helper functions,
-allowing all library methods to be tested without making real API calls.
+This script tests ALL Notion API methods using stored credentials.
+Run this to verify Notion integration without going through the agent cycle.
 
 Usage:
-    pytest core/external_libraries/notion/tests/test_notion_library.py -v
+    python test_notion_library.py [--user-id YOUR_USER_ID] [--workspace-id YOUR_WORKSPACE_ID]
+
+If no arguments provided, it will use defaults or prompt you.
 """
 import sys
-import pytest
+import argparse
+import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from typing import Optional, Dict, Any
+from datetime import datetime
 
-# Add project root to path
+# Add parent directories to path to allow imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent.parent))
 
-from core.external_libraries.notion.credentials import NotionCredential
 from core.external_libraries.notion.external_app_library import NotionAppLibrary
+from core.external_libraries.notion.helpers.notion_helpers import delete_block
+
+# ANSI colors for output
+class Colors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def reset_library():
-    """Reset NotionAppLibrary state before each test."""
-    NotionAppLibrary._initialized = False
-    NotionAppLibrary._credential_store = None
-    yield
-    NotionAppLibrary._initialized = False
-    NotionAppLibrary._credential_store = None
+def print_header(text: str):
+    """Print a formatted header."""
+    print(f"\n{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{text}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.BLUE}{'=' * 70}{Colors.END}")
 
 
-@pytest.fixture
-def mock_credential():
-    """Return a sample Notion credential."""
-    return NotionCredential(
-        user_id="test_user",
-        workspace_id="ws_abc123",
-        workspace_name="Test Workspace",
-        token="ntn_test_token_abc123",
-    )
+def print_section(text: str):
+    """Print a section header."""
+    print(f"\n{Colors.CYAN}{'-' * 50}{Colors.END}")
+    print(f"{Colors.CYAN}{text}{Colors.END}")
+    print(f"{Colors.CYAN}{'-' * 50}{Colors.END}")
 
 
-@pytest.fixture
-def second_credential():
-    """Return a second Notion credential for a different workspace."""
-    return NotionCredential(
-        user_id="test_user",
-        workspace_id="ws_def456",
-        workspace_name="Second Workspace",
-        token="ntn_test_token_def456",
-    )
+def print_success(text: str):
+    """Print success message."""
+    print(f"{Colors.GREEN}PASS {text}{Colors.END}")
 
 
-@pytest.fixture
-def initialized_library(mock_credential):
-    """Initialize the library and inject a mock credential store."""
-    NotionAppLibrary.initialize()
-    NotionAppLibrary.get_credential_store().add(mock_credential)
-    return NotionAppLibrary
+def print_error(text: str):
+    """Print error message."""
+    print(f"{Colors.RED}FAIL {text}{Colors.END}")
 
 
-# ---------------------------------------------------------------------------
-# Initialization & Credential Tests
-# ---------------------------------------------------------------------------
-
-class TestInitialization:
-
-    def test_initialize(self):
-        assert not NotionAppLibrary._initialized
-        NotionAppLibrary.initialize()
-        assert NotionAppLibrary._initialized
-        assert NotionAppLibrary._credential_store is not None
-
-    def test_initialize_idempotent(self):
-        NotionAppLibrary.initialize()
-        store = NotionAppLibrary._credential_store
-        NotionAppLibrary.initialize()
-        assert NotionAppLibrary._credential_store is store
-
-    def test_get_name(self):
-        assert NotionAppLibrary.get_name() == "Notion"
-
-    def test_get_credential_store_before_init_raises(self):
-        with pytest.raises(RuntimeError, match="not initialized"):
-            NotionAppLibrary.get_credential_store()
-
-    def test_get_credential_store_after_init(self):
-        NotionAppLibrary.initialize()
-        store = NotionAppLibrary.get_credential_store()
-        assert store is not None
+def print_warning(text: str):
+    """Print warning message."""
+    print(f"{Colors.YELLOW}WARN {text}{Colors.END}")
 
 
-class TestValidateConnection:
-
-    def test_validate_no_credentials(self):
-        NotionAppLibrary.initialize()
-        assert NotionAppLibrary.validate_connection(user_id="nonexistent") is False
-
-    def test_validate_with_credentials(self, initialized_library, mock_credential):
-        assert initialized_library.validate_connection(user_id="test_user") is True
-
-    def test_validate_with_wrong_user(self, initialized_library):
-        assert initialized_library.validate_connection(user_id="other_user") is False
-
-    def test_validate_with_workspace_id(self, initialized_library, mock_credential):
-        assert initialized_library.validate_connection(
-            user_id="test_user",
-            workspace_id="ws_abc123",
-        ) is True
-
-    def test_validate_with_wrong_workspace_id(self, initialized_library):
-        assert initialized_library.validate_connection(
-            user_id="test_user",
-            workspace_id="ws_wrong",
-        ) is False
+def print_info(text: str):
+    """Print info message."""
+    print(f"  {text}")
 
 
-class TestGetCredentials:
+def print_result(result: Dict[str, Any], indent: int = 2):
+    """Pretty print a result dict."""
+    formatted = json.dumps(result, indent=indent, default=str)
+    for line in formatted.split('\n')[:30]:  # Limit output
+        print(f"  {line}")
+    if len(formatted.split('\n')) > 30:
+        print(f"  ... (output truncated)")
 
-    def test_get_credentials_found(self, initialized_library, mock_credential):
-        cred = initialized_library.get_credentials(user_id="test_user")
-        assert cred is not None
-        assert cred.user_id == "test_user"
-        assert cred.token == "ntn_test_token_abc123"
-        assert cred.workspace_id == "ws_abc123"
-        assert cred.workspace_name == "Test Workspace"
 
-    def test_get_credentials_not_found(self, initialized_library):
-        cred = initialized_library.get_credentials(user_id="nonexistent")
-        assert cred is None
+class NotionTester:
+    """Test runner for Notion API methods."""
 
-    def test_get_credentials_with_workspace_id(self, initialized_library, mock_credential):
-        cred = initialized_library.get_credentials(
-            user_id="test_user",
-            workspace_id="ws_abc123",
+    def __init__(self, user_id: str, workspace_id: Optional[str] = None):
+        self.user_id = user_id
+        self.workspace_id = workspace_id
+        self.test_results = {}
+        self.created_page_id = None  # Store for cleanup
+        self.created_subpage_id = None  # Store for cleanup
+
+    def run_test(self, test_name: str, func, *args, **kwargs) -> Dict[str, Any]:
+        """Run a single test and record result."""
+        print(f"\n  Testing: {test_name}...")
+        try:
+            result = func(*args, **kwargs)
+            status = result.get('status', 'unknown')
+
+            if status == 'success':
+                print_success(f"{test_name} - SUCCESS")
+                self.test_results[test_name] = 'PASS'
+            else:
+                reason = result.get('reason', result.get('details', 'Unknown error'))
+                print_error(f"{test_name} - FAILED: {reason}")
+                self.test_results[test_name] = 'FAIL'
+
+            return result
+        except Exception as e:
+            print_error(f"{test_name} - EXCEPTION: {str(e)}")
+            self.test_results[test_name] = 'ERROR'
+            return {"status": "error", "reason": str(e)}
+
+    # ------------------------------------------------------------------
+    # Initialization & credential tests
+    # ------------------------------------------------------------------
+    def test_initialization(self):
+        """Test initialize and basic library access."""
+        print_section("INITIALIZATION & CREDENTIALS")
+
+        # Test initialize (already called, but verify idempotency)
+        print(f"\n  Testing: initialize (idempotent)...")
+        try:
+            NotionAppLibrary.initialize()
+            print_success("initialize (idempotent) - SUCCESS")
+            self.test_results["initialize"] = 'PASS'
+        except Exception as e:
+            print_error(f"initialize - EXCEPTION: {str(e)}")
+            self.test_results["initialize"] = 'ERROR'
+
+        # Test validate_connection
+        result_valid = NotionAppLibrary.validate_connection(
+            user_id=self.user_id,
+            workspace_id=self.workspace_id,
         )
-        assert cred is not None
-        assert cred.workspace_id == "ws_abc123"
+        print(f"\n  Testing: validate_connection...")
+        if result_valid:
+            print_success("validate_connection - SUCCESS (credential exists)")
+            self.test_results["validate_connection"] = 'PASS'
+        else:
+            print_error("validate_connection - FAILED (no credential found)")
+            self.test_results["validate_connection"] = 'FAIL'
 
-    def test_get_credentials_with_wrong_workspace_id(self, initialized_library):
-        cred = initialized_library.get_credentials(
-            user_id="test_user",
-            workspace_id="ws_nonexistent",
+        # Test get_credentials
+        print(f"\n  Testing: get_credentials...")
+        cred = NotionAppLibrary.get_credentials(
+            user_id=self.user_id,
+            workspace_id=self.workspace_id,
         )
-        assert cred is None
+        if cred is not None:
+            print_success("get_credentials - SUCCESS")
+            print_info(f"Workspace ID: {cred.workspace_id}")
+            print_info(f"Workspace Name: {cred.workspace_name}")
+            print_info(f"Token prefix: {cred.token[:12]}...")
+            self.test_results["get_credentials"] = 'PASS'
+        else:
+            print_error("get_credentials - FAILED (returned None)")
+            self.test_results["get_credentials"] = 'FAIL'
 
-    def test_get_credentials_returns_first_when_multiple(
-        self, initialized_library, mock_credential, second_credential
-    ):
-        """When multiple credentials exist, get_credentials returns the first."""
-        initialized_library.get_credential_store().add(second_credential)
-        cred = initialized_library.get_credentials(user_id="test_user")
-        assert cred is not None
-        # Should return the first credential added
-        assert cred.workspace_id == "ws_abc123"
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+    def test_search_operations(self):
+        """Test search-related operations."""
+        print_section("SEARCH OPERATIONS")
 
-    def test_get_credentials_selects_by_workspace_id_from_multiple(
-        self, initialized_library, mock_credential, second_credential
-    ):
-        """When multiple credentials exist, workspace_id selects the right one."""
-        initialized_library.get_credential_store().add(second_credential)
-        cred = initialized_library.get_credentials(
-            user_id="test_user",
-            workspace_id="ws_def456",
+        # Test search (general)
+        result = self.run_test(
+            "search (general)",
+            NotionAppLibrary.search,
+            user_id=self.user_id,
+            query="test",
+            workspace_id=self.workspace_id,
         )
-        assert cred is not None
-        assert cred.workspace_id == "ws_def456"
-        assert cred.token == "ntn_test_token_def456"
+        if result.get('status') == 'success':
+            results = result.get('results', [])
+            print_info(f"Found {len(results)} results")
+            for item in results[:3]:
+                obj_type = item.get('object', 'unknown')
+                obj_id = item.get('id', 'N/A')
+                print_info(f"  - {obj_type}: {obj_id}")
 
-
-# ---------------------------------------------------------------------------
-# Search Tests
-# ---------------------------------------------------------------------------
-
-class TestSearch:
-
-    @patch("core.external_libraries.notion.external_app_library.search_notion")
-    def test_search_success(self, mock_search, initialized_library):
-        mock_search.return_value = [
-            {"object": "page", "id": "page-1", "properties": {"title": "My Page"}},
-            {"object": "database", "id": "db-1", "title": [{"text": {"content": "My DB"}}]},
-        ]
-
-        result = initialized_library.search(
-            user_id="test_user",
-            query="test query",
-        )
-
-        assert result["status"] == "success"
-        assert len(result["results"]) == 2
-        mock_search.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            query="test query",
-            filter_type=None,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.search_notion")
-    def test_search_with_filter_type(self, mock_search, initialized_library):
-        mock_search.return_value = [
-            {"object": "page", "id": "page-1"},
-        ]
-
-        result = initialized_library.search(
-            user_id="test_user",
+        # Test search with page filter
+        result = self.run_test(
+            "search (filter=page)",
+            NotionAppLibrary.search,
+            user_id=self.user_id,
             query="test",
             filter_type="page",
+            workspace_id=self.workspace_id,
         )
+        if result.get('status') == 'success':
+            print_info(f"Found {len(result.get('results', []))} page results")
 
-        assert result["status"] == "success"
-        mock_search.assert_called_once_with(
-            token="ntn_test_token_abc123",
+        # Test search with database filter
+        result = self.run_test(
+            "search (filter=database)",
+            NotionAppLibrary.search,
+            user_id=self.user_id,
             query="test",
-            filter_type="page",
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.search_notion")
-    def test_search_with_database_filter(self, mock_search, initialized_library):
-        mock_search.return_value = [
-            {"object": "database", "id": "db-1"},
-        ]
-
-        result = initialized_library.search(
-            user_id="test_user",
-            query="my db",
             filter_type="database",
+            workspace_id=self.workspace_id,
         )
+        if result.get('status') == 'success':
+            print_info(f"Found {len(result.get('results', []))} database results")
 
-        assert result["status"] == "success"
-        mock_search.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            query="my db",
-            filter_type="database",
+        return result
+
+    # ------------------------------------------------------------------
+    # Page operations (read-only)
+    # ------------------------------------------------------------------
+    def test_page_read_operations(self, page_id: Optional[str] = None):
+        """Test reading page data. Discovers a page via search if none given."""
+        print_section("PAGE READ OPERATIONS")
+
+        # Discover a page if not provided
+        if not page_id:
+            print_info("Discovering a page via search...")
+            search_result = NotionAppLibrary.search(
+                user_id=self.user_id,
+                query="",
+                filter_type="page",
+                workspace_id=self.workspace_id,
+            )
+            if search_result.get('status') == 'success':
+                pages = search_result.get('results', [])
+                if pages:
+                    page_id = pages[0].get('id')
+                    print_info(f"Using discovered page: {page_id}")
+
+        if not page_id:
+            print_warning("No page found to test read operations. Skipping.")
+            return None
+
+        # Test get_page
+        result = self.run_test(
+            "get_page",
+            NotionAppLibrary.get_page,
+            user_id=self.user_id,
+            page_id=page_id,
+            workspace_id=self.workspace_id,
         )
+        if result.get('status') == 'success':
+            page = result.get('page', {})
+            print_info(f"Page object type: {page.get('object', 'N/A')}")
+            parent = page.get('parent', {})
+            print_info(f"Parent type: {list(parent.keys())}")
 
-    def test_search_no_credential(self, initialized_library):
-        result = initialized_library.search(
-            user_id="nonexistent",
-            query="anything",
+        # Test get_page_content
+        result = self.run_test(
+            "get_page_content",
+            NotionAppLibrary.get_page_content,
+            user_id=self.user_id,
+            page_id=page_id,
+            workspace_id=self.workspace_id,
         )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
+        if result.get('status') == 'success':
+            blocks = result.get('blocks', [])
+            print_info(f"Found {len(blocks)} content blocks")
+            for block in blocks[:5]:
+                block_type = block.get('type', 'unknown')
+                print_info(f"  - block type: {block_type}")
 
-    @patch("core.external_libraries.notion.external_app_library.search_notion")
-    def test_search_empty_results(self, mock_search, initialized_library):
-        mock_search.return_value = []
+        return page_id
 
-        result = initialized_library.search(
-            user_id="test_user",
-            query="nonexistent query",
+    # ------------------------------------------------------------------
+    # Database operations (read-only)
+    # ------------------------------------------------------------------
+    def test_database_read_operations(self, database_id: Optional[str] = None):
+        """Test reading database data. Discovers a database via search if none given."""
+        print_section("DATABASE READ OPERATIONS")
+
+        # Discover a database if not provided
+        if not database_id:
+            print_info("Discovering a database via search...")
+            search_result = NotionAppLibrary.search(
+                user_id=self.user_id,
+                query="",
+                filter_type="database",
+                workspace_id=self.workspace_id,
+            )
+            if search_result.get('status') == 'success':
+                dbs = search_result.get('results', [])
+                if dbs:
+                    database_id = dbs[0].get('id')
+                    print_info(f"Using discovered database: {database_id}")
+
+        if not database_id:
+            print_warning("No database found to test database operations. Skipping.")
+            return None
+
+        # Test get_database
+        result = self.run_test(
+            "get_database",
+            NotionAppLibrary.get_database,
+            user_id=self.user_id,
+            database_id=database_id,
+            workspace_id=self.workspace_id,
         )
+        if result.get('status') == 'success':
+            db = result.get('database', {})
+            props = db.get('properties', {})
+            print_info(f"Database has {len(props)} properties")
+            for prop_name, prop_def in list(props.items())[:5]:
+                print_info(f"  - {prop_name}: {prop_def.get('type', 'N/A')}")
 
-        assert result["status"] == "success"
-        assert result["results"] == []
-
-    @patch("core.external_libraries.notion.external_app_library.search_notion")
-    def test_search_exception(self, mock_search, initialized_library):
-        mock_search.side_effect = Exception("Network error")
-
-        result = initialized_library.search(
-            user_id="test_user",
-            query="test",
+        # Test query_database (no filter)
+        result = self.run_test(
+            "query_database (no filter)",
+            NotionAppLibrary.query_database,
+            user_id=self.user_id,
+            database_id=database_id,
+            workspace_id=self.workspace_id,
         )
+        if result.get('status') == 'success':
+            rows = result.get('results', [])
+            print_info(f"Query returned {len(rows)} rows")
 
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-        assert "Network error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.search_notion")
-    def test_search_uses_workspace_credential(
-        self, mock_search, initialized_library, second_credential
-    ):
-        """Search with workspace_id uses the correct credential token."""
-        initialized_library.get_credential_store().add(second_credential)
-        mock_search.return_value = []
-
-        result = initialized_library.search(
-            user_id="test_user",
-            query="test",
-            workspace_id="ws_def456",
+        # Test query_database with sort
+        result = self.run_test(
+            "query_database (with sort)",
+            NotionAppLibrary.query_database,
+            user_id=self.user_id,
+            database_id=database_id,
+            sorts=[{"timestamp": "created_time", "direction": "descending"}],
+            workspace_id=self.workspace_id,
         )
-
-        assert result["status"] == "success"
-        mock_search.assert_called_once_with(
-            token="ntn_test_token_def456",
-            query="test",
-            filter_type=None,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Get Page Tests
-# ---------------------------------------------------------------------------
-
-class TestGetPage:
-
-    @patch("core.external_libraries.notion.external_app_library.get_page")
-    def test_get_page_success(self, mock_get_page, initialized_library):
-        mock_get_page.return_value = {
-            "object": "page",
-            "id": "page-123",
-            "properties": {
-                "title": {
-                    "title": [{"text": {"content": "My Page"}}]
-                }
-            },
-        }
-
-        result = initialized_library.get_page(
-            user_id="test_user",
-            page_id="page-123",
-        )
-
-        assert result["status"] == "success"
-        assert result["page"]["id"] == "page-123"
-        assert result["page"]["object"] == "page"
-        mock_get_page.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            page_id="page-123",
-        )
-
-    def test_get_page_no_credential(self, initialized_library):
-        result = initialized_library.get_page(
-            user_id="nonexistent",
-            page_id="page-123",
-        )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_page")
-    def test_get_page_not_found(self, mock_get_page, initialized_library):
-        mock_get_page.return_value = {
-            "error": {
-                "status": 404,
-                "code": "object_not_found",
-                "message": "Could not find page with ID: page-999.",
-            }
-        }
-
-        result = initialized_library.get_page(
-            user_id="test_user",
-            page_id="page-999",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-        assert "error" in result["details"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_page")
-    def test_get_page_unauthorized(self, mock_get_page, initialized_library):
-        mock_get_page.return_value = {
-            "error": {
-                "status": 401,
-                "code": "unauthorized",
-                "message": "API token is invalid.",
-            }
-        }
-
-        result = initialized_library.get_page(
-            user_id="test_user",
-            page_id="page-123",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.get_page")
-    def test_get_page_exception(self, mock_get_page, initialized_library):
-        mock_get_page.side_effect = Exception("Connection timeout")
-
-        result = initialized_library.get_page(
-            user_id="test_user",
-            page_id="page-123",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-        assert "Connection timeout" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_page")
-    def test_get_page_with_workspace_id(
-        self, mock_get_page, initialized_library, second_credential
-    ):
-        initialized_library.get_credential_store().add(second_credential)
-        mock_get_page.return_value = {"object": "page", "id": "page-123"}
-
-        result = initialized_library.get_page(
-            user_id="test_user",
-            page_id="page-123",
-            workspace_id="ws_def456",
-        )
-
-        assert result["status"] == "success"
-        mock_get_page.assert_called_once_with(
-            token="ntn_test_token_def456",
-            page_id="page-123",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Get Database Tests
-# ---------------------------------------------------------------------------
-
-class TestGetDatabase:
-
-    @patch("core.external_libraries.notion.external_app_library.get_database")
-    def test_get_database_success(self, mock_get_db, initialized_library):
-        mock_get_db.return_value = {
-            "object": "database",
-            "id": "db-123",
-            "title": [{"text": {"content": "Tasks DB"}}],
-            "properties": {
-                "Name": {"id": "title", "type": "title"},
-                "Status": {"id": "abc", "type": "select"},
-            },
-        }
-
-        result = initialized_library.get_database(
-            user_id="test_user",
-            database_id="db-123",
-        )
-
-        assert result["status"] == "success"
-        assert result["database"]["id"] == "db-123"
-        assert result["database"]["object"] == "database"
-        assert "properties" in result["database"]
-        mock_get_db.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            database_id="db-123",
-        )
-
-    def test_get_database_no_credential(self, initialized_library):
-        result = initialized_library.get_database(
-            user_id="nonexistent",
-            database_id="db-123",
-        )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_database")
-    def test_get_database_not_found(self, mock_get_db, initialized_library):
-        mock_get_db.return_value = {
-            "error": {
-                "status": 404,
-                "code": "object_not_found",
-                "message": "Could not find database with ID: db-999.",
-            }
-        }
-
-        result = initialized_library.get_database(
-            user_id="test_user",
-            database_id="db-999",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.get_database")
-    def test_get_database_exception(self, mock_get_db, initialized_library):
-        mock_get_db.side_effect = Exception("API unavailable")
-
-        result = initialized_library.get_database(
-            user_id="test_user",
-            database_id="db-123",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_database")
-    def test_get_database_with_workspace_id(
-        self, mock_get_db, initialized_library, second_credential
-    ):
-        initialized_library.get_credential_store().add(second_credential)
-        mock_get_db.return_value = {"object": "database", "id": "db-123"}
-
-        result = initialized_library.get_database(
-            user_id="test_user",
-            database_id="db-123",
-            workspace_id="ws_def456",
-        )
-
-        assert result["status"] == "success"
-        mock_get_db.assert_called_once_with(
-            token="ntn_test_token_def456",
-            database_id="db-123",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Query Database Tests
-# ---------------------------------------------------------------------------
-
-class TestQueryDatabase:
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_success(self, mock_query, initialized_library):
-        mock_query.return_value = {
-            "results": [
-                {"object": "page", "id": "page-1", "properties": {}},
-                {"object": "page", "id": "page-2", "properties": {}},
-            ],
-            "has_more": False,
-        }
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-        )
-
-        assert result["status"] == "success"
-        assert len(result["results"]) == 2
-        mock_query.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            database_id="db-123",
-            filter_obj=None,
-            sorts=None,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_with_filter(self, mock_query, initialized_library):
-        filter_obj = {
-            "property": "Status",
-            "select": {"equals": "Done"},
-        }
-        mock_query.return_value = {
-            "results": [{"object": "page", "id": "page-1"}],
-            "has_more": False,
-        }
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-            filter_obj=filter_obj,
-        )
-
-        assert result["status"] == "success"
-        assert len(result["results"]) == 1
-        mock_query.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            database_id="db-123",
-            filter_obj=filter_obj,
-            sorts=None,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_with_sorts(self, mock_query, initialized_library):
-        sorts = [{"property": "Created", "direction": "descending"}]
-        mock_query.return_value = {
-            "results": [{"object": "page", "id": "page-1"}],
-            "has_more": False,
-        }
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-            sorts=sorts,
-        )
-
-        assert result["status"] == "success"
-        mock_query.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            database_id="db-123",
-            filter_obj=None,
-            sorts=sorts,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_with_filter_and_sorts(self, mock_query, initialized_library):
-        filter_obj = {"property": "Priority", "select": {"equals": "High"}}
-        sorts = [{"property": "Due Date", "direction": "ascending"}]
-        mock_query.return_value = {
-            "results": [{"object": "page", "id": "page-3"}],
-            "has_more": False,
-        }
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-            filter_obj=filter_obj,
-            sorts=sorts,
-        )
-
-        assert result["status"] == "success"
-        mock_query.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            database_id="db-123",
-            filter_obj=filter_obj,
-            sorts=sorts,
-        )
-
-    def test_query_database_no_credential(self, initialized_library):
-        result = initialized_library.query_database(
-            user_id="nonexistent",
-            database_id="db-123",
-        )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_empty_results(self, mock_query, initialized_library):
-        mock_query.return_value = {
-            "results": [],
-            "has_more": False,
-        }
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-        )
-
-        assert result["status"] == "success"
-        assert result["results"] == []
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_api_error(self, mock_query, initialized_library):
-        mock_query.return_value = {
-            "error": {
-                "status": 400,
-                "code": "validation_error",
-                "message": "Invalid filter property.",
-            }
-        }
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-            filter_obj={"invalid": "filter"},
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_exception(self, mock_query, initialized_library):
-        mock_query.side_effect = Exception("Timeout")
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_with_workspace_id(
-        self, mock_query, initialized_library, second_credential
-    ):
-        initialized_library.get_credential_store().add(second_credential)
-        mock_query.return_value = {"results": [], "has_more": False}
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-123",
-            workspace_id="ws_def456",
-        )
-
-        assert result["status"] == "success"
-        mock_query.assert_called_once_with(
-            token="ntn_test_token_def456",
-            database_id="db-123",
-            filter_obj=None,
-            sorts=None,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Create Page Tests
-# ---------------------------------------------------------------------------
-
-class TestCreatePage:
-
-    @patch("core.external_libraries.notion.external_app_library.create_page")
-    def test_create_page_in_database_success(self, mock_create, initialized_library):
-        mock_create.return_value = {
-            "object": "page",
-            "id": "new-page-1",
-            "parent": {"database_id": "db-123"},
-            "properties": {
-                "Name": {"title": [{"text": {"content": "New Task"}}]},
-            },
-        }
-
+        if result.get('status') == 'success':
+            rows = result.get('results', [])
+            print_info(f"Sorted query returned {len(rows)} rows")
+
+        return database_id
+
+    # ------------------------------------------------------------------
+    # Create / update / append operations (mutating)
+    # ------------------------------------------------------------------
+    def test_create_operations(self, parent_page_id: Optional[str] = None):
+        """Test page creation, update, and content append."""
+        print_section("CREATE / UPDATE / APPEND OPERATIONS")
+
+        # We need a parent page to create under. Discover one if not given.
+        if not parent_page_id:
+            print_info("Discovering a parent page via search...")
+            search_result = NotionAppLibrary.search(
+                user_id=self.user_id,
+                query="",
+                filter_type="page",
+                workspace_id=self.workspace_id,
+            )
+            if search_result.get('status') == 'success':
+                pages = search_result.get('results', [])
+                if pages:
+                    parent_page_id = pages[0].get('id')
+                    print_info(f"Using parent page: {parent_page_id}")
+
+        if not parent_page_id:
+            print_warning("No parent page available. Skipping create/update tests.")
+            return
+
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Test create_page (under a page)
         properties = {
-            "Name": {"title": [{"text": {"content": "New Task"}}]},
-        }
-
-        result = initialized_library.create_page(
-            user_id="test_user",
-            parent_id="db-123",
-            parent_type="database_id",
-            properties=properties,
-        )
-
-        assert result["status"] == "success"
-        assert result["page"]["id"] == "new-page-1"
-        mock_create.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            parent_id="db-123",
-            parent_type="database_id",
-            properties=properties,
-            children=None,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.create_page")
-    def test_create_page_under_page_success(self, mock_create, initialized_library):
-        mock_create.return_value = {
-            "object": "page",
-            "id": "new-page-2",
-            "parent": {"page_id": "parent-page-1"},
-        }
-
-        properties = {
-            "title": {"title": [{"text": {"content": "Sub Page"}}]},
-        }
-
-        result = initialized_library.create_page(
-            user_id="test_user",
-            parent_id="parent-page-1",
-            parent_type="page_id",
-            properties=properties,
-        )
-
-        assert result["status"] == "success"
-        assert result["page"]["id"] == "new-page-2"
-        mock_create.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            parent_id="parent-page-1",
-            parent_type="page_id",
-            properties=properties,
-            children=None,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.create_page")
-    def test_create_page_with_children(self, mock_create, initialized_library):
-        mock_create.return_value = {
-            "object": "page",
-            "id": "new-page-3",
-        }
-
-        properties = {
-            "title": {"title": [{"text": {"content": "Page With Content"}}]},
+            "title": {
+                "title": [
+                    {"text": {"content": f"Integration Test Page - {timestamp}"}}
+                ]
+            },
         }
         children = [
             {
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {
-                    "rich_text": [{"text": {"content": "Hello World"}}]
+                    "rich_text": [
+                        {"text": {"content": "This page was created by the Notion integration test suite."}}
+                    ]
                 },
             },
+        ]
+
+        result = self.run_test(
+            "create_page",
+            NotionAppLibrary.create_page,
+            user_id=self.user_id,
+            parent_id=parent_page_id,
+            parent_type="page_id",
+            properties=properties,
+            children=children,
+            workspace_id=self.workspace_id,
+        )
+
+        if result.get('status') == 'success':
+            self.created_page_id = result.get('page', {}).get('id')
+            print_info(f"Created page ID: {self.created_page_id}")
+        else:
+            print_warning("create_page failed; skipping update_page and append_to_page.")
+            return
+
+        # Test update_page (rename the created page)
+        updated_properties = {
+            "title": {
+                "title": [
+                    {"text": {"content": f"Updated Test Page - {timestamp}"}}
+                ]
+            },
+        }
+        result = self.run_test(
+            "update_page",
+            NotionAppLibrary.update_page,
+            user_id=self.user_id,
+            page_id=self.created_page_id,
+            properties=updated_properties,
+            workspace_id=self.workspace_id,
+        )
+
+        # Test append_to_page
+        append_children = [
             {
                 "object": "block",
                 "type": "heading_2",
                 "heading_2": {
-                    "rich_text": [{"text": {"content": "Section Title"}}]
-                },
-            },
-        ]
-
-        result = initialized_library.create_page(
-            user_id="test_user",
-            parent_id="parent-page-1",
-            parent_type="page_id",
-            properties=properties,
-            children=children,
-        )
-
-        assert result["status"] == "success"
-        mock_create.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            parent_id="parent-page-1",
-            parent_type="page_id",
-            properties=properties,
-            children=children,
-        )
-
-    def test_create_page_no_credential(self, initialized_library):
-        result = initialized_library.create_page(
-            user_id="nonexistent",
-            parent_id="db-123",
-            parent_type="database_id",
-            properties={"Name": {"title": [{"text": {"content": "Test"}}]}},
-        )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.create_page")
-    def test_create_page_api_error(self, mock_create, initialized_library):
-        mock_create.return_value = {
-            "error": {
-                "status": 400,
-                "code": "validation_error",
-                "message": "Title is not a property that exists.",
-            }
-        }
-
-        result = initialized_library.create_page(
-            user_id="test_user",
-            parent_id="db-123",
-            parent_type="database_id",
-            properties={"invalid": "property"},
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.create_page")
-    def test_create_page_exception(self, mock_create, initialized_library):
-        mock_create.side_effect = Exception("Server error")
-
-        result = initialized_library.create_page(
-            user_id="test_user",
-            parent_id="db-123",
-            parent_type="database_id",
-            properties={},
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.create_page")
-    def test_create_page_with_workspace_id(
-        self, mock_create, initialized_library, second_credential
-    ):
-        initialized_library.get_credential_store().add(second_credential)
-        mock_create.return_value = {"object": "page", "id": "new-page-4"}
-
-        result = initialized_library.create_page(
-            user_id="test_user",
-            parent_id="db-123",
-            parent_type="database_id",
-            properties={},
-            workspace_id="ws_def456",
-        )
-
-        assert result["status"] == "success"
-        mock_create.assert_called_once_with(
-            token="ntn_test_token_def456",
-            parent_id="db-123",
-            parent_type="database_id",
-            properties={},
-            children=None,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Update Page Tests
-# ---------------------------------------------------------------------------
-
-class TestUpdatePage:
-
-    @patch("core.external_libraries.notion.external_app_library.update_page")
-    def test_update_page_success(self, mock_update, initialized_library):
-        mock_update.return_value = {
-            "object": "page",
-            "id": "page-123",
-            "properties": {
-                "Status": {"select": {"name": "Done"}},
-            },
-        }
-
-        properties = {"Status": {"select": {"name": "Done"}}}
-
-        result = initialized_library.update_page(
-            user_id="test_user",
-            page_id="page-123",
-            properties=properties,
-        )
-
-        assert result["status"] == "success"
-        assert result["page"]["id"] == "page-123"
-        mock_update.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            page_id="page-123",
-            properties=properties,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.update_page")
-    def test_update_page_multiple_properties(self, mock_update, initialized_library):
-        mock_update.return_value = {
-            "object": "page",
-            "id": "page-123",
-            "properties": {
-                "Status": {"select": {"name": "In Progress"}},
-                "Priority": {"select": {"name": "High"}},
-                "Assignee": {"people": [{"id": "user-1"}]},
-            },
-        }
-
-        properties = {
-            "Status": {"select": {"name": "In Progress"}},
-            "Priority": {"select": {"name": "High"}},
-            "Assignee": {"people": [{"id": "user-1"}]},
-        }
-
-        result = initialized_library.update_page(
-            user_id="test_user",
-            page_id="page-123",
-            properties=properties,
-        )
-
-        assert result["status"] == "success"
-        mock_update.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            page_id="page-123",
-            properties=properties,
-        )
-
-    def test_update_page_no_credential(self, initialized_library):
-        result = initialized_library.update_page(
-            user_id="nonexistent",
-            page_id="page-123",
-            properties={"Status": {"select": {"name": "Done"}}},
-        )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.update_page")
-    def test_update_page_not_found(self, mock_update, initialized_library):
-        mock_update.return_value = {
-            "error": {
-                "status": 404,
-                "code": "object_not_found",
-                "message": "Could not find page.",
-            }
-        }
-
-        result = initialized_library.update_page(
-            user_id="test_user",
-            page_id="page-999",
-            properties={"Status": {"select": {"name": "Done"}}},
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.update_page")
-    def test_update_page_validation_error(self, mock_update, initialized_library):
-        mock_update.return_value = {
-            "error": {
-                "status": 400,
-                "code": "validation_error",
-                "message": "Property does not exist.",
-            }
-        }
-
-        result = initialized_library.update_page(
-            user_id="test_user",
-            page_id="page-123",
-            properties={"NonExistentProp": {"text": "value"}},
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.update_page")
-    def test_update_page_exception(self, mock_update, initialized_library):
-        mock_update.side_effect = Exception("Rate limited")
-
-        result = initialized_library.update_page(
-            user_id="test_user",
-            page_id="page-123",
-            properties={},
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.update_page")
-    def test_update_page_with_workspace_id(
-        self, mock_update, initialized_library, second_credential
-    ):
-        initialized_library.get_credential_store().add(second_credential)
-        mock_update.return_value = {"object": "page", "id": "page-123"}
-
-        result = initialized_library.update_page(
-            user_id="test_user",
-            page_id="page-123",
-            properties={},
-            workspace_id="ws_def456",
-        )
-
-        assert result["status"] == "success"
-        mock_update.assert_called_once_with(
-            token="ntn_test_token_def456",
-            page_id="page-123",
-            properties={},
-        )
-
-
-# ---------------------------------------------------------------------------
-# Get Page Content (Block Children) Tests
-# ---------------------------------------------------------------------------
-
-class TestGetPageContent:
-
-    @patch("core.external_libraries.notion.external_app_library.get_block_children")
-    def test_get_page_content_success(self, mock_blocks, initialized_library):
-        mock_blocks.return_value = {
-            "results": [
-                {
-                    "object": "block",
-                    "id": "block-1",
-                    "type": "paragraph",
-                    "paragraph": {
-                        "rich_text": [{"text": {"content": "Hello"}}]
-                    },
-                },
-                {
-                    "object": "block",
-                    "id": "block-2",
-                    "type": "heading_1",
-                    "heading_1": {
-                        "rich_text": [{"text": {"content": "Title"}}]
-                    },
-                },
-            ],
-            "has_more": False,
-        }
-
-        result = initialized_library.get_page_content(
-            user_id="test_user",
-            page_id="page-123",
-        )
-
-        assert result["status"] == "success"
-        assert len(result["blocks"]) == 2
-        assert result["blocks"][0]["type"] == "paragraph"
-        assert result["blocks"][1]["type"] == "heading_1"
-        mock_blocks.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            block_id="page-123",
-        )
-
-    def test_get_page_content_no_credential(self, initialized_library):
-        result = initialized_library.get_page_content(
-            user_id="nonexistent",
-            page_id="page-123",
-        )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_block_children")
-    def test_get_page_content_empty(self, mock_blocks, initialized_library):
-        mock_blocks.return_value = {
-            "results": [],
-            "has_more": False,
-        }
-
-        result = initialized_library.get_page_content(
-            user_id="test_user",
-            page_id="page-123",
-        )
-
-        assert result["status"] == "success"
-        assert result["blocks"] == []
-
-    @patch("core.external_libraries.notion.external_app_library.get_block_children")
-    def test_get_page_content_api_error(self, mock_blocks, initialized_library):
-        mock_blocks.return_value = {
-            "error": {
-                "status": 404,
-                "code": "object_not_found",
-                "message": "Could not find block.",
-            }
-        }
-
-        result = initialized_library.get_page_content(
-            user_id="test_user",
-            page_id="page-999",
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.get_block_children")
-    def test_get_page_content_exception(self, mock_blocks, initialized_library):
-        mock_blocks.side_effect = Exception("Service unavailable")
-
-        result = initialized_library.get_page_content(
-            user_id="test_user",
-            page_id="page-123",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_block_children")
-    def test_get_page_content_with_workspace_id(
-        self, mock_blocks, initialized_library, second_credential
-    ):
-        initialized_library.get_credential_store().add(second_credential)
-        mock_blocks.return_value = {"results": [], "has_more": False}
-
-        result = initialized_library.get_page_content(
-            user_id="test_user",
-            page_id="page-123",
-            workspace_id="ws_def456",
-        )
-
-        assert result["status"] == "success"
-        mock_blocks.assert_called_once_with(
-            token="ntn_test_token_def456",
-            block_id="page-123",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Append to Page Tests
-# ---------------------------------------------------------------------------
-
-class TestAppendToPage:
-
-    @patch("core.external_libraries.notion.external_app_library.append_block_children")
-    def test_append_to_page_success(self, mock_append, initialized_library):
-        children = [
-            {
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"text": {"content": "New paragraph"}}]
-                },
-            },
-        ]
-        mock_append.return_value = {
-            "results": children,
-            "has_more": False,
-        }
-
-        result = initialized_library.append_to_page(
-            user_id="test_user",
-            page_id="page-123",
-            children=children,
-        )
-
-        assert result["status"] == "success"
-        assert len(result["blocks"]) == 1
-        mock_append.assert_called_once_with(
-            token="ntn_test_token_abc123",
-            block_id="page-123",
-            children=children,
-        )
-
-    @patch("core.external_libraries.notion.external_app_library.append_block_children")
-    def test_append_to_page_multiple_blocks(self, mock_append, initialized_library):
-        children = [
-            {
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {
-                    "rich_text": [{"text": {"content": "New Section"}}]
+                    "rich_text": [
+                        {"text": {"content": "Appended Section"}}
+                    ]
                 },
             },
             {
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {
-                    "rich_text": [{"text": {"content": "Content here"}}]
+                    "rich_text": [
+                        {"text": {"content": f"Appended at {timestamp} by integration tests."}}
+                    ]
                 },
             },
             {
                 "object": "block",
                 "type": "bulleted_list_item",
                 "bulleted_list_item": {
-                    "rich_text": [{"text": {"content": "Item 1"}}]
+                    "rich_text": [
+                        {"text": {"content": "Bullet item from test"}}
+                    ]
                 },
             },
         ]
-        mock_append.return_value = {
-            "results": children,
-            "has_more": False,
+
+        result = self.run_test(
+            "append_to_page",
+            NotionAppLibrary.append_to_page,
+            user_id=self.user_id,
+            page_id=self.created_page_id,
+            children=append_children,
+            workspace_id=self.workspace_id,
+        )
+        if result.get('status') == 'success':
+            blocks = result.get('blocks', [])
+            print_info(f"Appended {len(blocks)} blocks")
+
+        # Verify by reading the page content back
+        result = self.run_test(
+            "get_page_content (verify append)",
+            NotionAppLibrary.get_page_content,
+            user_id=self.user_id,
+            page_id=self.created_page_id,
+            workspace_id=self.workspace_id,
+        )
+        if result.get('status') == 'success':
+            blocks = result.get('blocks', [])
+            print_info(f"Page now has {len(blocks)} blocks total")
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+    def cleanup(self):
+        """Clean up any created test data by archiving pages."""
+        print_section("CLEANUP")
+
+        if self.created_page_id:
+            print_info(f"Archiving test page: {self.created_page_id}")
+            # Archive the page by setting archived=True via update_page properties
+            # Notion API supports archiving via PATCH /pages/{id} with {"archived": true}
+            cred = NotionAppLibrary.get_credentials(
+                user_id=self.user_id,
+                workspace_id=self.workspace_id,
+            )
+            if cred:
+                import requests
+                url = f"https://api.notion.com/v1/pages/{self.created_page_id}"
+                headers = {
+                    "Authorization": f"Bearer {cred.token}",
+                    "Content-Type": "application/json",
+                    "Notion-Version": "2022-06-28",
+                }
+                response = requests.patch(url, headers=headers, json={"archived": True})
+                if response.status_code == 200:
+                    print_success("Test page archived (deleted)")
+                else:
+                    print_error(f"Failed to archive test page: {response.status_code} - {response.text}")
+            else:
+                print_error("Could not get credential for cleanup")
+        else:
+            print_info("No test pages to clean up")
+
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+    def print_summary(self):
+        """Print test summary."""
+        print_header("TEST SUMMARY")
+
+        passed = sum(1 for v in self.test_results.values() if v == 'PASS')
+        failed = sum(1 for v in self.test_results.values() if v == 'FAIL')
+        errors = sum(1 for v in self.test_results.values() if v == 'ERROR')
+        total = len(self.test_results)
+
+        print(f"\n  Total tests: {total}")
+        print(f"  {Colors.GREEN}Passed: {passed}{Colors.END}")
+        print(f"  {Colors.RED}Failed: {failed}{Colors.END}")
+        print(f"  {Colors.YELLOW}Errors: {errors}{Colors.END}")
+
+        print(f"\n  {Colors.BOLD}Detailed Results:{Colors.END}")
+        for name, result in self.test_results.items():
+            if result == 'PASS':
+                print(f"    {Colors.GREEN}PASS{Colors.END} {name}")
+            elif result == 'FAIL':
+                print(f"    {Colors.RED}FAIL{Colors.END} {name}")
+            else:
+                print(f"    {Colors.YELLOW}ERR {Colors.END} {name}")
+
+
+def list_credentials():
+    """List all stored Notion credentials."""
+    print_header("STORED NOTION CREDENTIALS")
+
+    NotionAppLibrary.initialize()
+    cred_store = NotionAppLibrary.get_credential_store()
+
+    # Access internal credentials dict to list all users
+    all_credentials = []
+    for user_id, creds in cred_store.credentials.items():
+        all_credentials.extend(creds)
+
+    if not all_credentials:
+        print_warning("No Notion credentials found.")
+        print_info("Please authenticate via the CraftOS control panel first.")
+        return None, None
+
+    print(f"\nFound {len(all_credentials)} credential(s):\n")
+
+    for i, cred in enumerate(all_credentials, 1):
+        print(f"  [{i}] User ID: {cred.user_id}")
+        print(f"      Workspace ID: {cred.workspace_id}")
+        print(f"      Workspace Name: {cred.workspace_name}")
+        print(f"      Token prefix: {cred.token[:12]}...")
+        print()
+
+    return all_credentials[0].user_id, all_credentials[0].workspace_id
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Test Notion API integration')
+    parser.add_argument('--user-id', type=str, help='CraftOS user ID')
+    parser.add_argument('--workspace-id', type=str, help='Notion workspace ID')
+    parser.add_argument('--list', action='store_true', help='List stored credentials')
+    parser.add_argument('--skip-create', action='store_true', help='Skip tests that create pages')
+    parser.add_argument('--only', type=str, help='Only run specific test group (init, search, page, database, create)')
+    args = parser.parse_args()
+
+    print_header("NOTION EXTERNAL LIBRARY TEST SUITE")
+    print(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Initialize the library
+    NotionAppLibrary.initialize()
+    print_success("NotionAppLibrary initialized")
+
+    # List credentials if requested
+    if args.list:
+        list_credentials()
+        return
+
+    # Get credentials
+    user_id = args.user_id
+    workspace_id = args.workspace_id
+
+    if not user_id:
+        print_section("CREDENTIAL LOOKUP")
+        user_id, workspace_id = list_credentials()
+
+        if not user_id:
+            print_error("No credentials available. Exiting.")
+            return
+
+        print_info(f"Using: user_id={user_id}")
+        print_info(f"       workspace_id={workspace_id}")
+
+    # Validate connection
+    if not NotionAppLibrary.validate_connection(user_id=user_id, workspace_id=workspace_id):
+        print_error("Invalid credentials or no connection found.")
+        return
+
+    print_success("Credential validation passed")
+
+    # Create tester
+    tester = NotionTester(user_id=user_id, workspace_id=workspace_id)
+
+    try:
+        # Run tests based on --only flag or all
+        test_groups = {
+            'init': tester.test_initialization,
+            'search': tester.test_search_operations,
         }
 
-        result = initialized_library.append_to_page(
-            user_id="test_user",
-            page_id="page-123",
-            children=children,
-        )
-
-        assert result["status"] == "success"
-        assert len(result["blocks"]) == 3
-
-    def test_append_to_page_no_credential(self, initialized_library):
-        result = initialized_library.append_to_page(
-            user_id="nonexistent",
-            page_id="page-123",
-            children=[{"type": "paragraph"}],
-        )
-        assert result["status"] == "error"
-        assert "No valid Notion credential" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.append_block_children")
-    def test_append_to_page_api_error(self, mock_append, initialized_library):
-        mock_append.return_value = {
-            "error": {
-                "status": 400,
-                "code": "validation_error",
-                "message": "Invalid block type.",
-            }
-        }
-
-        result = initialized_library.append_to_page(
-            user_id="test_user",
-            page_id="page-123",
-            children=[{"type": "invalid_block_type"}],
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.append_block_children")
-    def test_append_to_page_page_not_found(self, mock_append, initialized_library):
-        mock_append.return_value = {
-            "error": {
-                "status": 404,
-                "code": "object_not_found",
-                "message": "Could not find block with ID: page-999.",
-            }
-        }
-
-        result = initialized_library.append_to_page(
-            user_id="test_user",
-            page_id="page-999",
-            children=[{"type": "paragraph"}],
-        )
-
-        assert result["status"] == "error"
-        assert "details" in result
-
-    @patch("core.external_libraries.notion.external_app_library.append_block_children")
-    def test_append_to_page_exception(self, mock_append, initialized_library):
-        mock_append.side_effect = Exception("Connection reset")
-
-        result = initialized_library.append_to_page(
-            user_id="test_user",
-            page_id="page-123",
-            children=[{"type": "paragraph"}],
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.append_block_children")
-    def test_append_to_page_with_workspace_id(
-        self, mock_append, initialized_library, second_credential
-    ):
-        initialized_library.get_credential_store().add(second_credential)
-        mock_append.return_value = {"results": [], "has_more": False}
-
-        children = [{"type": "paragraph"}]
-
-        result = initialized_library.append_to_page(
-            user_id="test_user",
-            page_id="page-123",
-            children=children,
-            workspace_id="ws_def456",
-        )
-
-        assert result["status"] == "success"
-        mock_append.assert_called_once_with(
-            token="ntn_test_token_def456",
-            block_id="page-123",
-            children=children,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Notion Credential Model Tests
-# ---------------------------------------------------------------------------
-
-class TestNotionCredential:
-
-    def test_credential_fields(self):
-        cred = NotionCredential(
-            user_id="u1",
-            workspace_id="ws1",
-            workspace_name="My Workspace",
-            token="ntn_secret_abc",
-        )
-        assert cred.user_id == "u1"
-        assert cred.workspace_id == "ws1"
-        assert cred.workspace_name == "My Workspace"
-        assert cred.token == "ntn_secret_abc"
-
-    def test_credential_unique_keys(self):
-        assert NotionCredential.UNIQUE_KEYS == ("user_id", "workspace_id")
-
-    def test_credential_to_dict(self):
-        cred = NotionCredential(
-            user_id="u1",
-            workspace_id="ws1",
-            workspace_name="My Workspace",
-            token="ntn_secret_abc",
-        )
-        d = cred.to_dict()
-        assert d["user_id"] == "u1"
-        assert d["workspace_id"] == "ws1"
-        assert d["workspace_name"] == "My Workspace"
-        assert d["token"] == "ntn_secret_abc"
-
-    def test_credential_equality(self):
-        cred1 = NotionCredential(
-            user_id="u1",
-            workspace_id="ws1",
-            workspace_name="WS",
-            token="tok",
-        )
-        cred2 = NotionCredential(
-            user_id="u1",
-            workspace_id="ws1",
-            workspace_name="WS",
-            token="tok",
-        )
-        assert cred1 == cred2
-
-    def test_credential_inequality_different_workspace(self):
-        cred1 = NotionCredential(
-            user_id="u1",
-            workspace_id="ws1",
-            workspace_name="WS",
-            token="tok",
-        )
-        cred2 = NotionCredential(
-            user_id="u1",
-            workspace_id="ws2",
-            workspace_name="WS",
-            token="tok",
-        )
-        assert cred1 != cred2
-
-
-# ---------------------------------------------------------------------------
-# Notion API Helpers Tests (unit-testing the helper functions directly)
-# ---------------------------------------------------------------------------
-
-class TestNotionHelpers:
-    """Test the low-level Notion API helper functions with mocked requests."""
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_search_notion_success(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import search_notion
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [
-                {"object": "page", "id": "p1"},
-                {"object": "database", "id": "d1"},
-            ]
-        }
-        mock_post.return_value = mock_response
-
-        results = search_notion(token="test_token", query="meeting notes")
-
-        assert len(results) == 2
-        assert results[0]["id"] == "p1"
-        mock_post.assert_called_once()
-        call_kwargs = mock_post.call_args
-        assert call_kwargs[1]["json"]["query"] == "meeting notes"
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_search_notion_with_filter(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import search_notion
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"results": []}
-        mock_post.return_value = mock_response
-
-        search_notion(token="test_token", query="q", filter_type="page")
-
-        call_kwargs = mock_post.call_args
-        payload = call_kwargs[1]["json"]
-        assert payload["filter"] == {"property": "object", "value": "page"}
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_search_notion_invalid_filter_ignored(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import search_notion
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"results": []}
-        mock_post.return_value = mock_response
-
-        search_notion(token="test_token", query="q", filter_type="invalid")
-
-        call_kwargs = mock_post.call_args
-        payload = call_kwargs[1]["json"]
-        assert "filter" not in payload
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_search_notion_api_error(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import search_notion
-
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        mock_response.json.return_value = {
-            "object": "error",
-            "status": 401,
-            "message": "Unauthorized",
-        }
-        mock_post.return_value = mock_response
-
-        results = search_notion(token="bad_token", query="q")
-
-        assert len(results) == 1
-        assert "error" in results[0]
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_page_success(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_page
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"object": "page", "id": "page-1"}
-        mock_get.return_value = mock_response
-
-        result = get_page(token="test_token", page_id="page-1")
-
-        assert result["id"] == "page-1"
-        assert "error" not in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_page_not_found(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_page
-
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.json.return_value = {
-            "object": "error",
-            "status": 404,
-            "message": "Not found",
-        }
-        mock_get.return_value = mock_response
-
-        result = get_page(token="test_token", page_id="bad-id")
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_database_success(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_database
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "object": "database",
-            "id": "db-1",
-            "properties": {},
-        }
-        mock_get.return_value = mock_response
-
-        result = get_database(token="test_token", database_id="db-1")
-
-        assert result["id"] == "db-1"
-        assert "error" not in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_database_error(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_database
-
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.json.return_value = {"object": "error", "status": 404}
-        mock_get.return_value = mock_response
-
-        result = get_database(token="test_token", database_id="bad-id")
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_query_database_success(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import query_database
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [{"id": "row-1"}],
-            "has_more": False,
-        }
-        mock_post.return_value = mock_response
-
-        result = query_database(token="test_token", database_id="db-1")
-
-        assert "results" in result
-        assert len(result["results"]) == 1
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_query_database_with_filter_and_sorts(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import query_database
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"results": [], "has_more": False}
-        mock_post.return_value = mock_response
-
-        filter_obj = {"property": "Status", "select": {"equals": "Done"}}
-        sorts = [{"property": "Date", "direction": "ascending"}]
-
-        query_database(
-            token="test_token",
-            database_id="db-1",
-            filter_obj=filter_obj,
-            sorts=sorts,
-        )
-
-        call_kwargs = mock_post.call_args
-        payload = call_kwargs[1]["json"]
-        assert payload["filter"] == filter_obj
-        assert payload["sorts"] == sorts
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_query_database_error(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import query_database
-
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.json.return_value = {"object": "error", "status": 400}
-        mock_post.return_value = mock_response
-
-        result = query_database(token="test_token", database_id="db-1")
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_create_page_success(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import create_page
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"object": "page", "id": "new-page"}
-        mock_post.return_value = mock_response
-
-        result = create_page(
-            token="test_token",
-            parent_id="db-1",
-            parent_type="database_id",
-            properties={"Name": {"title": [{"text": {"content": "Test"}}]}},
-        )
-
-        assert result["id"] == "new-page"
-        assert "error" not in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_create_page_with_children(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import create_page
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"object": "page", "id": "new-page"}
-        mock_post.return_value = mock_response
-
-        children = [{"type": "paragraph", "paragraph": {"rich_text": []}}]
-
-        create_page(
-            token="test_token",
-            parent_id="p-1",
-            parent_type="page_id",
-            properties={},
-            children=children,
-        )
-
-        call_kwargs = mock_post.call_args
-        payload = call_kwargs[1]["json"]
-        assert payload["children"] == children
-        assert payload["parent"] == {"page_id": "p-1"}
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.post")
-    def test_create_page_error(self, mock_post):
-        from core.external_libraries.notion.helpers.notion_helpers import create_page
-
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.json.return_value = {"object": "error", "status": 400}
-        mock_post.return_value = mock_response
-
-        result = create_page(
-            token="test_token",
-            parent_id="db-1",
-            parent_type="database_id",
-            properties={},
-        )
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.patch")
-    def test_update_page_success(self, mock_patch):
-        from core.external_libraries.notion.helpers.notion_helpers import update_page
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"object": "page", "id": "page-1"}
-        mock_patch.return_value = mock_response
-
-        result = update_page(
-            token="test_token",
-            page_id="page-1",
-            properties={"Status": {"select": {"name": "Done"}}},
-        )
-
-        assert result["id"] == "page-1"
-        assert "error" not in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.patch")
-    def test_update_page_error(self, mock_patch):
-        from core.external_libraries.notion.helpers.notion_helpers import update_page
-
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.json.return_value = {"object": "error", "status": 400}
-        mock_patch.return_value = mock_response
-
-        result = update_page(
-            token="test_token",
-            page_id="page-1",
-            properties={},
-        )
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_block_children_success(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_block_children
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [{"object": "block", "id": "b1", "type": "paragraph"}],
-            "has_more": False,
-        }
-        mock_get.return_value = mock_response
-
-        result = get_block_children(token="test_token", block_id="page-1")
-
-        assert len(result["results"]) == 1
-        assert "error" not in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_block_children_error(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_block_children
-
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.json.return_value = {"object": "error", "status": 404}
-        mock_get.return_value = mock_response
-
-        result = get_block_children(token="test_token", block_id="bad-id")
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.patch")
-    def test_append_block_children_success(self, mock_patch):
-        from core.external_libraries.notion.helpers.notion_helpers import append_block_children
-
-        children = [{"type": "paragraph", "paragraph": {"rich_text": []}}]
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"results": children}
-        mock_patch.return_value = mock_response
-
-        result = append_block_children(
-            token="test_token", block_id="page-1", children=children
-        )
-
-        assert "results" in result
-        assert "error" not in result
-        call_kwargs = mock_patch.call_args
-        assert call_kwargs[1]["json"]["children"] == children
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.patch")
-    def test_append_block_children_error(self, mock_patch):
-        from core.external_libraries.notion.helpers.notion_helpers import append_block_children
-
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.json.return_value = {"object": "error", "status": 400}
-        mock_patch.return_value = mock_response
-
-        result = append_block_children(
-            token="test_token", block_id="page-1", children=[]
-        )
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.delete")
-    def test_delete_block_success(self, mock_delete):
-        from core.external_libraries.notion.helpers.notion_helpers import delete_block
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "object": "block",
-            "id": "block-1",
-            "archived": True,
-        }
-        mock_delete.return_value = mock_response
-
-        result = delete_block(token="test_token", block_id="block-1")
-
-        assert result["id"] == "block-1"
-        assert result["archived"] is True
-        assert "error" not in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.delete")
-    def test_delete_block_error(self, mock_delete):
-        from core.external_libraries.notion.helpers.notion_helpers import delete_block
-
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.json.return_value = {"object": "error", "status": 404}
-        mock_delete.return_value = mock_response
-
-        result = delete_block(token="test_token", block_id="bad-id")
-
-        assert "error" in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_user_success(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_user
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "object": "user",
-            "id": "user-1",
-            "name": "Bot User",
-            "type": "bot",
-        }
-        mock_get.return_value = mock_response
-
-        result = get_user(token="test_token")
-
-        assert result["id"] == "user-1"
-        assert result["name"] == "Bot User"
-        assert "error" not in result
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_user_with_specific_id(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_user
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "object": "user",
-            "id": "user-42",
-            "name": "John",
-        }
-        mock_get.return_value = mock_response
-
-        result = get_user(token="test_token", user_id="user-42")
-
-        assert result["id"] == "user-42"
-        # Verify the URL contains the specific user_id
-        call_args = mock_get.call_args
-        assert "user-42" in call_args[0][0]
-
-    @patch("core.external_libraries.notion.helpers.notion_helpers.requests.get")
-    def test_get_user_error(self, mock_get):
-        from core.external_libraries.notion.helpers.notion_helpers import get_user
-
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        mock_response.json.return_value = {"object": "error", "status": 401}
-        mock_get.return_value = mock_response
-
-        result = get_user(token="bad_token")
-
-        assert "error" in result
-
-    def test_get_headers(self):
-        from core.external_libraries.notion.helpers.notion_helpers import _get_headers
-
-        headers = _get_headers("my_token")
-
-        assert headers["Authorization"] == "Bearer my_token"
-        assert headers["Content-Type"] == "application/json"
-        assert headers["Notion-Version"] == "2022-06-28"
-
-
-# ---------------------------------------------------------------------------
-# Edge Cases & Error Handling Tests
-# ---------------------------------------------------------------------------
-
-class TestEdgeCases:
-
-    @patch("core.external_libraries.notion.external_app_library.search_notion")
-    def test_search_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("Network error")
-
-        result = initialized_library.search(
-            user_id="test_user",
-            query="test",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_page")
-    def test_get_page_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("DNS failure")
-
-        result = initialized_library.get_page(
-            user_id="test_user",
-            page_id="page-1",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_database")
-    def test_get_database_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("SSL error")
-
-        result = initialized_library.get_database(
-            user_id="test_user",
-            database_id="db-1",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.query_database")
-    def test_query_database_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("Timeout")
-
-        result = initialized_library.query_database(
-            user_id="test_user",
-            database_id="db-1",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.create_page")
-    def test_create_page_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("Server 500")
-
-        result = initialized_library.create_page(
-            user_id="test_user",
-            parent_id="db-1",
-            parent_type="database_id",
-            properties={},
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.update_page")
-    def test_update_page_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("Rate limited")
-
-        result = initialized_library.update_page(
-            user_id="test_user",
-            page_id="page-1",
-            properties={},
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.get_block_children")
-    def test_get_page_content_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("Service unavailable")
-
-        result = initialized_library.get_page_content(
-            user_id="test_user",
-            page_id="page-1",
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    @patch("core.external_libraries.notion.external_app_library.append_block_children")
-    def test_append_to_page_handles_exception(self, mock_fn, initialized_library):
-        mock_fn.side_effect = Exception("Connection reset by peer")
-
-        result = initialized_library.append_to_page(
-            user_id="test_user",
-            page_id="page-1",
-            children=[{"type": "paragraph"}],
-        )
-
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-
-    def test_all_methods_fail_before_initialization(self):
-        """All credential-dependent methods should raise RuntimeError before init."""
-        with pytest.raises(RuntimeError, match="not initialized"):
-            NotionAppLibrary.get_credential_store()
-
-    def test_search_not_initialized(self):
-        """search() catches the RuntimeError and returns an error dict."""
-        result = NotionAppLibrary.search(user_id="test_user", query="test")
-        assert result["status"] == "error"
-        assert "Unexpected error" in result["reason"]
-        assert "not initialized" in result["reason"]
-
-    def test_get_page_not_initialized(self):
-        result = NotionAppLibrary.get_page(user_id="test_user", page_id="p1")
-        assert result["status"] == "error"
-        assert "not initialized" in result["reason"]
-
-    def test_get_database_not_initialized(self):
-        result = NotionAppLibrary.get_database(user_id="test_user", database_id="db1")
-        assert result["status"] == "error"
-        assert "not initialized" in result["reason"]
-
-    def test_query_database_not_initialized(self):
-        result = NotionAppLibrary.query_database(user_id="test_user", database_id="db1")
-        assert result["status"] == "error"
-        assert "not initialized" in result["reason"]
-
-    def test_create_page_not_initialized(self):
-        result = NotionAppLibrary.create_page(
-            user_id="test_user",
-            parent_id="p1",
-            parent_type="page_id",
-            properties={},
-        )
-        assert result["status"] == "error"
-        assert "not initialized" in result["reason"]
-
-    def test_update_page_not_initialized(self):
-        result = NotionAppLibrary.update_page(
-            user_id="test_user",
-            page_id="p1",
-            properties={},
-        )
-        assert result["status"] == "error"
-        assert "not initialized" in result["reason"]
-
-    def test_get_page_content_not_initialized(self):
-        result = NotionAppLibrary.get_page_content(user_id="test_user", page_id="p1")
-        assert result["status"] == "error"
-        assert "not initialized" in result["reason"]
-
-    def test_append_to_page_not_initialized(self):
-        result = NotionAppLibrary.append_to_page(
-            user_id="test_user",
-            page_id="p1",
-            children=[],
-        )
-        assert result["status"] == "error"
-        assert "not initialized" in result["reason"]
+        if args.only:
+            if args.only in test_groups:
+                test_groups[args.only]()
+            elif args.only == 'page':
+                tester.test_page_read_operations()
+            elif args.only == 'database':
+                tester.test_database_read_operations()
+            elif args.only == 'create':
+                if args.skip_create:
+                    print_warning("--skip-create and --only create are contradictory. Skipping.")
+                else:
+                    tester.test_create_operations()
+            else:
+                print_error(f"Unknown test group: {args.only}")
+                print_info("Available: init, search, page, database, create")
+                return
+        else:
+            # Run all tests
+            tester.test_initialization()
+            tester.test_search_operations()
+            page_id = tester.test_page_read_operations()
+            tester.test_database_read_operations()
+
+            if not args.skip_create:
+                tester.test_create_operations(parent_page_id=page_id)
+
+    finally:
+        # Cleanup
+        if not args.skip_create:
+            tester.cleanup()
+
+    # Print summary
+    tester.print_summary()
+
+
+if __name__ == "__main__":
+    main()

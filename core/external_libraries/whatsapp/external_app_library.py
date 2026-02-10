@@ -1,6 +1,36 @@
 import asyncio
 from typing import Optional, Dict, Any
+
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass
+
 from core.external_libraries.external_app_library import ExternalAppLibrary
+
+
+def _run_async(coro):
+    """Run an async coroutine from sync code, reusing the existing event loop when possible.
+
+    With nest_asyncio applied, run_until_complete works even inside a running loop.
+    We avoid asyncio.run() because it creates a NEW event loop, which breaks Playwright
+    objects that are bound to the TUI's existing loop.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        # No event loop exists at all (e.g., running from a plain thread)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
 from core.external_libraries.credential_store import CredentialsStore
 from core.external_libraries.whatsapp.credentials import WhatsAppCredential
 from core.external_libraries.whatsapp.helpers.whatsapp_web_helpers import (
@@ -158,10 +188,7 @@ class WhatsAppAppLibrary(ExternalAppLibrary):
 
                 return result
 
-            try:
-                result = asyncio.get_event_loop().run_until_complete(send_with_auto_reconnect())
-            except RuntimeError:
-                result = asyncio.run(send_with_auto_reconnect())
+            result = _run_async(send_with_auto_reconnect())
 
             if result.get("success"):
                 return {
@@ -266,10 +293,7 @@ class WhatsAppAppLibrary(ExternalAppLibrary):
 
                 return result
 
-            try:
-                result = asyncio.get_event_loop().run_until_complete(send_media_with_auto_reconnect())
-            except RuntimeError:
-                result = asyncio.run(send_media_with_auto_reconnect())
+            result = _run_async(send_media_with_auto_reconnect())
 
             if result.get("success"):
                 return {
@@ -324,10 +348,7 @@ class WhatsAppAppLibrary(ExternalAppLibrary):
                         return await get_whatsapp_web_chat_messages(session_id=session_id, phone_number=phone_number, limit=limit)
                 return result
 
-            try:
-                result = asyncio.get_event_loop().run_until_complete(get_messages_task())
-            except RuntimeError:
-                result = asyncio.run(get_messages_task())
+            result = _run_async(get_messages_task())
 
             if result.get("success"):
                 return {
@@ -377,10 +398,7 @@ class WhatsAppAppLibrary(ExternalAppLibrary):
                         return await get_whatsapp_web_unread_chats(session_id=session_id)
                 return result
 
-            try:
-                result = asyncio.get_event_loop().run_until_complete(get_unread_task())
-            except RuntimeError:
-                result = asyncio.run(get_unread_task())
+            result = _run_async(get_unread_task())
 
             if result.get("success"):
                 return {
@@ -432,10 +450,7 @@ class WhatsAppAppLibrary(ExternalAppLibrary):
                         return await get_whatsapp_web_contact_phone(session_id=session_id, contact_name=name)
                 return result
 
-            try:
-                result = asyncio.get_event_loop().run_until_complete(search_task())
-            except RuntimeError:
-                result = asyncio.run(search_task())
+            result = _run_async(search_task())
 
             if result.get("success"):
                 return {
@@ -492,14 +507,9 @@ class WhatsAppAppLibrary(ExternalAppLibrary):
             if not session_id:
                 return {"status": "error", "reason": "No session_id available to reconnect."}
 
-            try:
-                result = asyncio.get_event_loop().run_until_complete(
-                    reconnect_whatsapp_web_session(session_id=session_id, user_id=user_id)
-                )
-            except RuntimeError:
-                result = asyncio.run(
-                    reconnect_whatsapp_web_session(session_id=session_id, user_id=user_id)
-                )
+            result = _run_async(
+                reconnect_whatsapp_web_session(session_id=session_id, user_id=user_id)
+            )
 
             return result
 
@@ -557,10 +567,7 @@ class WhatsAppAppLibrary(ExternalAppLibrary):
         if not session_id:
              return cls.list_persisted_sessions(user_id=user_id)
 
-        try:
-             result = asyncio.get_event_loop().run_until_complete(get_session_status(session_id))
-        except RuntimeError:
-             result = asyncio.run(get_session_status(session_id))
+        result = _run_async(get_session_status(session_id))
 
         if result:
             return result
