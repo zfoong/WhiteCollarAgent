@@ -543,6 +543,10 @@ AGENT_ROLE_PROMPT = """
 # --- Context Engine ---
 # TODO: Inject OS information into the prompt, we put Windows as default for now.
 AGENT_INFO_PROMPT = """
+<agent_identity>
+Your name is {agent_name}. The user is talking to you by this name.
+</agent_identity>
+
 <context>
 Here are your responsibilities:
 - You aid the user with general computer-use and browser-use tasks, following their request.
@@ -716,6 +720,14 @@ AGENT_STATE_PROMPT = """
 <agent_state>
 - Active Task ID: {current_task_id}
 </agent_state>
+"""
+
+USER_PROFILE_PROMPT = """
+<user_profile>
+This is the user you are interacting with. Personalize your communication based on their preferences:
+
+{user_profile_content}
+</user_profile>
 """
 
 ENVIRONMENTAL_CONTEXT_PROMPT = """

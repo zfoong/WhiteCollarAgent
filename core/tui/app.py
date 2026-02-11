@@ -570,7 +570,10 @@ class CraftApp(App):
         logger.info(f"[ONBOARDING] Triggered soft onboarding task: {task_id}")
 
     async def on_mount(self) -> None:  # pragma: no cover - UI lifecycle
-        self.query_one("#chat-panel").border_title = "Chat"
+        # Set chat panel title to agent name from onboarding config
+        from core.onboarding.manager import onboarding_manager
+        agent_name = onboarding_manager.state.agent_name or "Agent"
+        self.query_one("#chat-panel").border_title = agent_name
         self.query_one("#action-panel").border_title = "Action"
         self.query_one("#vm-footage-panel").border_title = "VM Footage"
 

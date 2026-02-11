@@ -11,6 +11,7 @@ from core.prompt import (
     ENVIRONMENTAL_CONTEXT_PROMPT,
     AGENT_FILE_SYSTEM_CONTEXT_PROMPT,
     POLICY_PROMPT,
+    USER_PROFILE_PROMPT,
 )
 from core.state.state_manager import StateManager
 from core.state.agent_state import STATE
@@ -72,9 +73,11 @@ class ContextEngine:
     def create_system_agent_info(self):
         """
         Create a system message block describing the CraftOS, agent's identity and mechanism.
-        STATIC - suitable for KV caching.
+        SEMI-STATIC - agent name from onboarding config, suitable for KV caching per session.
         """
-        prompt = AGENT_INFO_PROMPT
+        from core.onboarding.manager import onboarding_manager
+        agent_name = onboarding_manager.state.agent_name or "Agent"
+        prompt = AGENT_INFO_PROMPT.format(agent_name=agent_name)
         return prompt
 
     def set_role_info_hook(self, hook_fn):
@@ -133,6 +136,24 @@ class ContextEngine:
             agent_file_system_path=AGENT_FILE_SYSTEM_PATH,
         )
         return prompt
+
+    def create_system_user_profile(self):
+        """
+        Create a system message block with user profile from USER.md.
+        SEMI-STATIC - reads user profile from file, suitable for KV caching per session.
+        """
+        from core.config import AGENT_FILE_SYSTEM_PATH
+        user_md_path = AGENT_FILE_SYSTEM_PATH / "USER.md"
+
+        try:
+            if user_md_path.exists():
+                content = user_md_path.read_text(encoding="utf-8").strip()
+                if content:
+                    return USER_PROFILE_PROMPT.format(user_profile_content=content)
+        except Exception as e:
+            logger.warning(f"[CONTEXT] Failed to read USER.md: {e}")
+
+        return ""  # Return empty if no user profile available
 
     def create_system_base_instruction(self):
         """
@@ -404,12 +425,12 @@ class ContextEngine:
         Assembles the system and user messages for the LLM with configurable sections.
 
         KV CACHING OPTIMIZATION:
-        - System prompt contains ONLY STATIC content (agent_info, role_info, policy, environment, file_system, base_instruction)
+        - System prompt contains ONLY STATIC content (agent_info, user_profile, role_info, policy, environment, file_system, base_instruction)
         - Dynamic content (event_stream, task_state, agent_state) must be added to user prompts by callers
         - Use get_event_stream(), get_task_state(), get_agent_state() for user prompts
 
         :param system_flags: Optional dict of booleans to enable/disable system sections.
-            Supported keys (STATIC ONLY): ``agent_info``, ``role_info``, ``policy``,
+            Supported keys (STATIC ONLY): ``agent_info``, ``user_profile``, ``role_info``, ``policy``,
             ``environment``, ``file_system``, and ``base_instruction``.
         :param user_flags: Optional dict of booleans to enable/disable user sections.
             Supported keys: ``query`` and ``expected_output``. Defaults to ``query``
@@ -420,6 +441,7 @@ class ContextEngine:
         system_default_flags = {
             "role_info": True,
             "agent_info": True,
+            "user_profile": True,  # inject USER.md content for personalization
             "policy": False,  # default off to save tokens
             "environment": True,
             "file_system": True,
@@ -436,6 +458,7 @@ class ContextEngine:
         # STATIC system sections only - ordered for maximum KV cache benefit
         system_sections = [
             ("agent_info", self.create_system_agent_info),
+            ("user_profile", self.create_system_user_profile),
             ("policy", self.create_system_policy),
             ("role_info", self.create_system_role_info),
             ("environment", self.create_system_environmental_context),
