@@ -222,6 +222,11 @@ class AgentBase:
             "Reset the agent state, clearing tasks, triggers, and session data.",
             self.reset_agent_state,
         )
+        self.register_command(
+            "/onboarding",
+            "Re-run the user profile interview to update your preferences.",
+            self._handle_onboarding_command,
+        )
 
     def register_command(
         self,
@@ -1045,6 +1050,39 @@ class AgentBase:
         self.event_stream_manager.clear_all()
 
         return "Agent state reset. Starting fresh."
+
+    async def _handle_onboarding_command(self) -> str:
+        """
+        Handle the /onboarding command to re-run soft onboarding.
+
+        Resets soft onboarding state and creates a new interview task.
+
+        Returns:
+            Message indicating the interview is starting.
+        """
+        from core.onboarding.manager import onboarding_manager
+        from core.onboarding.soft.task_creator import create_soft_onboarding_task
+        from core.trigger_interface import Trigger
+        import time
+
+        # Reset soft onboarding state to allow re-run
+        onboarding_manager.reset_soft_onboarding()
+
+        # Create new interview task
+        task_id = create_soft_onboarding_task(self.task_manager)
+
+        # Fire trigger to start the task
+        trigger = Trigger(
+            fire_at=time.time(),
+            priority=1,
+            next_action_description="Begin user profile interview",
+            session_id=task_id,
+            payload={"onboarding": True},
+        )
+        await self.triggers.put(trigger)
+
+        logger.info(f"[ONBOARDING] /onboarding command: created task {task_id}")
+        return "Starting user profile interview. I'll ask you some questions to personalize your experience."
 
     def _parse_reasoning_response(self, response: str) -> ReasoningResult:
         """

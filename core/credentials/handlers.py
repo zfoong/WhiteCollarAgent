@@ -1,6 +1,8 @@
 """All integration credential handlers + registry."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import secrets
 import time
 import webbrowser
@@ -47,18 +49,43 @@ class GoogleHandler(IntegrationHandler):
     SCOPES = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
 
     async def login(self, args):
-        from core.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-        if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-            return False, "Not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars."
+        from core.config import GOOGLE_CLIENT_ID
+        if not GOOGLE_CLIENT_ID:
+            return False, "Not configured. Set GOOGLE_CLIENT_ID env var (or use embedded credentials)."
 
-        params = {"client_id": GOOGLE_CLIENT_ID, "redirect_uri": REDIRECT_URI, "response_type": "code", "scope": self.SCOPES, "access_type": "offline", "prompt": "consent", "state": secrets.token_urlsafe(32)}
+        # Generate PKCE code_verifier and code_challenge (RFC 7636)
+        # code_verifier: 43-128 characters from unreserved URI characters
+        code_verifier = secrets.token_urlsafe(64)[:128]
+        # code_challenge: BASE64URL(SHA256(code_verifier)) with padding stripped
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).decode().rstrip("=")
+
+        params = {
+            "client_id": GOOGLE_CLIENT_ID,
+            "redirect_uri": REDIRECT_URI,
+            "response_type": "code",
+            "scope": self.SCOPES,
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": secrets.token_urlsafe(32),
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
         from core.credentials.oauth_server import run_oauth_flow
         code, error = run_oauth_flow(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
         if error: return False, f"Google OAuth failed: {error}"
 
         import aiohttp
         async with aiohttp.ClientSession() as s:
-            async with s.post("https://oauth2.googleapis.com/token", data={"code": code, "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "redirect_uri": REDIRECT_URI, "grant_type": "authorization_code"}) as r:
+            # Token exchange with PKCE - uses code_verifier instead of client_secret
+            async with s.post("https://oauth2.googleapis.com/token", data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "redirect_uri": REDIRECT_URI,
+                "grant_type": "authorization_code",
+                "code_verifier": code_verifier,
+            }) as r:
                 if r.status != 200: return False, f"Token exchange failed: {await r.text()}"
                 tokens = await r.json()
             async with s.get("https://www.googleapis.com/oauth2/v2/userinfo", headers={"Authorization": f"Bearer {tokens['access_token']}"}) as r:
@@ -294,20 +321,38 @@ class LinkedInHandler(IntegrationHandler):
 
 class ZoomHandler(IntegrationHandler):
     async def login(self, args):
-        from core.config import ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET
-        if not ZOOM_CLIENT_ID or not ZOOM_CLIENT_SECRET:
-            return False, "Not configured. Set ZOOM_CLIENT_ID and ZOOM_CLIENT_SECRET env vars."
+        from core.config import ZOOM_CLIENT_ID
+        if not ZOOM_CLIENT_ID:
+            return False, "Not configured. Set ZOOM_CLIENT_ID env var (or use embedded credentials)."
 
-        import base64
-        params = {"response_type": "code", "client_id": ZOOM_CLIENT_ID, "redirect_uri": REDIRECT_URI, "state": secrets.token_urlsafe(32)}
+        # Generate PKCE code_verifier and code_challenge (RFC 7636)
+        code_verifier = secrets.token_urlsafe(64)[:128]
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).decode().rstrip("=")
+
+        params = {
+            "response_type": "code",
+            "client_id": ZOOM_CLIENT_ID,
+            "redirect_uri": REDIRECT_URI,
+            "state": secrets.token_urlsafe(32),
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
         from core.credentials.oauth_server import run_oauth_flow
         code, error = run_oauth_flow(f"https://zoom.us/oauth/authorize?{urlencode(params)}")
         if error: return False, f"Zoom OAuth failed: {error}"
 
-        basic = base64.b64encode(f"{ZOOM_CLIENT_ID}:{ZOOM_CLIENT_SECRET}".encode()).decode()
         import aiohttp
         async with aiohttp.ClientSession() as s:
-            async with s.post("https://zoom.us/oauth/token", data={"grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT_URI}, headers={"Authorization": f"Basic {basic}"}) as r:
+            # Token exchange with PKCE - uses code_verifier instead of client_secret
+            async with s.post("https://zoom.us/oauth/token", data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI,
+                "client_id": ZOOM_CLIENT_ID,
+                "code_verifier": code_verifier,
+            }) as r:
                 if r.status != 200: return False, f"Token exchange failed: {await r.text()}"
                 tokens = await r.json()
             async with s.get("https://api.zoom.us/v2/users/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}) as r:

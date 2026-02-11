@@ -16,6 +16,7 @@ ollama_data/
 config.json
 node_modules
 .env
+.credentials/
 **/agent_logs.txt
 **/memory.txt
 **/gui/config

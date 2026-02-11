@@ -34,18 +34,7 @@ After executing proactive tasks, update PROACTIVE.md with what was done, when, a
 
 ### Startup
 
-#### 1. CraftOS のマーケティングキットを作成する
-
-- **Action:** ``
-- **Condition:** `Must do` 
-- **Instruction:** `エージェントのワークスペースにある事業計画書およびその他の資料に基づき、CraftOS 向けのマーケティングキット（1ページ概要、ロゴデータ、ブランドカラー、コアメッセージ〔ワンライナー＋長めの説明〕、製品／サービスシート、顧客実績、創業者／会社紹介文、簡易スライドデッキ、メールテンプレート）を作成してください。なお、プロアクティブタスクの許可をユーザーに求める際は日本語を使用してください。` 
-- **Shareholder:** `Tham Yik Foong`
-- **Priority:** `high`
-- **Created:** `2026-01-20 07:50:34 UTC`
-- **Last Executed:** `2026-01-20 07:50:34 UTC`
-- **Deadline:** `2026-01-28 09:00:00 UTC`
-- **Outcome:** ``
-
+empty
 
 ### Hourly
 

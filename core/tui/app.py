@@ -37,6 +37,8 @@ from core.tui.skill_settings import (
     toggle_skill,
     get_skill_raw_content,
 )
+from core.onboarding.manager import onboarding_manager
+from core.logger import logger
 
 if TYPE_CHECKING:
     from core.tui.interface import TUIInterface
@@ -124,6 +126,8 @@ class CraftApp(App):
         self._saved_api_keys: dict[str, str] = {provider: api_key} if api_key else {}
         # Track the provider selected in settings before saving
         self._settings_provider: str = provider
+        # Track if soft onboarding has been triggered this session
+        self._soft_onboarding_triggered: bool = False
 
     def _is_api_key_configured(self) -> bool:
         """Check if an API key is configured for the current provider."""
@@ -527,8 +531,49 @@ class CraftApp(App):
         self.show_menu = False
         self._interface.notify_provider(self._provider)
 
+        # Check if soft onboarding is needed (first time entering chat after hard onboarding)
+        if onboarding_manager.needs_soft_onboarding and not self._soft_onboarding_triggered:
+            self._soft_onboarding_triggered = True
+            logger.info("[ONBOARDING] Soft onboarding needed, scheduling interview task")
+            self.call_after_refresh(self._trigger_soft_onboarding)
+
+    async def _launch_hard_onboarding(self) -> None:
+        """Launch the hard onboarding wizard screen."""
+        from core.tui.onboarding.hard_onboarding import TUIHardOnboarding
+        from core.tui.onboarding.widgets import OnboardingWizardScreen
+
+        handler = TUIHardOnboarding(self)
+        screen = OnboardingWizardScreen(handler)
+        await self.push_screen(screen)
+
+    async def _trigger_soft_onboarding(self) -> None:
+        """Trigger the soft onboarding conversational interview."""
+        from core.onboarding.soft.task_creator import create_soft_onboarding_task
+        from core.trigger import Trigger
+
+        if not self._interface or not self._interface._agent:
+            logger.warning("[ONBOARDING] Cannot trigger soft onboarding: no agent reference")
+            return
+
+        # Create the interview task
+        task_id = create_soft_onboarding_task(self._interface._agent.task_manager)
+
+        # Fire a trigger to start the task
+        trigger = Trigger(
+            fire_at=time.time(),
+            priority=1,
+            next_action_description="Begin user profile interview",
+            session_id=task_id,
+            payload={"onboarding": True},
+        )
+        await self._interface._agent.triggers.put(trigger)
+        logger.info(f"[ONBOARDING] Triggered soft onboarding task: {task_id}")
+
     async def on_mount(self) -> None:  # pragma: no cover - UI lifecycle
-        self.query_one("#chat-panel").border_title = "Chat"
+        # Set chat panel title to agent name from onboarding config
+        from core.onboarding.manager import onboarding_manager
+        agent_name = onboarding_manager.state.agent_name or "Agent"
+        self.query_one("#chat-panel").border_title = agent_name
         self.query_one("#action-panel").border_title = "Action"
         self.query_one("#vm-footage-panel").border_title = "VM Footage"
 
@@ -553,6 +598,11 @@ class CraftApp(App):
             menu.focus()
             self._refresh_menu_prefixes()
             self._update_menu_hint()
+
+        # Check if hard onboarding is needed
+        if onboarding_manager.needs_hard_onboarding:
+            logger.info("[ONBOARDING] Hard onboarding needed, launching wizard")
+            self.call_after_refresh(self._launch_hard_onboarding)
 
     def clear_logs(self) -> None:
         """Clear chat and action logs from the display."""

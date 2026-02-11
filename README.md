@@ -114,6 +114,83 @@ python start.py --only-cpu --fast
 ```
 
 ---
+
+## 🔐 OAuth Setup (Optional)
+
+The agent can connect to various services using OAuth. Release builds come with embedded credentials, but you can also use your own.
+
+### Quick Start
+
+For release builds with embedded credentials:
+```
+/google login    # Connect Google Workspace
+/zoom login      # Connect Zoom
+/slack invite    # Connect Slack
+/notion invite   # Connect Notion
+/linkedin login  # Connect LinkedIn
+```
+
+### Service Details
+
+| Service | Auth Type | Command | Requires Secret? |
+|---------|-----------|---------|------------------|
+| Google | PKCE | `/google login` | No (PKCE) |
+| Zoom | PKCE | `/zoom login` | No (PKCE) |
+| Slack | OAuth 2.0 | `/slack invite` | Yes |
+| Notion | OAuth 2.0 | `/notion invite` | Yes |
+| LinkedIn | OAuth 2.0 | `/linkedin login` | Yes |
+
+### Using Your Own Credentials
+
+If you prefer to use your own OAuth credentials, add them to your `.env` file:
+
+#### Google (PKCE - only Client ID needed)
+```bash
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+```
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable Gmail, Calendar, Drive, and People APIs
+3. Create OAuth credentials as **Desktop app** type
+4. Copy the Client ID (secret not required for PKCE)
+
+#### Zoom (PKCE - only Client ID needed)
+```bash
+ZOOM_CLIENT_ID=your-zoom-client-id
+```
+1. Go to [Zoom Marketplace](https://marketplace.zoom.us/)
+2. Create an OAuth app
+3. Copy the Client ID
+
+#### Slack (Requires both)
+```bash
+SLACK_SHARED_CLIENT_ID=your-slack-client-id
+SLACK_SHARED_CLIENT_SECRET=your-slack-client-secret
+```
+1. Go to [Slack API](https://api.slack.com/apps)
+2. Create a new app
+3. Add OAuth scopes: `chat:write`, `channels:read`, `users:read`, etc.
+4. Copy Client ID and Client Secret
+
+#### Notion (Requires both)
+```bash
+NOTION_SHARED_CLIENT_ID=your-notion-client-id
+NOTION_SHARED_CLIENT_SECRET=your-notion-client-secret
+```
+1. Go to [Notion Developers](https://developers.notion.com/)
+2. Create a new integration (Public integration)
+3. Copy OAuth Client ID and Secret
+
+#### LinkedIn (Requires both)
+```bash
+LINKEDIN_CLIENT_ID=your-linkedin-client-id
+LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
+```
+1. Go to [LinkedIn Developers](https://developer.linkedin.com/)
+2. Create an app
+3. Add OAuth 2.0 scopes
+4. Copy Client ID and Client Secret
+
+---
 ## Run with container
 
 The repository root included a Docker configuration with Python 3.10, key system packages (including Tesseract for OCR), and all Python dependencies defined in `environment.yml`/`requirements.txt` so the agent can run consistently in isolated environments. 

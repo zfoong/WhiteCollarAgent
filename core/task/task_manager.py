@@ -385,6 +385,15 @@ class TaskManager:
         # Cleanup temp directory on task end (completed, error, or cancelled)
         self._cleanup_task_temp_dir(task)
 
+        # Check if this was a soft onboarding task that completed successfully
+        if status == "completed" and "user-profile-interview" in (task.selected_skills or []):
+            try:
+                from core.onboarding.manager import onboarding_manager
+                onboarding_manager.mark_soft_complete()
+                logger.info("[ONBOARDING] Soft onboarding task completed, marked as complete")
+            except Exception as e:
+                logger.warning(f"[ONBOARDING] Failed to mark soft onboarding complete: {e}")
+
     def _sync_state_manager(self, task: Optional[Task]) -> None:
         """Sync task state to the state manager."""
         if self.state_manager:

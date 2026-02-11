@@ -17,28 +17,39 @@ MAX_ACTIONS_PER_TASK: int = 150
 MAX_TOKEN_PER_TASK: int = 6000000 # of tokens
 
 # Memory processing configuration
-PROCESS_MEMORY_AT_STARTUP: bool = True  # Process EVENT_UNPROCESSED.md into MEMORY.md at startup
+PROCESS_MEMORY_AT_STARTUP: bool = False  # Process EVENT_UNPROCESSED.md into MEMORY.md at startup
 MEMORY_PROCESSING_SCHEDULE_HOUR: int = 3  # Hour (0-23) to run daily memory processing
 
 # Credential storage mode (local-only in WhiteCollarAgent)
 USE_REMOTE_CREDENTIALS: bool = False
 
-# OAuth client credentials (set via /cred config or environment variables)
+# OAuth client credentials
+# Uses embedded credentials with environment variable override
+# See core/credentials/embedded_credentials.py for credential management
 import os
-GOOGLE_CLIENT_ID: str = os.environ.get("GOOGLE_CLIENT_ID", "")
+from core.credentials.embedded_credentials import get_credential
+
+# Google (PKCE - only client_id required, secret kept for backwards compatibility)
+GOOGLE_CLIENT_ID: str = get_credential("google", "client_id", "GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET: str = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-LINKEDIN_CLIENT_ID: str = os.environ.get("LINKEDIN_CLIENT_ID", "")
-LINKEDIN_CLIENT_SECRET: str = os.environ.get("LINKEDIN_CLIENT_SECRET", "")
-ZOOM_CLIENT_ID: str = os.environ.get("ZOOM_CLIENT_ID", "")
+
+# LinkedIn (requires both client_id and client_secret)
+LINKEDIN_CLIENT_ID: str = get_credential("linkedin", "client_id", "LINKEDIN_CLIENT_ID")
+LINKEDIN_CLIENT_SECRET: str = get_credential("linkedin", "client_secret", "LINKEDIN_CLIENT_SECRET")
+
+# Zoom (PKCE - only client_id required, secret kept for backwards compatibility)
+ZOOM_CLIENT_ID: str = get_credential("zoom", "client_id", "ZOOM_CLIENT_ID")
 ZOOM_CLIENT_SECRET: str = os.environ.get("ZOOM_CLIENT_SECRET", "")
+
+# Discord (token-based, not OAuth)
 DISCORD_SHARED_BOT_TOKEN: str = os.environ.get("DISCORD_SHARED_BOT_TOKEN", "")
 DISCORD_SHARED_BOT_ID: str = os.environ.get("DISCORD_SHARED_BOT_ID", "")
 
-# Shared Slack App (CraftOS-hosted)
-SLACK_SHARED_CLIENT_ID: str = os.environ.get("SLACK_SHARED_CLIENT_ID", "")
-SLACK_SHARED_CLIENT_SECRET: str = os.environ.get("SLACK_SHARED_CLIENT_SECRET", "")
+# Slack (requires both client_id and client_secret - no PKCE support)
+SLACK_SHARED_CLIENT_ID: str = get_credential("slack", "client_id", "SLACK_SHARED_CLIENT_ID")
+SLACK_SHARED_CLIENT_SECRET: str = get_credential("slack", "client_secret", "SLACK_SHARED_CLIENT_SECRET")
 
-# Shared Telegram Bot (CraftOS-hosted)
+# Telegram (token-based, not OAuth)
 TELEGRAM_SHARED_BOT_TOKEN: str = os.environ.get("TELEGRAM_SHARED_BOT_TOKEN", "")
 TELEGRAM_SHARED_BOT_USERNAME: str = os.environ.get("TELEGRAM_SHARED_BOT_USERNAME", "")
 
@@ -46,6 +57,6 @@ TELEGRAM_SHARED_BOT_USERNAME: str = os.environ.get("TELEGRAM_SHARED_BOT_USERNAME
 TELEGRAM_API_ID: str = os.environ.get("TELEGRAM_API_ID", "")
 TELEGRAM_API_HASH: str = os.environ.get("TELEGRAM_API_HASH", "")
 
-# Shared Notion Integration (CraftOS-hosted)
-NOTION_SHARED_CLIENT_ID: str = os.environ.get("NOTION_SHARED_CLIENT_ID", "")
-NOTION_SHARED_CLIENT_SECRET: str = os.environ.get("NOTION_SHARED_CLIENT_SECRET", "")
+# Notion (requires both client_id and client_secret - no PKCE support)
+NOTION_SHARED_CLIENT_ID: str = get_credential("notion", "client_id", "NOTION_SHARED_CLIENT_ID")
+NOTION_SHARED_CLIENT_SECRET: str = get_credential("notion", "client_secret", "NOTION_SHARED_CLIENT_SECRET")
