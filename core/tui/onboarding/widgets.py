@@ -17,42 +17,42 @@ if TYPE_CHECKING:
 
 
 ONBOARDING_CSS = """
-/* Onboarding wizard screen */
+/* Onboarding wizard screen - matches settings-card style */
 OnboardingWizardScreen {
     align: center middle;
     background: #000000;
 }
 
 #onboarding-container {
-    width: 80;
-    max-width: 95%;
-    height: auto;
-    max-height: 90%;
+    max-width: 100%;
+    height: 100%;
+    border: none;
     background: #000000;
-    padding: 2 3;
-    border: solid #2a2a2a;
+    padding: 2 3 3 3;
+    content-align: center top;
+    overflow: auto;
+    layout: vertical;
 }
 
 #onboarding-header {
     height: auto;
-    margin-bottom: 2;
+    margin-bottom: 1;
 }
 
 #onboarding-title {
-    text-align: center;
     text-style: bold;
-    color: #ff4f18;
+    color: #ffffff;
     margin-bottom: 1;
 }
 
 #onboarding-progress {
-    text-align: center;
     color: #666666;
 }
 
 #step-container {
     height: auto;
-    margin-bottom: 2;
+    margin-bottom: 1;
+    padding: 1 0;
 }
 
 #step-title {
@@ -71,11 +71,12 @@ OnboardingWizardScreen {
     margin: 1 0;
 }
 
-/* Option list for selections - use class selector for dynamic IDs */
+/* Option list for selections - matches provider-options style */
 .option-list {
-    width: 100%;
+    width: 28;
     height: auto;
     max-height: 12;
+    margin: 1 0;
     background: transparent;
     border: none;
 }
@@ -99,20 +100,19 @@ OnboardingWizardScreen {
     margin-left: 2;
 }
 
-/* Text input - use class selector for dynamic IDs */
+/* Text input - matches settings-card Input style */
 .step-input {
     width: 100%;
     border: solid #2a2a2a;
     background: #0a0a0a;
     color: #e5e5e5;
-    margin: 1 0;
 }
 
 .step-input:focus {
     border: solid #ff4f18;
 }
 
-/* Multi-select list - use class selector for dynamic IDs */
+/* Multi-select list - matches skills-list/mcp-server-list style */
 .multi-select-list {
     height: auto;
     max-height: 15;
@@ -142,8 +142,8 @@ OnboardingWizardScreen {
 }
 
 .multi-select-toggle:hover {
-    background: #ff4f18;
-    color: #ffffff;
+    background: #00cc00;
+    color: #000000;
 }
 
 .multi-select-label {
@@ -157,38 +157,31 @@ OnboardingWizardScreen {
     margin-top: 1;
 }
 
-/* Navigation buttons */
-#nav-buttons {
+/* Navigation actions - matches settings-actions-list style */
+#nav-actions {
+    width: 24;
     height: auto;
-    margin-top: 2;
+    margin-top: 1;
+    content-align: center middle;
+    background: transparent;
+    border: none;
 }
 
-.nav-btn {
-    width: auto;
-    min-width: 12;
-    height: 3;
-    background: #333333;
+#nav-actions > ListItem {
+    padding: 0 0;
+}
+
+#nav-actions > ListItem.--highlight .nav-item {
+    background: #ff4f18;
+    color: #ffffff;
+    text-style: bold;
+}
+
+.nav-item {
     color: #a0a0a0;
-    border: solid #2a2a2a;
-    margin-right: 1;
 }
 
-.nav-btn:hover {
-    background: #ff4f18;
-    color: #ffffff;
-}
-
-.nav-btn.-primary {
-    background: #ff4f18;
-    color: #ffffff;
-}
-
-.nav-btn.-primary:hover {
-    background: #ff7040;
-}
-
-.nav-btn:disabled {
-    background: #1a1a1a;
+.nav-item.-disabled {
     color: #444444;
 }
 
@@ -208,10 +201,11 @@ class OnboardingWizardScreen(Screen):
     Guides user through:
     1. LLM Provider selection
     2. API Key input
-    3. User name (optional)
-    4. Agent name (optional)
-    5. MCP server selection (optional)
-    6. Skills selection (optional)
+    3. Agent name (optional)
+    4. MCP server selection (optional)
+    5. Skills selection (optional)
+
+    User name is collected during soft onboarding (conversational interview).
     """
 
     CSS = ONBOARDING_CSS
@@ -225,7 +219,7 @@ class OnboardingWizardScreen(Screen):
     def compose(self) -> ComposeResult:
         with Container(id="onboarding-container"):
             with Container(id="onboarding-header"):
-                yield Static("Welcome to White Collar Agent", id="onboarding-title")
+                yield Static("Setup", id="onboarding-title")
                 yield Static(self._get_progress_text(), id="onboarding-progress")
 
             with Container(id="step-container"):
@@ -234,15 +228,20 @@ class OnboardingWizardScreen(Screen):
                 yield Container(id="step-content")
                 yield Static("", id="step-error")
 
-            with Horizontal(id="nav-buttons"):
-                yield Button("Back", id="btn-back", classes="nav-btn", disabled=True)
-                yield Button("Skip", id="btn-skip", classes="nav-btn")
-                yield Button("Next", id="btn-next", classes="nav-btn -primary")
+            yield ListView(
+                ListItem(Label("next", classes="nav-item"), id="nav-next"),
+                ListItem(Label("skip", classes="nav-item"), id="nav-skip"),
+                ListItem(Label("back", classes="nav-item"), id="nav-back"),
+                id="nav-actions",
+            )
 
             yield Static("", id="skip-hint")
 
     def on_mount(self) -> None:
         """Initialize the first step when mounted."""
+        # Set initial navigation selection
+        nav_list = self.query_one("#nav-actions", ListView)
+        nav_list.index = 0
         self._show_step(0)
 
     def _get_progress_text(self) -> str:
@@ -266,12 +265,8 @@ class OnboardingWizardScreen(Screen):
         # Clear error
         self.query_one("#step-error", Static).update("")
 
-        # Update navigation buttons
-        back_btn = self.query_one("#btn-back", Button)
-        back_btn.disabled = index == 0
-
-        skip_btn = self.query_one("#btn-skip", Button)
-        skip_btn.display = not step.required
+        # Update navigation items visibility and styling
+        self._update_nav_items(index, step.required)
 
         # Update skip hint
         skip_hint = self.query_one("#skip-hint", Static)
@@ -296,6 +291,24 @@ class OnboardingWizardScreen(Screen):
         else:
             # Text input
             self._build_text_input(content, step.get_default())
+
+    def _update_nav_items(self, index: int, required: bool) -> None:
+        """Update navigation items based on current step."""
+        # Update back item - disable on first step
+        back_item = self.query_one("#nav-back", ListItem)
+        back_label = back_item.query_one(Label)
+        if index == 0:
+            back_label.add_class("-disabled")
+        else:
+            back_label.remove_class("-disabled")
+
+        # Update skip item - hide if step is required
+        skip_item = self.query_one("#nav-skip", ListItem)
+        skip_item.display = not required
+
+        # Set initial selection to "next"
+        nav_list = self.query_one("#nav-actions", ListView)
+        nav_list.index = 0
 
     def _build_option_list(self, container: Container, options: list, default: str) -> None:
         """Build a single-select option list."""
@@ -357,24 +370,31 @@ class OnboardingWizardScreen(Screen):
         container.mount(scroll)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
+        """Handle button presses (for multi-select toggles)."""
         button_id = event.button.id
 
-        if button_id == "btn-back":
-            self._go_back()
-        elif button_id == "btn-skip":
-            self._skip_step()
-        elif button_id == "btn-next":
-            self._go_next()
-        elif button_id and button_id.startswith("toggle-"):
+        if button_id and button_id.startswith("toggle-"):
             value = button_id[7:]  # Remove "toggle-" prefix
             self._toggle_multi_select(value, event.button)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Handle list view selection (for single-select)."""
+        """Handle list view selection."""
+        list_id = event.list_view.id
+
+        # Handle navigation actions
+        if list_id == "nav-actions":
+            if event.item.id == "nav-next":
+                self._go_next()
+            elif event.item.id == "nav-skip":
+                self._skip_step()
+            elif event.item.id == "nav-back":
+                # Check if back is enabled (not on first step)
+                if self._current_step > 0:
+                    self._go_back()
+
         # Check if it's an option list (IDs are now like "option-list-provider")
-        if event.list_view.id and event.list_view.id.startswith("option-list-"):
-            # Don't auto-advance on selection, wait for Next button
+        elif list_id and list_id.startswith("option-list-"):
+            # Don't auto-advance on selection, wait for next action
             pass
 
     def on_input_submitted(self, event: Input.Submitted) -> None:

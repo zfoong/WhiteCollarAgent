@@ -83,7 +83,7 @@ Categories: `[fact]`, `[preference]`, `[event]`, `[decision]`, `[learning]`
 
 **Output:**
 ```
-[2026-02-09 06:33:10] [fact] Tham Yik Foong is an AI researcher at CraftOS
+[2026-02-09 06:33:10] [fact] John is an AI researcher at CraftOS
 ```
 
 Note: Get actual names from existing MEMORY.md. Never use "user", "conversation partner", or pronouns.
@@ -106,8 +106,8 @@ Note: Get actual names from existing MEMORY.md. Never use "user", "conversation 
 **Batch 1 (50 lines):**
 - Line 1: DISCARD (greeting)
 - Line 2: DISCARD (agent message)
-- Line 3: SAVE → `[2026-02-09 06:33:10] [fact] Tham Yik Foong is an AI researcher`
-- Line 4: SAVE → `[2026-02-09 06:33:10] [event] Tham Yik Foong has a meeting with John from Company ABC on 15/2/2026, with unknown location`
+- Line 3: SAVE → `[2026-02-09 06:33:10] [fact] John is an AI researcher`
+- Line 4: SAVE → `[2026-02-09 06:33:10] [event] John has a meeting with Sarah from Company ABC on 15/2/2026, with unknown location`
 - Lines 5-50: DISCARD (routine)
 
 **Todo update after batch 1:**

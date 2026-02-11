@@ -33,7 +33,7 @@ IMPORTANT GUIDELINES:
 After gathering information:
 1. Read agent_file_system/USER.md
 2. Update USER.md with the collected information using stream_edit
-3. If they named the agent, update agent_file_system/AGENT.md
+3. You are free to add extra information provided by user while respecting the md file format
 4. Send a summary message of what you learned
 5. End the task with task_end
 

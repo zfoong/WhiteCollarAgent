@@ -9,7 +9,3 @@ DO NOT copy and paste events here: This memory file only stores distilled memory
 
 ## Memory
 
-[2026-02-09 22:00:19] [preference] User requested weather information for Fukuoka, Japan
-[2026-02-10 01:04:37] [preference] User requested weather information for Fukuoka and Shanghai
-[2026-02-10 01:08:21] [preference] User requested flight search from Fukuoka to Tokyo on 15 Feb 2026
-
