@@ -1,21 +1,21 @@
 ## Identity
-- **Full Name:** (Ask the users for info)
-- **Preferred Name:** (Ask the users for info)
-- **Email:** (Ask the users for info)
-- **Location:** (Ask the users for info)
-- **Timezone:** (Ask the users for info)
-- **Job:** (Ask the users for info)
-- **Other:** <A big paragraph of other information, like age, gender, date of birth> (Ask the users for info)
+- **Full Name:** Dude
+- **Preferred Name:** Dude
+- **Email:** Not provided
+- **Location:** Fukuoka, Japan
+- **Timezone:** JST (Japan Standard Time)
+- **Job:** CEO
+- **Other:** Developing AI agents, based in Fukuoka
 
 
 ## Communication Preferences
-- **Preferred Tone:** (Ask the users for info)
-- **Response Style:** (Ask the users for info)
+- **Preferred Tone:** Casual
+- **Response Style:** Brief to balanced (user prefers casual communication)
 
 ## Agent Interaction
-- **Prefer Proactive Assistance:** <low | medium | high> (Ask the users for info)
-- **Approval Required For:** <simple | complex | proactive | all> (Ask the users for info)
+- **Prefer Proactive Assistance:** High (user explicitly requested proactive assistance)
+- **Approval Required For:** File deletion and major changes (user trusts agent to take initiative but wants approval for important file operations)
 
 ## Personality
 
-<A big paragraph to analyze the users' personality> (Ask the users for info)
+Dude is a CEO based in Fukuoka, Japan who is actively developing AI agents. He has a casual, friendly personality and prefers informal communication. He's trusting and comfortable giving the agent significant autonomy, showing confidence in AI capabilities. His approach is laid-back yet professional - he wants proactive assistance but with appropriate safeguards for important operations. As someone working on AI development himself, he understands the technology and is open to collaborative working relationships with AI assistants.

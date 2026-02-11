@@ -88,6 +88,11 @@ async def main_async() -> None:
         llm_provider=provider,
         deferred_init=not has_valid_key,
     )
+
+    # Initialize onboarding manager with agent reference
+    from core.onboarding.manager import onboarding_manager
+    onboarding_manager.set_agent(agent)
+
     await agent.run(provider=provider, api_key=api_key)
 
 
