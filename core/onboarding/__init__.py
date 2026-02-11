@@ -9,7 +9,7 @@ Provides:
 """
 
 from core.onboarding.config import (
-    ONBOARDING_STATE_FILE,
+    ONBOARDING_CONFIG_FILE,
     HARD_ONBOARDING_STEPS,
     DEFAULT_AGENT_NAME,
 )
@@ -17,7 +17,7 @@ from core.onboarding.state import OnboardingState, load_state, save_state
 from core.onboarding.manager import OnboardingManager, onboarding_manager
 
 __all__ = [
-    "ONBOARDING_STATE_FILE",
+    "ONBOARDING_CONFIG_FILE",
     "HARD_ONBOARDING_STEPS",
     "DEFAULT_AGENT_NAME",
     "OnboardingState",
