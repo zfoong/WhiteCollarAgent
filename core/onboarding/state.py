@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 import json
 
-from core.onboarding.config import ONBOARDING_STATE_FILE
+from core.onboarding.config import ONBOARDING_CONFIG_FILE
 from core.logger import logger
 
 
@@ -72,12 +72,12 @@ class OnboardingState:
         )
 
 
-def load_state(state_file: Path = ONBOARDING_STATE_FILE) -> OnboardingState:
+def load_state(state_file: Path = ONBOARDING_CONFIG_FILE) -> OnboardingState:
     """
     Load onboarding state from JSON file.
 
     Args:
-        state_file: Path to the state file (defaults to ONBOARDING_STATE_FILE)
+        state_file: Path to the state file (defaults to ONBOARDING_CONFIG_FILE)
 
     Returns:
         OnboardingState object (empty state if file doesn't exist or is invalid)
@@ -96,13 +96,13 @@ def load_state(state_file: Path = ONBOARDING_STATE_FILE) -> OnboardingState:
         return OnboardingState()
 
 
-def save_state(state: OnboardingState, state_file: Path = ONBOARDING_STATE_FILE) -> bool:
+def save_state(state: OnboardingState, state_file: Path = ONBOARDING_CONFIG_FILE) -> bool:
     """
     Save onboarding state to JSON file.
 
     Args:
         state: OnboardingState object to save
-        state_file: Path to the state file (defaults to ONBOARDING_STATE_FILE)
+        state_file: Path to the state file (defaults to ONBOARDING_CONFIG_FILE)
 
     Returns:
         True if save succeeded, False otherwise

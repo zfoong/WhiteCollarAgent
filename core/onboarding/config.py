@@ -4,10 +4,10 @@ Configuration constants for the onboarding module.
 """
 
 from pathlib import Path
-from core.config import AGENT_FILE_SYSTEM_PATH
+from core.config import PROJECT_ROOT
 
-# Onboarding state persistence file
-ONBOARDING_STATE_FILE: Path = AGENT_FILE_SYSTEM_PATH / "ONBOARDING_STATE.json"
+# Onboarding config file (in core/config/ with other config files)
+ONBOARDING_CONFIG_FILE: Path = PROJECT_ROOT / "core" / "config" / "onboarding_config.json"
 
 # Default values
 DEFAULT_AGENT_NAME: str = "Agent"
