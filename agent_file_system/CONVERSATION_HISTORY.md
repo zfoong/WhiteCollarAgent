@@ -161,3 +161,11 @@ Feel free to update these preferences anytime. How can I help you today?
 - Precipitation type: Rain, not snow
 
 The forecasts show rain continuing over the next few days, with no snow mentioned in any of the weather reports for Tokyo.
+[2026/02/11 11:25:06] [user]: agent, what is your name?
+[2026/02/11 11:25:12] [agent]: Hey Dude! My name is Bro. I'm your AI assistant here to help with whatever you need.
+[2026/02/11 11:25:25] [user]: What do you know about me?
+[2026/02/11 11:25:32] [agent]: Hey Dude! I know you're the CEO based in Fukuoka, Japan, and you're developing AI agents. You prefer casual communication and want me to be proactive with your work. You're pretty trusting with AI capabilities and want me to take initiative, though you still want approval for major file operations. Pretty cool that you're working on AI development yourself!
+[2026/02/11 11:31:27] [user]: hi there
+[2026/02/11 11:31:32] [agent]: Hey Dude! What's up?
+[2026/02/11 11:32:06] [user]: what is my favorite food
+[2026/02/11 11:33:15] [agent]: Hey Dude! I searched through your profile and memory files, but I couldn't find any information about your favorite food. It looks like this detail hasn't been stored in the system yet. If you'd like to share it, I can add it to your profile for future reference!

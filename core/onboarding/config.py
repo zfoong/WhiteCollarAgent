@@ -11,14 +11,13 @@ ONBOARDING_CONFIG_FILE: Path = PROJECT_ROOT / "core" / "config" / "onboarding_co
 
 # Default values
 DEFAULT_AGENT_NAME: str = "Agent"
-DEFAULT_USER_NAME: str = ""
 
 # Hard onboarding steps configuration
 # Each step has: id, required (must complete), title (display name)
+# Note: User name is collected during soft onboarding (conversational interview)
 HARD_ONBOARDING_STEPS = [
     {"id": "provider", "required": True, "title": "LLM Provider"},
     {"id": "api_key", "required": True, "title": "API Key"},
-    {"id": "user_name", "required": False, "title": "Your Name"},
     {"id": "agent_name", "required": False, "title": "Agent Name"},
     {"id": "mcp", "required": False, "title": "MCP Servers"},
     {"id": "skills", "required": False, "title": "Skills"},

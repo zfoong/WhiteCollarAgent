@@ -9,7 +9,6 @@ from core.onboarding.interfaces.base import OnboardingInterface
 from core.onboarding.interfaces.steps import (
     ProviderStep,
     ApiKeyStep,
-    UserNameStep,
     AgentNameStep,
     MCPStep,
     SkillsStep,
@@ -29,10 +28,11 @@ class TUIHardOnboarding(OnboardingInterface):
     Presents a step-by-step wizard for initial configuration:
     1. LLM Provider selection
     2. API Key input
-    3. User name (optional)
-    4. Agent name (optional)
-    5. MCP server selection (optional)
-    6. Skills selection (optional)
+    3. Agent name (optional)
+    4. MCP server selection (optional)
+    5. Skills selection (optional)
+
+    Note: User name is collected during soft onboarding (conversational interview).
     """
 
     def __init__(self, app: "CraftApp"):
@@ -42,7 +42,6 @@ class TUIHardOnboarding(OnboardingInterface):
         self._steps = [
             ProviderStep(),
             None,  # ApiKeyStep - created dynamically based on provider
-            UserNameStep(),
             AgentNameStep(),
             MCPStep(),
             SkillsStep(),
@@ -116,9 +115,8 @@ class TUIHardOnboarding(OnboardingInterface):
         self._app._saved_api_keys[provider] = api_key
 
         # Mark hard onboarding as complete
-        user_name = self._collected_data.get("user_name", "")
         agent_name = self._collected_data.get("agent_name", "Agent")
-        onboarding_manager.mark_hard_complete(user_name=user_name, agent_name=agent_name)
+        onboarding_manager.mark_hard_complete(agent_name=agent_name)
 
         logger.info("[ONBOARDING] Hard onboarding completed successfully")
 

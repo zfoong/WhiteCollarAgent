@@ -962,10 +962,11 @@ Skills are automatically selected during task creation based on the task descrip
             return "agent"
         return "agent"
 
-    @staticmethod
-    def _label_for_style(style: str, kind: str) -> str:
+    def _label_for_style(self, style: str, kind: str) -> str:
         if style == "agent":
-            return "Agent"
+            # Use agent name from onboarding config
+            from core.onboarding.manager import onboarding_manager
+            return onboarding_manager.state.agent_name or "Agent"
         if style == "system":
             return "System"
         if style == "user":

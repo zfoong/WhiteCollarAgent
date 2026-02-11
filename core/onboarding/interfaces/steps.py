@@ -172,25 +172,6 @@ class ApiKeyStep:
         return self.PROVIDER_ENV_VARS.get(self.provider)
 
 
-class UserNameStep:
-    """User name input step."""
-
-    name = "user_name"
-    title = "Your Name"
-    description = "What should the agent call you? (optional)"
-    required = False
-
-    def get_options(self) -> List[StepOption]:
-        return []
-
-    def validate(self, value: Any) -> tuple[bool, Optional[str]]:
-        # Optional, any string is valid
-        return True, None
-
-    def get_default(self) -> str:
-        return ""
-
-
 class AgentNameStep:
     """Agent name configuration step."""
 
@@ -285,7 +266,6 @@ class SkillsStep:
 ALL_STEPS = [
     ProviderStep,
     ApiKeyStep,
-    UserNameStep,
     AgentNameStep,
     MCPStep,
     SkillsStep,
