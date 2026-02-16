@@ -31,7 +31,6 @@ class Action:
         platform_overrides: dict[str, dict] = {},
         requirements: Optional[List[str]] = None,
         timeout: Optional[int] = None
-
     ):
         """
         Initialize a new :class:`Action` definition.
