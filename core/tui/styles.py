@@ -105,7 +105,7 @@ TextLog {
 }
 
 #menu-panel {
-    width: 95;
+    width: 92;
     max-width: 100%;
     max-height: 95%;
     border: none;

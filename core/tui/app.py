@@ -128,6 +128,8 @@ class CraftApp(App):
         self._settings_provider: str = provider
         # Track if soft onboarding has been triggered this session
         self._soft_onboarding_triggered: bool = False
+        # Flag to block provider change events during settings initialization
+        self._settings_init_complete: bool = True
 
     def _is_api_key_configured(self) -> bool:
         """Check if an API key is configured for the current provider."""
@@ -158,7 +160,7 @@ class CraftApp(App):
             Container(
                 Static(self._header_text(), id="menu-header"),
                 Vertical(
-                    Static("CraftBot V1.2.0. Your Personal AI Assistant that lives inside your machine.", id="provider-hint"),
+                    Static("CraftBot V1.2.0. Your Personal AI Assistant that works 24/7 in your machine.", id="provider-hint"),
                     Static(
                         self._get_menu_hint(),
                         id="menu-hint",
@@ -277,6 +279,9 @@ class CraftApp(App):
 
         # Hide the main menu panel while settings are open
         self.show_settings = True
+
+        # Block provider change events during initialization
+        self._settings_init_complete = False
 
         # Reset settings provider tracking to current provider
         self._settings_provider = self._provider
@@ -507,8 +512,23 @@ class CraftApp(App):
             if 0 <= idx < len(self._SETTINGS_PROVIDER_VALUES):
                 provider_value = self._SETTINGS_PROVIDER_VALUES[idx]
 
+        new_api_key = api_key_input.value
+
+        # Check if API key is required for the selected provider
+        api_key_required = provider_value not in ("remote",)  # Ollama doesn't need API key
+
+        if api_key_required and not new_api_key:
+            # Require API key input - don't fall back to env vars
+            provider_name = self._PROVIDER_API_KEY_NAMES.get(provider_value, provider_value)
+            self.notify(
+                f"API key required for {provider_name}. Please enter an API key or press Cancel.",
+                severity="error",
+                timeout=4,
+            )
+            return
+
         self._provider = provider_value
-        self._api_key = api_key_input.value
+        self._api_key = new_api_key
 
         # Save the API key for this provider (so it persists when switching providers)
         if self._api_key:
@@ -526,7 +546,7 @@ class CraftApp(App):
 
             self.notify("Settings saved!", severity="information", timeout=2)
         else:
-            self.notify("API key is empty - settings not saved to file", severity="warning", timeout=3)
+            self.notify("Settings saved (using existing API key)", severity="information", timeout=2)
 
         self._close_settings()
 
@@ -931,35 +951,39 @@ class CraftApp(App):
             label.update(f"{prefix}{text}")
 
     def _init_settings_provider_selection(self) -> None:
-        if not self.query("#provider-options"):
-            return
+        try:
+            if not self.query("#provider-options"):
+                return
 
-        providers = self.query_one("#provider-options", ListView)
-        items = list(providers.children)
-        if not items:
-            return
+            providers = self.query_one("#provider-options", ListView)
+            items = list(providers.children)
+            if not items:
+                return
 
-        initial_index = 0
-        for i, value in enumerate(self._SETTINGS_PROVIDER_VALUES):
-            if value == self._provider:
-                initial_index = i
-                break
+            initial_index = 0
+            for i, value in enumerate(self._SETTINGS_PROVIDER_VALUES):
+                if value == self._provider:
+                    initial_index = i
+                    break
 
-        initial_index = min(initial_index, len(items) - 1)
-        providers.index = initial_index
+            initial_index = min(initial_index, len(items) - 1)
+            providers.index = initial_index
 
-        # Initialize action list selection
-        if self.query("#settings-actions-list"):
-            actions = self.query_one("#settings-actions-list", ListView)
-            if actions.index is None:
-                actions.index = 0
+            # Initialize action list selection
+            if self.query("#settings-actions-list"):
+                actions = self.query_one("#settings-actions-list", ListView)
+                if actions.index is None:
+                    actions.index = 0
 
-        # Apply prefixes after refresh
-        self._refresh_provider_prefixes()
-        self._refresh_settings_actions_prefixes()
+            # Apply prefixes after refresh
+            self._refresh_provider_prefixes()
+            self._refresh_settings_actions_prefixes()
 
-        # Focus provider list by default
-        providers.focus()
+            # Focus provider list by default
+            providers.focus()
+        finally:
+            # Always enable provider change events after initialization
+            self._settings_init_complete = True
 
     # ────────────────────────────── list events ─────────────────────────────
 
@@ -974,6 +998,10 @@ class CraftApp(App):
 
     def _on_provider_selection_changed(self) -> None:
         """Handle provider selection change in settings."""
+        # Skip during initialization to prevent auto-highlight from changing state
+        if not self._settings_init_complete:
+            return
+
         if not self.query("#provider-options"):
             return
 
