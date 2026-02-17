@@ -474,6 +474,7 @@ class ActionExecutor:
         frozen = getattr(sys, "frozen", False)
 
         # Pre-install declared pip requirements
+        requirements = getattr(action, "requirements", [])
         if requirements and execution_mode == "internal":
             _ensure_requirements(requirements)
 

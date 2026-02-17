@@ -2,7 +2,7 @@
 """
 MCP Action Adapter Module
 
-Converts MCP tools to WhiteCollarAgent actions, enabling seamless integration
+Converts MCP tools to CraftBot actions, enabling seamless integration
 of MCP tools with the existing action system.
 
 IMPORTANT: The action system uses exec() on code STRINGS, not direct function calls.
@@ -24,7 +24,7 @@ from core.mcp.mcp_server import MCPTool
 
 class MCPActionAdapter:
     """
-    Converts MCP tools to RegisteredAction objects for the WhiteCollarAgent action system.
+    Converts MCP tools to RegisteredAction objects for the CraftBot action system.
 
     The adapter handles:
     - JSON Schema conversion (MCP format -> action input_schema format)
@@ -35,7 +35,7 @@ class MCPActionAdapter:
     @staticmethod
     def convert_json_schema_to_input_schema(mcp_schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Convert MCP JSON Schema to WhiteCollarAgent input_schema format.
+        Convert MCP JSON Schema to CraftBot input_schema format.
 
         MCP format (JSON Schema):
         {

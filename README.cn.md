@@ -3,17 +3,17 @@
 </div>
 <br>
 
-<h1 align="center">白领AI代理（White Collar Agent）</h1>
+<h1 align="center">白领AI代理（CraftBot）</h1>
 
 <div align="center">
   <img src="https://img.shields.io/badge/OS-Windows-blue?logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/OS-Linux-yellow?logo=linux&logoColor=black" alt="Linux">
 
-  <a href="https://github.com/zfoong/WhiteCollarAgent">
-    <img src="https://img.shields.io/github/stars/zfoong/WhiteCollarAgent?style=social" alt="GitHub Repo stars">
+  <a href="https://github.com/zfoong/CraftBot">
+    <img src="https://img.shields.io/github/stars/zfoong/CraftBot?style=social" alt="GitHub Repo stars">
   </a>
 
-  <img src="https://img.shields.io/github/license/zfoong/WhiteCollarAgent" alt="License">
+  <img src="https://img.shields.io/github/license/zfoong/CraftBot" alt="License">
 
   <a href="https://discord.gg/ZN9YHc37HG">
     <img src="https://img.shields.io/badge/Discord-%E5%8A%A0%E5%85%A5%E7%A4%BE%E5%8C%BA-5865F2?logo=discord&logoColor=white" alt="Discord">
@@ -29,7 +29,7 @@
 
 ## 🚀 概览
 
-**White Collar Agent** 是一个极简但强大的computer-use AI 代理。它能够完成一系列复杂的电脑端与浏览器端任务。
+**CraftBot** 是一个极简但强大的computer-use AI 代理。它能够完成一系列复杂的电脑端与浏览器端任务。
 它可以自主理解任务、规划行动并执行操作，以实现复杂目标。
 它会根据任务性质在 CLI 与 GUI 模式之间切换。
 本代码也可作为你构建自定义AI代理的基础框架。
@@ -81,8 +81,8 @@
 ### 安装
 
 ```bash
-git clone https://github.com/zfoong/White-Collar-Agent.git
-cd White-Collar-Agent
+git clone https://github.com/zfoong/CraftBot.git
+cd CraftBot
 conda env create -f environment.yml
 ```
 
@@ -104,7 +104,7 @@ export GOOGLE_API_KEY=<YOUR_KEY_HERE>
 python -m core.main
 ```
 
-这会启动内置的 **White Collar Agent**，让你可以与它沟通：
+这会启动内置的 **CraftBot**，让你可以与它沟通：
 
 1. 与AI代理对话
 2. 让它执行复杂的任务序列
@@ -124,7 +124,7 @@ repository root 目录包含 Docker 配置：使用 Python 3.10、关键系统�
 在repository root执行：
 
 ```bash
-docker build -t white-collar-agent .
+docker build -t craftbot .
 ```
 
 ### 运行container
@@ -132,13 +132,13 @@ docker build -t white-collar-agent .
 image默认会用 `python -m core.main` 启动AI代理。要交互式运行：
 
 ```bash
-docker run --rm -it white-collar-agent
+docker run --rm -it craftbot
 ```
 
 如果需要传入环境变量，可使用 env 文件（例如基于 `.env.example`）：
 
 ```bash
-docker run --rm -it --env-file .env white-collar-agent
+docker run --rm -it --env-file .env craftbot
 ```
 
 使用 `-v` 挂载需要在container外持久化的目录（例如数据或缓存文件夹），并根据部署需要调整端口或额外参数。该容器内置 OCR（`tesseract`）、屏幕自动化（`pyautogui`、`mss`、X11 工具与虚拟帧缓冲）以及常见 HTTP 客户端等系统依赖，使代理能够在容器中处理文件、网络 API 与 GUI 自动化。
@@ -154,7 +154,7 @@ GUI 操作（鼠标/键盘事件、截图）需要 X11 服务器。你可以连�
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v $(pwd)/data:/app/core/data \
-    white-collar-agent
+    craftbot
   ```
 
   如需让代理读写更多目录，可添加额外的 `-v` 挂载。
@@ -162,7 +162,7 @@ GUI 操作（鼠标/键盘事件、截图）需要 X11 服务器。你可以连�
 * 使用虚拟显示进行headless运行：
 
   ```bash
-    docker run --rm -it --env-file .env white-collar-agent bash -lc "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && exec python -m core.main"
+    docker run --rm -it --env-file .env craftbot bash -lc "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && exec python -m core.main"
   ```
 
 默认情况下image会使用 Python 3.10，并打包了 `environment.yml`/`requirements.txt` 中的 Python 依赖，因此 `python -m core.main` 可开箱即用。
@@ -238,4 +238,4 @@ asyncio.run(agent.run())
 ## ⭐ 致谢
 
 由 [CraftOS](https://craftos.net/) 与贡献者 [@zfoong](https://github.com/zfoong) 及 [@ahmad-ajmal](https://github.com/ahmad-ajmal) 开发与维护。
-如果你觉得 **White Collar Agent** 有用，请给仓库点一个 ⭐ 并分享给更多人。
+如果你觉得 **CraftBot** 有用，请给仓库点一个 ⭐ 并分享给更多人。

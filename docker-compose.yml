@@ -67,7 +67,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: white-collar-agent
+    container_name: craftbot
     env_file:
       - .env
     environment:

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 class InternalActionInterface:
     """
     Provides static/class methods so it can be used without instantiation.
-    Allow agent to access internal functions of the WhiteCollarAgent framework
+    Allow agent to access internal functions of the CraftBot framework
     via actions.
     """
 

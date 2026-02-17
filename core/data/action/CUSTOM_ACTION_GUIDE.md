@@ -1,6 +1,6 @@
 # Custom Action Development Guide
 
-This guide provides comprehensive instructions for creating custom actions in WhiteCollarAgent. Actions are the primary way agents execute work and interact with the system.
+This guide provides comprehensive instructions for creating custom actions in CraftBot. Actions are the primary way agents execute work and interact with the system.
 
 ---
 
@@ -22,7 +22,7 @@ This guide provides comprehensive instructions for creating custom actions in Wh
 
 ## Overview
 
-Actions in WhiteCollarAgent are Python functions decorated with `@action` that define executable operations. When the agent needs to perform a task, it selects and executes appropriate actions based on their descriptions and schemas.
+Actions in CraftBot are Python functions decorated with `@action` that define executable operations. When the agent needs to perform a task, it selects and executes appropriate actions based on their descriptions and schemas.
 
 **Key Concepts:**
 - **Action**: A single executable operation with defined inputs and outputs

@@ -1,7 +1,7 @@
 
 # Getting started
 
-This page walks you through installing and running **White Collar Agent** locally (Conda) or via Docker.
+This page walks you through installing and running **CraftBot** locally (Conda) or via Docker.
 
 ---
 
@@ -18,8 +18,8 @@ This page walks you through installing and running **White Collar Agent** locall
 ### 1) Clone the repository
 
 ```bash
-git clone https://github.com/zfoong/WhiteCollarAgent.git
-cd WhiteCollarAgent
+git clone https://github.com/zfoong/CraftBot.git
+cd CraftBot
 ````
 
 ### 2) Create the Conda environment
@@ -72,7 +72,7 @@ Once it launches, you can:
 From the repository root:
 
 ```bash
-docker build -t white-collar-agent .
+docker build -t craftbot .
 ```
 
 ### 2) Run the container
@@ -80,14 +80,14 @@ docker build -t white-collar-agent .
 Run interactively:
 
 ```bash
-docker run --rm -it white-collar-agent
+docker run --rm -it craftbot
 ```
 
 If you want to supply environment variables via a file (for example, based on `.env.example`):
 
 ```bash
 cp .env.example .env
-docker run --rm -it --env-file .env white-collar-agent
+docker run --rm -it --env-file .env craftbot
 ```
 
 ### 3) Enable GUI / screen automation (optional)
@@ -101,13 +101,13 @@ docker run --rm -it \
   -e DISPLAY=$DISPLAY \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v $(pwd)/data:/app/core/data \
-  white-collar-agent
+  craftbot
 ```
 
 **B) Run headlessly with a virtual display (Xvfb)**
 
 ```bash
-docker run --rm -it --env-file .env white-collar-agent \
+docker run --rm -it --env-file .env craftbot \
   bash -lc "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && exec python -m core.main"
 ```
 

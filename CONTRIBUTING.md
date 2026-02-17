@@ -1,7 +1,7 @@
 > [!IMPORTANT]
 > **Note for contributors:** When branching out, create a new branch from the `dev` branch.
 
-# 🚀 Welcome to **White Collar Agent**! 
+# 🚀 Welcome to **CraftBot**! 
 
 You are seeing this probably because you want to contribute to our project, and we welcome you!
 To ensure contributor feels welcome, we have this guide to help you get started and ensure your contributions can be efficiently integrated into the project.
@@ -9,7 +9,7 @@ To ensure contributor feels welcome, we have this guide to help you get started 
 ## 🌟 Links
 
 - [Discord Community](https://discord.gg/W8jdMKdE)  
-- [Issue Tracker](https://github.com/zfoong/WhiteCollarAgent/issues)
+- [Issue Tracker](https://github.com/zfoong/CraftBot/issues)
 
 ## 1. 🚀 Ways to Contribute
 
@@ -24,7 +24,7 @@ Here are all the things you to contribute to the community.
 ## 📫 There are several ways to collaborate with the team and community:
 
 ### GitHub Collaboration
-- [Open an issue](https://github.com/zfoong/WhiteCollarAgent/issues) for bug reports, feature requests, or discussions
+- [Open an issue](https://github.com/zfoong/CraftBot/issues) for bug reports, feature requests, or discussions
 - Submit pull requests to contribute code or documentation
 - Join ongoing discussions in existing issues and PRs
 
@@ -45,11 +45,11 @@ For faster responses, consider using our Discord channel where the whole communi
 
 ### Fork and Clone
 
-1. Fork the [**WhiteCollarAgent**](https://github.com/zfoong/WhiteCollarAgent) repository
+1. Fork the [**CraftBot**](https://github.com/zfoong/CraftBot) repository
 2. Clone your fork:
 ```shell
-git clone https://github.com/<your-github-username>/WhiteCollarAgent.git
-cd WhiteCollarAgent
+git clone https://github.com/<your-github-username>/CraftBot.git
+cd CraftBot
 ```
 
 ### Create a Branch
@@ -85,7 +85,7 @@ git push origin your-branch-name
 ```
 
 2. Create a Pull Request:
-   - Go to the [**WhiteCollarAgent** repository](https://github.com/zfoong/WhiteCollarAgent)
+   - Go to the [**CraftBot** repository](https://github.com/zfoong/CraftBot)
    - Click "Compare & Pull Request" and open a PR against dev branch
    - Fill in the PR template with details about your changes
 
@@ -99,7 +99,7 @@ git push origin your-branch-name
 
 ## 6. 📫 To Get Help
 
-- Open an [issue](https://github.com/zfoong/WhiteCollarAgent)
+- Open an [issue](https://github.com/zfoong/CraftBot)
 - Join our Discord community
 
-Thank you for contributing to **WhiteCollarAgent**! 🌟
+Thank you for contributing to **CraftBot**! 🌟

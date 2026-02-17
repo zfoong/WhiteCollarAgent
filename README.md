@@ -12,11 +12,11 @@
   <img src="https://img.shields.io/badge/OS-Windows-blue?logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/OS-Linux-yellow?logo=linux&logoColor=black" alt="Linux">
   
-  <a href="https://github.com/zfoong/WhiteCollarAgent">
-    <img src="https://img.shields.io/github/stars/zfoong/WhiteCollarAgent?style=social" alt="GitHub Repo stars">
+  <a href="https://github.com/zfoong/CraftBot">
+    <img src="https://img.shields.io/github/stars/zfoong/CraftBot?style=social" alt="GitHub Repo stars">
   </a>
 
-  <img src="https://img.shields.io/github/license/zfoong/WhiteCollarAgent" alt="License">
+  <img src="https://img.shields.io/github/license/zfoong/CraftBot" alt="License">
 
   <a href="https://discord.gg/ZN9YHc37HG">
     <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" alt="Discord">
@@ -33,7 +33,7 @@
 
 ## 🚀 Overview
 <h3 align="center">
-White Collar Agent is your Personal AI Assistant that lives inside your machine and works 24/7 for you. 
+CraftBot is your Personal AI Assistant that lives inside your machine and works 24/7 for you. 
 </h3>
 
 It can autonomously interpret tasks, plan actions, and execute actions to achieve complex goals. <br/>	
@@ -72,8 +72,8 @@ This is an open-source project and is still in development, so we welcome any su
 
 ### Installation
 ```bash
-git clone https://github.com/zfoong/WhiteCollarAgent.git
-cd WhiteCollarAgent
+git clone https://github.com/zfoong/CraftBot.git
+cd CraftBot
 conda env create -f environment.yml
 ```
 
@@ -92,7 +92,7 @@ Run:
 python start.py
 ```
 
-This executes the built-in **White Collar Agent**, that you can communicate to:
+This executes the built-in **CraftBot**, that you can communicate to:
 1. Talk to the agent  
 2. Ask it to perform complex series of tasks  
 3. Run command /help to seek help
@@ -201,7 +201,7 @@ Below are the setup instruction of running our agent with container.
 From the repository root:
 
 ```bash
-docker build -t white-collar-agent .
+docker build -t craftbot .
 ```
 
 ### Run the container
@@ -209,13 +209,13 @@ docker build -t white-collar-agent .
 The image is configured to launch the agent with `python -m core.main` by default. To run it interactively:
 
 ```bash
-docker run --rm -it white-collar-agent
+docker run --rm -it craftbot
 ```
 
 If you need to supply environment variables, pass an env file (for example, based on `.env.example`):
 
 ```bash
-docker run --rm -it --env-file .env white-collar-agent
+docker run --rm -it --env-file .env craftbot
 ```
 
 Mount any directories that should persist outside the container (such as data or cache folders) using `-v`, and adjust ports or additional flags as needed for your deployment. The container ships with system dependencies for OCR (`tesseract`), screen automation (`pyautogui`, `mss`, X11 utilities, and a virtual framebuffer), and common HTTP clients so the agent can work with files, network APIs, and GUI automation inside the container.
@@ -231,7 +231,7 @@ GUI actions (mouse/keyboard events, screenshots) require an X11 server. You can 
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v $(pwd)/data:/app/core/data \
-    white-collar-agent
+    craftbot
   ```
 
   Add extra `-v` mounts for any folders the agent should read/write.
@@ -239,7 +239,7 @@ GUI actions (mouse/keyboard events, screenshots) require an X11 server. You can 
 * Run headlessly with a virtual display:
 
   ```bash
-	docker run --rm -it --env-file .env white-collar-agent bash -lc "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && exec python -m core.main"
+	docker run --rm -it --env-file .env craftbot bash -lc "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && exec python -m core.main"
   ```
 
 By default the image uses Python 3.10 and bundles the Python dependencies from `environment.yml`/`requirements.txt`, so `python -m core.main` works out of the box.
@@ -314,4 +314,4 @@ This project is licensed under the [MIT License](LICENSE). You are free to use, 
 ## ⭐ Acknowledgements
 
 Developed and maintained by [CraftOS](https://craftos.net/) and contributors [@zfoong](https://github.com/zfoong) and [@ahmad-ajmal](https://github.com/ahmad-ajmal).  
-If you find **White Collar Agent** useful, please ⭐ the repository and share it with others!
+If you find **CraftBot** useful, please ⭐ the repository and share it with others!

@@ -160,7 +160,7 @@ class StdioTransport(MCPTransport):
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "WhiteCollarAgent",
+                    "name": "CraftBot",
                     "version": "1.0.0"
                 }
             })
@@ -362,7 +362,7 @@ class SSETransport(MCPTransport):
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "WhiteCollarAgent",
+                    "name": "CraftBot",
                     "version": "1.0.0"
                 }
             })
@@ -501,7 +501,7 @@ class WebSocketTransport(MCPTransport):
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "WhiteCollarAgent",
+                    "name": "CraftBot",
                     "version": "1.0.0"
                 }
             })

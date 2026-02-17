@@ -7,8 +7,8 @@ chroma_db_memory/
 core/chroma_db_actions/
 **/logs/
 workspace/
-white_collar_agent/external_tools/
-white_collar_agent/generated_task_document/
+craftbot/external_tools/
+craftbot/generated_task_document/
 **/__pycache__/
 **/rag_docs_actions/
 **/rag_docs_taskdocs/

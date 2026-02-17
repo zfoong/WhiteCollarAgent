@@ -633,9 +633,9 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
     sys.exit(0)
 
 # --- Docker helpers for frozen exe ---
-# GHCR image names (repo is zfoong/WhiteCollarAgent, GHCR lowercases)
-GHCR_DESKTOP_IMAGE = "ghcr.io/zfoong/whitecollagent-desktop:latest"
-GHCR_OMNIPARSER_IMAGE = "ghcr.io/zfoong/whitecollagent-omniparser:latest"
+# GHCR image names (repo is zfoong/CraftBot, GHCR lowercases)
+GHCR_DESKTOP_IMAGE = "ghcr.io/zfoong/craftbot-desktop:latest"
+GHCR_OMNIPARSER_IMAGE = "ghcr.io/zfoong/craftbot-omniparser:latest"
 
 def _docker_available() -> bool:
     """Check if Docker CLI is available and daemon is running."""

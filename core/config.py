@@ -24,7 +24,7 @@ MAX_TOKEN_PER_TASK: int = 6000000 # of tokens
 PROCESS_MEMORY_AT_STARTUP: bool = False  # Process EVENT_UNPROCESSED.md into MEMORY.md at startup
 MEMORY_PROCESSING_SCHEDULE_HOUR: int = 3  # Hour (0-23) to run daily memory processing
 
-# Credential storage mode (local-only in WhiteCollarAgent)
+# Credential storage mode (local-only in CraftBot)
 USE_REMOTE_CREDENTIALS: bool = False
 
 # OAuth client credentials

@@ -114,7 +114,7 @@ jobs:
             --noconfirm \
             --clean \
             --onefile \
-            --name WhiteCollarAgent \
+            --name CraftBot \
             --collect-submodules core \
             --collect-submodules agents \
             --collect-submodules decorators \
@@ -147,14 +147,14 @@ jobs:
       - name: Rename artifact
         shell: bash
         run: |
-          mv "dist/WhiteCollarAgent${{ matrix.ext }}" \
-             "dist/WhiteCollarAgent-${{ matrix.os_label }}${{ matrix.ext }}"
+          mv "dist/CraftBot${{ matrix.ext }}" \
+             "dist/CraftBot-${{ matrix.os_label }}${{ matrix.ext }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.os_label }}
-          path: dist/WhiteCollarAgent-${{ matrix.os_label }}${{ matrix.ext }}
+          path: dist/CraftBot-${{ matrix.os_label }}${{ matrix.ext }}
 
   # ──────────────────────────────────────────────
   # Create GitHub Release with all artifacts
@@ -181,8 +181,8 @@ jobs:
             ### Docker Compose (Recommended)
             Includes the agent, OmniParser, and GUI desktop VM — all in one.
             ```bash
-            git clone https://github.com/zfoong/WhiteCollarAgent.git
-            cd WhiteCollarAgent
+            git clone https://github.com/zfoong/CraftBot.git
+            cd CraftBot
             cp .env.example .env   # Edit with your API keys
             docker compose up
             ```

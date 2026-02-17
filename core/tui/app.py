@@ -158,7 +158,7 @@ class CraftApp(App):
             Container(
                 Static(self._logo_text(), id="menu-logo"),
                 Vertical(
-                    Static(f"Model Provider: {self._provider}", id="provider-hint"),
+                    Static("CraftBot V1.2.0. Your Personal AI Assistant that lives inside your machine and works 24/7 for you.", id="provider-hint"),
                     Static(
                         self._get_menu_hint(),
                         id="menu-hint",
@@ -211,17 +211,22 @@ class CraftApp(App):
 
     def _logo_text(self) -> Text:
         logo_lines = [
-            "░█░█░█░█░▀█▀░▀█▀░█▀▀░░░█▀▀░█▀█░█░░░█░░░█▀█░█▀▄░░░█▀█░█▀▀░█▀▀░█▀█░▀█▀",
-            "░█▄█░█▀█░░█░░░█░░█▀▀░░░█░░░█░█░█░░░█░░░█▀█░█▀▄░░░█▀█░█░█░█▀▀░█░█░░█░",
-            "░▀░▀░▀░▀░▀▀▀░░▀░░▀▀▀░░░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀░▀░░▀░",
+            " ██████╗██████╗  █████╗ ███████╗████████╗██████╗  ██████╗ ████████╗",
+            "██╔════╝██╔══██╗██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔═══██╗╚══██╔══╝",
+            "██║     ██████╔╝███████║█████╗     ██║   ██████╔╝██║   ██║   ██║   ",
+            "██║     ██╔══██╗██╔══██║██╔══╝     ██║   ██╔══██╗██║   ██║   ██║   ",
+            "╚██████╗██║  ██║██║  ██║██║        ██║   ██████╔╝╚██████╔╝   ██║   ",
+            " ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝        ╚═╝   ╚═════╝  ╚═════╝    ╚═╝   ",
         ]
         text = Text("\n".join(logo_lines), justify="center")
-        agent_len = len(logo_lines[0][-19:])
-        highlight_style = "#FF4F18"
+        # CRAFT = positions 0-40 (41 chars), BOT = positions 41+ (26 chars)
+        craft_len = 41
+        white_style = "white"
+        orange_style = "#FF4F18"
         offset = 0
         for line in logo_lines:
-            start_col = len(line) - agent_len
-            text.stylize(highlight_style, offset + start_col, offset + start_col + agent_len)
+            text.stylize(white_style, offset, offset + craft_len)
+            text.stylize(orange_style, offset + craft_len, offset + len(line))
             offset += len(line) + 1
         return text
 
@@ -482,9 +487,6 @@ class CraftApp(App):
         else:
             self.notify("API key is empty - settings not saved to file", severity="warning", timeout=3)
 
-        self.query_one("#provider-hint", Static).update(
-            f"Model Provider: {self._provider}"
-        )
         self._close_settings()
 
     def _start_chat(self) -> None:
@@ -570,10 +572,7 @@ class CraftApp(App):
         logger.info(f"[ONBOARDING] Triggered soft onboarding task: {task_id}")
 
     async def on_mount(self) -> None:  # pragma: no cover - UI lifecycle
-        # Set chat panel title to agent name from onboarding config
-        from core.onboarding.manager import onboarding_manager
-        agent_name = onboarding_manager.state.agent_name or "Agent"
-        self.query_one("#chat-panel").border_title = agent_name
+        self.query_one("#chat-panel").border_title = "Chat"
         self.query_one("#action-panel").border_title = "Action"
         self.query_one("#vm-footage-panel").border_title = "VM Footage"
 

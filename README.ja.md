@@ -3,17 +3,17 @@
 </div>
 <br>
 
-<h1 align="center">White Collar Agent</h1>
+<h1 align="center">CraftBot</h1>
 
 <div align="center">
   <img src="https://img.shields.io/badge/OS-Windows-blue?logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/OS-Linux-yellow?logo=linux&logoColor=black" alt="Linux">
   
-  <a href="https://github.com/zfoong/WhiteCollarAgent">
-    <img src="https://img.shields.io/github/stars/zfoong/WhiteCollarAgent?style=social" alt="GitHub Repo stars">
+  <a href="https://github.com/zfoong/CraftBot">
+    <img src="https://img.shields.io/github/stars/zfoong/CraftBot?style=social" alt="GitHub Repo stars">
   </a>
 
-  <img src="https://img.shields.io/github/license/zfoong/WhiteCollarAgent" alt="License">
+  <img src="https://img.shields.io/github/license/zfoong/CraftBot" alt="License">
 
   <a href="https://discord.gg/MRmjubap">
     <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" alt="Discord">
@@ -30,7 +30,7 @@
 
 ## 🚀 概要
 
-**White Collar Agent**は、複雑なコンピュータベースおよびブラウザベースのタスクを一連で実行できる、ミニマルでありながら強力なコンピュータ利用型AIエージェントです。  
+**CraftBot**は、複雑なコンピュータベースおよびブラウザベースのタスクを一連で実行できる、ミニマルでありながら強力なコンピュータ利用型AIエージェントです。  
 タスクを自律的に解釈し、アクションを計画し、複雑な目標を達成するためにアクションを実行できます。
 タスクの性質に応じて、CLIモードとGUIモードを切り替えることができます。 
 このコードは、独自のインテリジェントエージェントを構築するための基盤としても機能します。
@@ -79,8 +79,8 @@
 
 ### インストール
 ```bash
-git clone https://github.com/zfoong/White-Collar-Agent.git
-cd White-Collar-Agent
+git clone https://github.com/zfoong/CraftBot.git
+cd CraftBot
 conda env create -f environment.yml
 ```
 
@@ -100,7 +100,7 @@ CLIツールを実行:
 python -m core.main
 ```
 
-これにより、組み込みの**White Collar Agent**が実行され、以下のことができます:
+これにより、組み込みの**CraftBot**が実行され、以下のことができます:
 1. エージェントと会話  
 2. 複雑な一連のタスクを実行するよう依頼  
 3. /helpコマンドを実行してヘルプを求める
@@ -119,7 +119,7 @@ python -m core.main
 リポジトリのルートから:
 
 ```bash
-docker build -t white-collar-agent .
+docker build -t craftbot .
 ```
 
 ### コンテナの実行
@@ -127,13 +127,13 @@ docker build -t white-collar-agent .
 イメージはデフォルトで`python -m core.main`でエージェントを起動するように構成されています。対話的に実行するには:
 
 ```bash
-docker run --rm -it white-collar-agent
+docker run --rm -it craftbot
 ```
 
 環境変数を渡す必要がある場合は、envファイル（例えば`.env.example`に基づく）を渡します:
 
 ```bash
-docker run --rm -it --env-file .env white-collar-agent
+docker run --rm -it --env-file .env craftbot
 ```
 
 コンテナの外部で永続化する必要があるディレクトリ（データやキャッシュフォルダなど）は`-v`を使用してマウントし、デプロイに必要に応じてポートや追加のフラグを調整してください。コンテナには、OCR（`tesseract`）、画面自動化（`pyautogui`、`mss`、X11ユーティリティ、仮想フレームバッファ）、および一般的なHTTPクライアント用のシステム依存関係が含まれているため、エージェントはコンテナ内でファイル、ネットワークAPI、GUI自動化を扱うことができます。
@@ -149,7 +149,7 @@ GUIアクション（マウス/キーボードイベント、スクリーンシ�
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v $(pwd)/data:/app/core/data \
-    white-collar-agent
+    craftbot
   ```
 
   エージェントが読み書きする必要があるフォルダには、追加の`-v`マウントを追加してください。
@@ -157,7 +157,7 @@ GUIアクション（マウス/キーボードイベント、スクリーンシ�
 * 仮想ディスプレイでヘッドレス実行:
 
 ```bash
-docker run --rm -it --env-file .env white-collar-agent bash -lc "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && exec python -m core.main"
+docker run --rm -it --env-file .env craftbot bash -lc "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && exec python -m core.main"
 ```
 
 デフォルトでは、イメージはPython 3.10を使用し、`environment.yml`/`requirements.txt`からのPython依存関係をバンドルしているため、`python -m core.main`はそのまま動作します。
@@ -232,4 +232,4 @@ asyncio.run(agent.run())
 ## ⭐ 謝辞
 
 [CraftOS](https://craftos.net/)および貢献者[@zfoong](https://github.com/zfoong)と[@ahmad-ajmal](https://github.com/ahmad-ajmal)によって開発・維持されています。  
-**White Collar Agent**が役に立つと思われた場合は、リポジトリに⭐をつけて、他の人と共有してくださると嬉しいです！
+**CraftBot**が役に立つと思われた場合は、リポジトリに⭐をつけて、他の人と共有してくださると嬉しいです！

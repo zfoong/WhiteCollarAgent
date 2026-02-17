@@ -2,7 +2,7 @@
 """
 Skill System Module
 
-Provides skill management for WhiteCollarAgent, including:
+Provides skill management for CraftBot, including:
 - SkillConfig: Configuration dataclasses
 - SkillLoader: SKILL.md parsing
 - SkillManager: Singleton for skill lifecycle management
