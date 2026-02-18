@@ -1,20 +1,19 @@
 ## Identity
-- **Full Name:** Foong
-- **Preferred Name:** Foong
+- **Full Name:** (Ask the users for info)
+- **Preferred Name:** (Ask the users for info)
 - **Email:** (Ask the users for info)
-- **Location:** Fukuoka, Japan (originally from Malaysia)
-- **Timezone:** Japan Standard Time (JST/UTC+9)
-- **Job:** AI Researcher
-- **Other:** Developing AI agents
+- **Location:** (Ask the users for info)
+- **Timezone:** (Ask the users for info)
+- **Job:** (Ask the users for info)
 
 ## Communication Preferences
-- **Preferred Tone:** Friendly
+- **Preferred Tone:** (Ask the users for info)
 - **Response Style:** (Ask the users for info)
 
 ## Agent Interaction
-- **Prefer Proactive Assistance:** High
-- **Approval Required For:** Deletion actions
+- **Prefer Proactive Assistance:** (Ask the users for info)
+- **Approval Required For:** (Ask the users for info)
 
 ## Personality
 
-AI researcher with a friendly approach. Enjoys proactive assistance and is comfortable with technology development. Originally from Malaysia, now based in Fukuoka, Japan.
+(Ask the users for info)
