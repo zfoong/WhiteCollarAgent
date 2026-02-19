@@ -139,8 +139,7 @@ class CLIFormatter:
         """Format action start message."""
         color = cls._color("action")
         reset = cls._reset()
-        indent = "  " if is_sub_action else ""
-        return f"{color}{indent}[{cls.ICON_RUNNING}] Running: {action_name}{reset}"
+        return f"{color}[{cls.ICON_RUNNING}] Running: {action_name}{reset}"
 
     @classmethod
     def format_action_end(
@@ -151,8 +150,7 @@ class CLIFormatter:
         # Always use action color (gray) for consistency
         color = cls._color("action")
         reset = cls._reset()
-        indent = "  " if is_sub_action else ""
-        return f"{color}{indent}[{icon}] {action_name}{reset}"
+        return f"{color}[{icon}] {action_name}{reset}"
 
     @classmethod
     def format_error(cls, message: str) -> str:
@@ -182,6 +180,10 @@ class CLIFormatter:
         reset = cls._reset()
         return f"\n{color}=== {text} ==={reset}\n"
 
+    # Version and tagline
+    VERSION = "V1.2.0"
+    TAGLINE = "Your Personal AI Assistant that works 24/7 in your machine."
+
     @classmethod
     def print_logo(cls) -> None:
         """Print the CraftBot ASCII logo with CRAFT in white and BOT in orange."""
@@ -191,6 +193,8 @@ class CLIFormatter:
         print()  # Blank line before logo
         for craft_part, bot_part in cls.LOGO_LINES:
             print(f"{white}{craft_part}{orange}{bot_part}{reset}")
+        # Print version and tagline
+        print(f"{orange}CraftBot {cls.VERSION}. {cls.TAGLINE}{reset}")
 
     @classmethod
     def is_hidden_action(cls, action_name: str) -> bool:

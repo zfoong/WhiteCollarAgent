@@ -226,6 +226,8 @@ class CLIInterface:
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(self._agent.react(trigger))
+        except Exception as e:
+            logger.error(f"[CLI] Error in react(): {e}")
         finally:
             loop.close()
 
@@ -369,6 +371,11 @@ class CLIInterface:
 
         command = parts[0].lower()
 
+        # Handle /provider command (also handles API key)
+        if command == "/provider":
+            await self._handle_provider_command(parts[1:])
+            return True
+
         # Handle /mcp command with subcommands
         if command == "/mcp":
             await self._handle_mcp_command(parts[1:])
@@ -400,9 +407,23 @@ class CLIInterface:
         agent_cmds = self._agent.get_commands() if self._agent else {}
         if command in agent_cmds:
             cmd_obj = agent_cmds[command]
-            result = await cmd_obj.handler()
-            if result:
-                print(CLIFormatter.format_chat("System", result, "system"))
+            try:
+                result = await cmd_obj.handler()
+                if result:
+                    print(CLIFormatter.format_chat("System", result, "system"))
+            except Exception as e:
+                logger.error(f"[CLI] Command {command} failed: {e}")
+                print(CLIFormatter.format_error(f"Command failed: {e}"))
+            return True
+
+        # Unknown slash command - show helpful message
+        if command.startswith("/"):
+            available = list(self._command_handlers.keys()) + list(agent_cmds.keys())
+            print(CLIFormatter.format_chat(
+                "System",
+                f"Unknown command: {command}\nUse /help to see available commands.",
+                "system"
+            ))
             return True
 
         return False
@@ -452,6 +473,7 @@ class CLIInterface:
             "/clear": "Clear the screen.",
             "/reset": "Reset the agent and clear state.",
             "/exit": "Exit the session.",
+            "/provider": "Set LLM provider and API key.",
             "/mcp": "Manage MCP servers (list, add, remove, enable, disable).",
             "/skill": "Manage skills (list, info, enable, disable, reload).",
             "/cred": "Manage credentials (list, status, integrations).",
@@ -482,6 +504,116 @@ class CLIInterface:
                 lines.append(f"  {cmd}  - {desc}")
 
         return "\n".join(lines)
+
+    # =====================================
+    # Provider Command
+    # =====================================
+
+    async def _handle_provider_command(self, args: list[str]) -> None:
+        """Handle /provider command to show or set LLM provider and API key.
+
+        Usage:
+            /provider                    - Show current provider and API key status
+            /provider <name>             - Set provider (uses existing API key if available)
+            /provider <name> <apikey>    - Set provider and API key
+        """
+        import os
+        from core.tui.settings import save_settings_to_env
+
+        valid_providers = ["openai", "gemini", "anthropic", "byteplus", "remote"]
+        key_lookup = {
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GOOGLE_API_KEY",
+            "byteplus": "BYTEPLUS_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+        }
+
+        if not args:
+            # Show current provider and API key status
+            current = os.getenv("LLM_PROVIDER", "openai")
+            key_env = key_lookup.get(current, "")
+            current_key = os.getenv(key_env, "") if key_env else ""
+
+            lines = [f"Current provider: {current}"]
+
+            if current == "remote":
+                lines.append("API key: Not required (Ollama)")
+            elif current_key:
+                masked = current_key[:4] + "..." + current_key[-4:] if len(current_key) > 8 else "****"
+                lines.append(f"API key: {masked}")
+            else:
+                lines.append("API key: Not configured")
+
+            lines.extend([
+                "",
+                "Available providers:",
+                "  openai    - OpenAI (GPT-4, etc.)",
+                "  gemini    - Google Gemini",
+                "  anthropic - Anthropic Claude",
+                "  byteplus  - BytePlus",
+                "  remote    - Ollama (local, no API key needed)",
+                "",
+                "Usage:",
+                "  /provider <name>            - Set provider",
+                "  /provider <name> <apikey>   - Set provider and API key",
+            ])
+            print(CLIFormatter.format_chat("System", "\n".join(lines), "system"))
+            return
+
+        new_provider = args[0].lower()
+        if new_provider not in valid_providers:
+            print(CLIFormatter.format_chat(
+                "System",
+                f"Invalid provider '{new_provider}'. Valid options: {', '.join(valid_providers)}",
+                "system"
+            ))
+            return
+
+        # Check if API key is provided as second argument
+        new_api_key = args[1] if len(args) > 1 else None
+
+        # Get existing API key for the new provider (if no new key provided)
+        if new_api_key:
+            api_key = new_api_key
+        elif new_provider in key_lookup:
+            api_key = os.getenv(key_lookup[new_provider], "")
+        else:
+            api_key = ""
+
+        # Update environment
+        os.environ["LLM_PROVIDER"] = new_provider
+        if new_provider in key_lookup and api_key:
+            os.environ[key_lookup[new_provider]] = api_key
+
+        # Save to .env
+        save_settings_to_env(new_provider, api_key)
+
+        # Reinitialize LLM with new provider
+        try:
+            await self._agent._initialize_llm()
+
+            # Build confirmation message
+            if new_provider == "remote":
+                message = f"Provider set to '{new_provider}' (Ollama). No API key required."
+            elif api_key:
+                if new_api_key:
+                    message = f"Provider set to '{new_provider}'. API key has been saved."
+                else:
+                    message = f"Provider set to '{new_provider}'. Using existing API key."
+            else:
+                message = (
+                    f"Provider set to '{new_provider}'.\n"
+                    f"Warning: No API key configured. Use /provider {new_provider} <apikey> to set one."
+                )
+
+            print(CLIFormatter.format_chat("System", message, "system"))
+
+        except Exception as e:
+            print(CLIFormatter.format_chat(
+                "System",
+                f"Provider set to '{new_provider}', but initialization failed: {e}",
+                "system"
+            ))
 
     # =====================================
     # MCP Commands

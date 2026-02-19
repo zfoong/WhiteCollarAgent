@@ -1069,7 +1069,7 @@ class AgentBase:
         """
         from core.onboarding.manager import onboarding_manager
         from core.onboarding.soft.task_creator import create_soft_onboarding_task
-        from core.trigger_interface import Trigger
+        from core.trigger import Trigger
         import time
 
         # Reset soft onboarding state to allow re-run
